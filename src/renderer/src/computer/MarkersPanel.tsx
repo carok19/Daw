@@ -23,6 +23,10 @@ export function MarkersPanel({ proyecto, playheadMs, onJump, onCreate, onUpdate,
   return (
     <div className="markers-panel">
       <h3>Marcadores</h3>
+      <p className="markers-ayuda">
+        Con la canción sonando, presioná <kbd>M</kbd> para marcar el punto exacto, o escribí un nombre acá y tocá el
+        botón. También podés arrastrar los banderines amarillos sobre la barra de progreso para reacomodarlos.
+      </p>
       <div className="markers-nuevo">
         <input
           placeholder="Nombre (opcional)"

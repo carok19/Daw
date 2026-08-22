@@ -32,6 +32,30 @@ export function useAppController() {
     const offEstado = socket.onEstado((nuevo) => aplicarEstado(nuevo))
     const offPlayback = socket.onPlaybackScheduled((cmd) => {
       getEngine().ejecutar(cmd, socket.clockOffsetMs)
+
+      // El servidor no reenvia un 'estado:actualizado' completo por cada play/pause/
+      // seek (solo por cambios estructurales), asi que la posicion mostrada en la UI
+      // (barra de progreso, "En mm:ss" de nuevo marcador) se predice localmente a
+      // partir del comando programado, igual que hace el motor de audio.
+      setEstado((prev) => {
+        if (!prev || prev.activeTabId !== cmd.tabId) return prev
+        const estadoTransporte =
+          cmd.accion === 'play'
+            ? 'playing'
+            : cmd.accion === 'pause'
+              ? 'paused'
+              : cmd.accion === 'stop'
+                ? 'stopped'
+                : (prev.playbackActivo?.estado ?? 'paused')
+        return {
+          ...prev,
+          playbackActivo: {
+            estado: estadoTransporte,
+            positionMs: cmd.positionMs,
+            referenceServerTime: cmd.executeAtServerTime
+          }
+        }
+      })
     })
     const offError = socket.onRechazado((err) => setUltimoError(err.mensaje))
     const offConexion = socket.onConexionCambia(async (c) => {

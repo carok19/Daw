@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Pista, Proyecto } from '@shared/types'
+import { colorDePista } from '../trackColors'
 
 interface Props {
   proyecto: Proyecto
@@ -51,6 +52,7 @@ function ChannelStrip({
 }) {
   const [editandoNombre, setEditandoNombre] = useState(false)
   const [nombreTmp, setNombreTmp] = useState(pista.nombre)
+  const color = colorDePista(pista.id)
 
   function confirmarNombre(): void {
     setEditandoNombre(false)
@@ -58,7 +60,15 @@ function ChannelStrip({
   }
 
   return (
-    <div className="channel" draggable onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop}>
+    <div
+      className="channel"
+      style={{ '--color-pista': color } as React.CSSProperties}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      <div className="channel-color-bar" />
       {editandoNombre ? (
         <input
           className="channel-nombre-input"
