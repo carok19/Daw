@@ -5,6 +5,7 @@ import { formatMmSs } from '../format'
 export function MobileApp({ controller }: { controller: AppController }) {
   const { estado, conectado, playheadMs, audioListo } = controller
   const [audioActivo, setAudioActivo] = useState(false)
+  const [mostrarAjuste, setMostrarAjuste] = useState(false)
   const proyecto = estado?.proyectoActivo ?? null
   const marcadoresOrdenados = [...(proyecto?.marcadores ?? [])].sort((a, b) => a.tiempoMs - b.tiempoMs)
 
@@ -26,7 +27,40 @@ export function MobileApp({ controller }: { controller: AppController }) {
           {conectado ? '● Conectado' : '○ Desconectado'}
         </span>
         <h1>{proyecto?.nombre ?? 'Esperando canción…'}</h1>
+        <button className="mobile-ajuste-toggle" onClick={() => setMostrarAjuste(true)} title="Ajuste fino de sincronización">
+          ⚙ Ajuste fino{controller.ajusteManualMs !== 0 ? ` (${controller.ajusteManualMs > 0 ? '+' : ''}${controller.ajusteManualMs}ms)` : ''}
+        </button>
       </div>
+
+      {mostrarAjuste && (
+        <div className="overlay" onClick={() => setMostrarAjuste(false)}>
+          <div className="panel" onClick={(e) => e.stopPropagation()}>
+            <h2>Ajuste fino de sincronización</h2>
+            <p>
+              Si ESTE celular suena <strong>después</strong> que los demás, movelo a la derecha (+). Si suena{' '}
+              <strong>antes</strong>, movelo a la izquierda (–). Se guarda solo en este celular.
+            </p>
+            <p className="ajuste-valor">
+              {controller.ajusteManualMs > 0 ? '+' : ''}
+              {controller.ajusteManualMs} ms
+            </p>
+            <input
+              type="range"
+              min={-500}
+              max={500}
+              step={10}
+              value={controller.ajusteManualMs}
+              onChange={(e) => controller.setAjusteManualMs(Number(e.target.value))}
+            />
+            <div className="ajuste-botones">
+              <button onClick={() => controller.setAjusteManualMs(0)}>Restablecer</button>
+              <button className="btn-primario" onClick={() => setMostrarAjuste(false)}>
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!audioActivo && (
         <div className="overlay">

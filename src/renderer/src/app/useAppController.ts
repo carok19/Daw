@@ -4,6 +4,18 @@ import { posicionActualMs } from '@shared/playback'
 import { SocketClient } from '../sync/SocketClient'
 import { AudioEngine } from '../audio/AudioEngine'
 
+/** Ajuste fino de sincronizacion: guardado por dispositivo (localStorage es por navegador/celular). */
+const AJUSTE_FINO_KEY = 'multitrack:ajuste-fino-ms'
+
+function leerAjusteFinoGuardado(): number {
+  try {
+    const valor = Number(window.localStorage.getItem(AJUSTE_FINO_KEY))
+    return Number.isFinite(valor) ? valor : 0
+  } catch {
+    return 0
+  }
+}
+
 export function useAppController() {
   const origen: OrigenCliente = typeof window !== 'undefined' && window.electronAPI ? 'compu' : 'celular'
 
@@ -17,15 +29,27 @@ export function useAppController() {
   const [playheadMs, setPlayheadMs] = useState(0)
   const [volumenGeneral, setVolumenGeneralState] = useState(100)
   const [audioListo, setAudioListo] = useState(false)
+  const [ajusteManualMs, setAjusteManualMsState] = useState(0)
 
   const proyectoIdEnCarga = useRef<string | null>(null)
   const detuvoAlFinal = useRef(false)
+  const ajusteManualMsRef = useRef(0)
+
+  useEffect(() => {
+    const guardado = leerAjusteFinoGuardado()
+    ajusteManualMsRef.current = guardado
+    setAjusteManualMsState(guardado)
+    engineRef.current?.setAjusteManualMs(guardado)
+  }, [])
 
   useEffect(() => {
     const socket = socketRef.current!
 
     function getEngine(): AudioEngine {
-      if (!engineRef.current) engineRef.current = new AudioEngine()
+      if (!engineRef.current) {
+        engineRef.current = new AudioEngine()
+        engineRef.current.setAjusteManualMs(ajusteManualMsRef.current)
+      }
       return engineRef.current
     }
 
@@ -145,12 +169,27 @@ export function useAppController() {
   const acciones = useMemo(
     () => ({
       async activarAudio(): Promise<void> {
-        if (!engineRef.current) engineRef.current = new AudioEngine()
+        if (!engineRef.current) {
+          engineRef.current = new AudioEngine()
+          engineRef.current.setAjusteManualMs(ajusteManualMsRef.current)
+        }
         await engineRef.current.resumeSiHaceFalta()
       },
       setVolumenGeneral(v: number): void {
         setVolumenGeneralState(v)
         engineRef.current?.setVolumenGeneral(v)
+      },
+      /** Ajuste fino de sincronizacion (ms), calibrado a oido y guardado en ESTE dispositivo. */
+      setAjusteManualMs(ms: number): void {
+        const clamped = Math.max(-500, Math.min(500, Math.round(ms)))
+        ajusteManualMsRef.current = clamped
+        setAjusteManualMsState(clamped)
+        engineRef.current?.setAjusteManualMs(clamped)
+        try {
+          window.localStorage.setItem(AJUSTE_FINO_KEY, String(clamped))
+        } catch {
+          // almacenamiento no disponible (navegacion privada, etc.): se pierde al recargar, no es critico
+        }
       },
       play(positionMs?: number): void {
         socketRef.current?.emit('transport:play', positionMs !== undefined ? { positionMs } : {})
@@ -220,6 +259,7 @@ export function useAppController() {
     playheadMs,
     volumenGeneral,
     audioListo,
+    ajusteManualMs,
     ultimoError,
     ...acciones
   }

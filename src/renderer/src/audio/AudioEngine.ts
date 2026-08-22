@@ -23,6 +23,14 @@ export class AudioEngine {
   private masterGain: GainNode
   private tracks: PistaRuntime[] = []
   private comandoPendiente: { cmd: ComandoProgramado; clockOffsetMs: number } | null = null
+  /**
+   * Ajuste fino manual (ms), calibrado a oido por el musico en ESTE
+   * dispositivo cuando la compensacion automatica no alcanza (tipicamente
+   * por Bluetooth). Mismo signo que `latenciaDeSalidaSec`: positivo = este
+   * celular suena tarde, adelantarlo (arranca antes); negativo = suena
+   * temprano, atrasarlo.
+   */
+  private ajusteManualMs = 0
   proyectoIdCargado: string | null = null
 
   constructor() {
@@ -39,6 +47,10 @@ export class AudioEngine {
 
   setVolumenGeneral(volumen0a100: number): void {
     this.masterGain.gain.value = clamp(volumen0a100, 0, 100) / 100
+  }
+
+  setAjusteManualMs(ms: number): void {
+    this.ajusteManualMs = ms
   }
 
   /** Descarga y decodifica todas las pistas del proyecto. Devuelve la duracion (ms) de la mas larga. */
@@ -123,6 +135,7 @@ export class AudioEngine {
     // ESTE dispositivo tarda de mas en sacar sonido, para que lo audible
     // quede alineado entre todos.
     delaySec -= this.latenciaDeSalidaSec()
+    delaySec -= this.ajusteManualMs / 1000
 
     if (delaySec < 0) {
       // el mensaje llego tarde (o la latencia de salida ya se comio el margen):
