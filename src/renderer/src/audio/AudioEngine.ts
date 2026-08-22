@@ -115,8 +115,18 @@ export class AudioEngine {
     let delaySec = (clienteObjetivoMs - Date.now()) / 1000
     let offsetMs = cmd.positionMs
 
+    // Compensar la latencia de salida de audio propia de este dispositivo
+    // (parlante/auriculares/controlador de sonido). Sin esto, el scheduling
+    // puede estar perfectamente alineado y aun asi un celular con mas
+    // latencia de hardware (comun en Android, sobre todo por Bluetooth)
+    // suena mas tarde que otro: adelantamos el `start()` exactamente lo que
+    // ESTE dispositivo tarda de mas en sacar sonido, para que lo audible
+    // quede alineado entre todos.
+    delaySec -= this.latenciaDeSalidaSec()
+
     if (delaySec < 0) {
-      // el mensaje llego tarde: arrancamos ya, pero saltando lo que se perdio
+      // el mensaje llego tarde (o la latencia de salida ya se comio el margen):
+      // arrancamos ya, pero saltando lo que se perdio
       offsetMs += -delaySec * 1000
       delaySec = 0
     }
@@ -158,6 +168,18 @@ export class AudioEngine {
 
   private detenerFuentesInmediato(): void {
     this.detenerFuentes(this.ctx.currentTime)
+  }
+
+  /**
+   * Estimacion del navegador de cuanto tarda este dispositivo en sacar el
+   * sonido despues de programarlo (`outputLatency`, y `baseLatency` como
+   * respaldo en navegadores que no exponen la primera). No es perfecta —
+   * en particular, un parlante/auricular por Bluetooth agrega latencia extra
+   * que estas APIs normalmente no llegan a reportar del todo — pero corrige
+   * la mayor parte de la diferencia entre, por ejemplo, dos Android distintos.
+   */
+  private latenciaDeSalidaSec(): number {
+    return this.ctx.outputLatency ?? this.ctx.baseLatency ?? 0
   }
 }
 
