@@ -131,9 +131,11 @@ input[type='text'], input:not([type]) {
 .markers-nuevo { display: flex; gap: 6px; margin-bottom: 10px; }
 .markers-nuevo input { flex: 1; }
 .markers-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.marker-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #232733; }
+.marker-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid #232733; }
 .marker-tiempo { font-variant-numeric: tabular-nums; }
-.marker-nombre { flex: 1; cursor: text; }
+.marker-nombre { flex: 1; cursor: text; text-decoration: underline dotted; text-underline-offset: 3px; }
+.marker-nombre-input { flex: 1; }
+.marker-renombrar { background: transparent; border: none; padding: 2px 4px; }
 .markers-vacio { color: #9299a8; }
 
 .transport {

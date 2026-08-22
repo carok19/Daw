@@ -62,6 +62,11 @@ function MarkerRow({
   const [editando, setEditando] = useState(false)
   const [nombreTmp, setNombreTmp] = useState(marcador.nombre)
 
+  function empezarEdicion(): void {
+    setNombreTmp(marcador.nombre)
+    setEditando(true)
+  }
+
   function confirmar(): void {
     setEditando(false)
     if (nombreTmp.trim() && nombreTmp.trim() !== marcador.nombre) onUpdate(marcador.id, { nombre: nombreTmp.trim() })
@@ -74,6 +79,7 @@ function MarkerRow({
       </button>
       {editando ? (
         <input
+          className="marker-nombre-input"
           autoFocus
           value={nombreTmp}
           onChange={(e) => setNombreTmp(e.target.value)}
@@ -81,9 +87,14 @@ function MarkerRow({
           onKeyDown={(e) => e.key === 'Enter' && confirmar()}
         />
       ) : (
-        <span className="marker-nombre" onDoubleClick={() => setEditando(true)}>
+        <span className="marker-nombre" onDoubleClick={empezarEdicion}>
           {marcador.nombre}
         </span>
+      )}
+      {!editando && (
+        <button className="marker-renombrar" onClick={empezarEdicion} title="Cambiar nombre">
+          ✎
+        </button>
       )}
       <button className="marker-borrar" onClick={() => onDelete(marcador.id)} title="Eliminar">
         🗑

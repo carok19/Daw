@@ -22,6 +22,7 @@ export class AudioEngine {
   private ctx: AudioContext
   private masterGain: GainNode
   private tracks: PistaRuntime[] = []
+  private comandoPendiente: { cmd: ComandoProgramado; clockOffsetMs: number } | null = null
   proyectoIdCargado: string | null = null
 
   constructor() {
@@ -62,6 +63,16 @@ export class AudioEngine {
     })
     this.aplicarMezcla(proyecto.pistas)
 
+    // si mientras se descargaba/decodificaba llego un "play" (p.ej. un celular
+    // que se conecta justo cuando arranca la cancion), no se perdio: se aplica
+    // ahora. `ejecutar` ya sabe recalcular la posicion correcta si el horario
+    // original quedo en el pasado (ver mas abajo).
+    if (this.comandoPendiente) {
+      const { cmd, clockOffsetMs } = this.comandoPendiente
+      this.comandoPendiente = null
+      this.ejecutar(cmd, clockOffsetMs)
+    }
+
     return Math.max(0, ...buffers.map((b) => b.duration * 1000))
   }
 
@@ -90,7 +101,15 @@ export class AudioEngine {
    * (offset calculado por SocketClient: serverTime ~= Date.now() + offset).
    */
   ejecutar(cmd: ComandoProgramado, clockOffsetMs: number): void {
-    if (cmd.accion === 'play' && this.tracks.length === 0) return
+    if (cmd.accion === 'play' && this.tracks.length === 0) {
+      // todavia no terminaron de decodificarse los buffers: se guarda para
+      // aplicarlo apenas termine `cargarProyecto` en vez de perderlo en silencio.
+      this.comandoPendiente = { cmd, clockOffsetMs }
+      return
+    }
+    // cualquier otra accion (pause/stop/seek, o un play mas nuevo) reemplaza
+    // o invalida un play que hubiera quedado pendiente de una carga anterior.
+    this.comandoPendiente = null
 
     const clienteObjetivoMs = cmd.executeAtServerTime - clockOffsetMs
     let delaySec = (clienteObjetivoMs - Date.now()) / 1000

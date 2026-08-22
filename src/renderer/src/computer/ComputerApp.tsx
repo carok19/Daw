@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AppController } from '../App'
 import { TabsBar } from './TabsBar'
 import { Mixer } from './Mixer'
@@ -22,24 +22,37 @@ export function ComputerApp({ controller }: { controller: AppController }) {
     if (estado && estado.tabs.length === 0) setPantalla('proyectos')
   }, [estado?.tabs.length])
 
+  // El controller se recrea en cada render (y playheadMs cambia ~60 veces por
+  // segundo), asi que el atajo de teclado NO depende de esos valores: se
+  // registra una sola vez y siempre lee el estado mas fresco a traves de este
+  // ref (si dependiera de `controller`/`estado`, el listener se sacaria y
+  // volvería a poner en cada frame).
+  const controllerRef = useRef(controller)
+  controllerRef.current = controller
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent): void {
+      // ignora la repeticion automatica al mantener apretada la tecla: sino
+      // cada repeticion vuelve a mandar "play", empujando el horario programado
+      // cada vez mas adelante y dando la sensacion de que "no arranca".
+      if (e.repeat) return
       if (esCampoDeTexto(e.target)) return
+      const c = controllerRef.current
       if (e.code === 'Space') {
         e.preventDefault()
-        const playing = estado?.playbackActivo?.estado === 'playing'
-        if (playing) controller.pause()
-        else controller.play()
+        const playing = c.estado?.playbackActivo?.estado === 'playing'
+        if (playing) c.pause()
+        else c.play()
       } else if (e.key === 'm' || e.key === 'M') {
-        if (estado?.proyectoActivo) {
+        if (c.estado?.proyectoActivo) {
           e.preventDefault()
-          controller.createMarker(controller.playheadMs)
+          c.createMarker(c.playheadMs)
         }
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [controller, estado])
+  }, [])
 
   async function cargarZip(): Promise<void> {
     setCargando(true)

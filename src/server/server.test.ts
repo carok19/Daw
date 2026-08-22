@@ -157,3 +157,55 @@ test('zip sin audio no crea proyecto', async () => {
   fs.rmSync(rendererDirFake, { recursive: true, force: true })
   fs.rmSync(tmp, { force: true })
 })
+
+test('margen de sincronizacion: instantaneo sin celulares, completo apenas se conecta uno', async () => {
+  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
+  process.env.MULTITRACK_APP_DIR = tmpAppDir
+  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
+  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+
+  const server = createServer(rendererDirFake)
+  const port = await server.start(0)
+
+  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
+  await new Promise<void>((r) => compu.on('connect', r))
+
+  const zipPath = crearZipDePrueba()
+  await emitAck<{ ok: boolean }>(compu, 'project:load-from-zip', { filePath: zipPath })
+
+  // sin celulares conectados: el "play" se programa casi de inmediato
+  const antesSolo = Date.now()
+  const cmdSolo = await new Promise<ComandoProgramado>((resolve) => {
+    compu.once('playback:scheduled', resolve)
+    compu.emit('transport:play', {})
+  })
+  const margenSolo = cmdSolo.executeAtServerTime - antesSolo
+  assert.ok(margenSolo < 200, `esperaba un margen chico sin celulares, dio ${margenSolo}ms`)
+
+  await new Promise((resolve) => {
+    compu.once('playback:scheduled', resolve)
+    compu.emit('transport:stop')
+  })
+
+  // se conecta un celular: ahora el margen vuelve a ser el completo (~1.5s)
+  const celular = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
+  await new Promise<void>((r) => celular.on('connect', r))
+
+  const antesConCelular = Date.now()
+  const cmdConCelular = await new Promise<ComandoProgramado>((resolve) => {
+    compu.once('playback:scheduled', resolve)
+    compu.emit('transport:play', {})
+  })
+  const margenConCelular = cmdConCelular.executeAtServerTime - antesConCelular
+  assert.ok(
+    margenConCelular >= 1400 && margenConCelular <= 1700,
+    `esperaba ~1500ms con un celular conectado, dio ${margenConCelular}ms`
+  )
+
+  compu.close()
+  celular.close()
+  server.httpServer.close()
+  fs.rmSync(tmpAppDir, { recursive: true, force: true })
+  fs.rmSync(rendererDirFake, { recursive: true, force: true })
+  fs.rmSync(zipPath, { force: true })
+})

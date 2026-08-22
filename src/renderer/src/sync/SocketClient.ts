@@ -21,11 +21,15 @@ export class SocketClient {
   clockOffsetMs = 0
   conectado = false
 
+  private syncEnCurso: Promise<void> | null = null
+
   constructor(private readonly origen: OrigenCliente) {
     this.socket = io({ auth: { origen } })
     this.socket.on('connect', () => {
       this.conectado = true
-      void this.sincronizarReloj()
+      // La sincronizacion inicial (y el orden con el primer pedido de estado)
+      // la maneja explicitamente quien use este cliente (ver onConexionCambia
+      // en useAppController); aca solo se refresca el offset periodicamente.
     })
     this.socket.on('disconnect', () => {
       this.conectado = false
@@ -40,7 +44,22 @@ export class SocketClient {
     return Date.now() + this.clockOffsetMs
   }
 
+  /**
+   * Corre las muestras de sincronizacion (ping/pong, seccion 7.2). Si ya hay
+   * una sincronizacion en curso, se reutiliza esa misma promesa en vez de
+   * lanzar una segunda corrida en paralelo: dos corridas concurrentes se
+   * pisan entre si y corrompen el offset calculado (cada una mide RTT
+   * inflado por el trafico de la otra).
+   */
   async sincronizarReloj(): Promise<void> {
+    if (this.syncEnCurso) return this.syncEnCurso
+    this.syncEnCurso = this.correrMuestrasDeSync().finally(() => {
+      this.syncEnCurso = null
+    })
+    return this.syncEnCurso
+  }
+
+  private async correrMuestrasDeSync(): Promise<void> {
     let mejorOffset = this.clockOffsetMs
     let mejorRtt = Infinity
     for (let i = 0; i < MUESTRAS_SYNC; i++) {

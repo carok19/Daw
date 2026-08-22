@@ -21,8 +21,19 @@ import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ZipSinPistasError } from './zip'
 import { deleteProyecto, listProyectos, loadProyecto } from './projects'
 
-/** Margen (ms) para programar una accion de audio a futuro (seccion 7.3). */
+/**
+ * Margen (ms) para programar una accion de audio a futuro (seccion 7.3), usado
+ * SOLO cuando hay al menos un celular conectado (necesitan tiempo de sobra para
+ * recibir el comando por WiFi y arrancar el audio programado).
+ */
 export const MARGIN_MS = 1500
+
+/**
+ * Margen minimo cuando no hay ningun celular conectado: la compu no tiene con
+ * quien sincronizarse, asi que responde practicamente al instante en vez de
+ * esperar el margen completo.
+ */
+export const MARGIN_SIN_CELULARES_MS = 30
 
 interface SocketData {
   origen: OrigenCliente
@@ -60,7 +71,7 @@ export function registerSocketHandlers(io: Server, state: AppState): void {
         payload.positionMs !== undefined
           ? clampPos(payload.positionMs, tab.proyecto.duracionTotalMs)
           : posicionActual(tab.playback)
-      programarAccion(io, state, tab.tabId, 'play', posicionBase, MARGIN_MS)
+      programarAccion(io, state, tab.tabId, 'play', posicionBase, margenActual(io))
     })
 
     socket.on('transport:pause', () => {
@@ -68,7 +79,7 @@ export function registerSocketHandlers(io: Server, state: AppState): void {
       if (!tab) return
       if (!permitido(socket, state)) return rechazar(socket, 'Control bloqueado por la computadora')
       if (tab.playback.estado !== 'playing') return
-      const executeAt = Date.now() + MARGIN_MS
+      const executeAt = Date.now() + margenActual(io)
       const posicionCongelada = posicionActual(tab.playback, executeAt)
       state.setPlayback(tab.tabId, { estado: 'paused', positionMs: posicionCongelada, referenceServerTime: executeAt })
       io.emit('playback:scheduled', {
@@ -84,7 +95,7 @@ export function registerSocketHandlers(io: Server, state: AppState): void {
       if (!tab) return
       if (!permitido(socket, state)) return rechazar(socket, 'Control bloqueado por la computadora')
       if (tab.playback.estado === 'stopped') return
-      const executeAt = Date.now() + MARGIN_MS
+      const executeAt = Date.now() + margenActual(io)
       state.setPlayback(tab.tabId, { estado: 'stopped', positionMs: 0, referenceServerTime: executeAt })
       io.emit('playback:scheduled', {
         tabId: tab.tabId,
@@ -100,7 +111,7 @@ export function registerSocketHandlers(io: Server, state: AppState): void {
       if (!permitido(socket, state)) return rechazar(socket, 'Control bloqueado por la computadora')
       const pos = clampPos(payload.positionMs, tab.proyecto.duracionTotalMs)
       if (tab.playback.estado === 'playing') {
-        programarAccion(io, state, tab.tabId, 'play', pos, MARGIN_MS)
+        programarAccion(io, state, tab.tabId, 'play', pos, margenActual(io))
       } else {
         const executeAt = Date.now()
         state.setPlayback(tab.tabId, { estado: tab.playback.estado, positionMs: pos, referenceServerTime: executeAt })
@@ -122,7 +133,7 @@ export function registerSocketHandlers(io: Server, state: AppState): void {
       const marcador = tab.proyecto.marcadores.find((m) => m.id === payload?.marcadorId)
       if (!marcador) return
       if (tab.playback.estado === 'playing') {
-        programarAccion(io, state, tab.tabId, 'play', marcador.tiempoMs, MARGIN_MS)
+        programarAccion(io, state, tab.tabId, 'play', marcador.tiempoMs, margenActual(io))
       } else {
         const executeAt = Date.now()
         state.setPlayback(tab.tabId, {
@@ -269,6 +280,18 @@ function soloCompu(socket: Socket): boolean {
 
 function permitido(socket: Socket, state: AppState): boolean {
   return soloCompu(socket) || !state.locked
+}
+
+function hayCelularesConectados(io: Server): boolean {
+  for (const socket of io.sockets.sockets.values()) {
+    if ((socket.data as SocketData).origen === 'celular') return true
+  }
+  return false
+}
+
+/** Margen a usar para la proxima accion programada, segun si hay celulares conectados. */
+function margenActual(io: Server): number {
+  return hayCelularesConectados(io) ? MARGIN_MS : MARGIN_SIN_CELULARES_MS
 }
 
 function clampPos(ms: number, duracionTotalMs: number): number {
