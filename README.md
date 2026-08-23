@@ -143,6 +143,25 @@ y el efecto de `visibilitychange` en `useAppController`):
    cuanto la pestaña vuelve a primer plano se resincroniza el reloj y se
    reprograma el audio de inmediato — no se espera al próximo chequeo
    periódico.
+3. **Media Session** (`navigator.mediaSession`, metadata + estado de
+   reproducción, sin controles remotos de play/pausa a propósito): es la
+   señal estándar que usan los navegadores para saber que una pestaña está
+   reproduciendo audio real y no debería congelarse/matarse en segundo
+   plano. El Wake Lock (punto 1) solo evita el apagado automático por
+   inactividad — **no** evita que el usuario apague la pantalla a mano con
+   el botón de encendido, que es un caso válido ("quiero apagar la
+   pantalla pero que siga sonando y conectado"); Media Session es lo que
+   ayuda en ese caso.
+
+   Honestidad técnica: en Android/Chrome esto debería funcionar de forma
+   confiable (Chrome exime de la congelación agresiva a las pestañas que
+   están reproduciendo audio activamente). En iOS/Safari el comportamiento
+   de audio en segundo plano con Web Audio API puro (sin una etiqueta
+   `<audio>`) ha sido históricamente menos consistente entre versiones —
+   no hay forma de garantizarlo al 100% desde JavaScript. Por eso los
+   puntos 1 y 2 siguen siendo la red de seguridad: si el audio o el socket
+   se llegan a cortar con la pantalla apagada, apenas el celular vuelve a
+   primer plano se resincroniza solo, sin intervención manual.
 
 ## Dispositivos conectados
 

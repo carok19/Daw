@@ -221,6 +221,27 @@ export function useAppController() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
+  // Media Session: le dice al sistema operativo que esto es reproduccion de
+  // audio real ("Ahora sonando: <cancion>"), no solo una pestana cualquiera.
+  // Es la señal estandar que usan los navegadores para decidir que pestanas
+  // se pueden congelar/matar en segundo plano — asi el celular puede seguir
+  // sonando y conectado con la pantalla apagada, sin depender del Wake Lock
+  // (que solo evita el apagado automatico por inactividad, no un apagado
+  // manual con el boton de encendido). A proposito NO se registran controles
+  // de play/pausa remotos: si alguien toca algo en la pantalla de bloqueo no
+  // deberia pausar la reproduccion de todo el grupo por accidente.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+    const proyecto = estado?.proyectoActivo
+    if (proyecto) {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: proyecto.nombre, artist: 'Multitrack Alabanza' })
+    }
+    const transportState = estado?.playbackActivo?.estado
+    navigator.mediaSession.playbackState =
+      transportState === 'playing' ? 'playing' : transportState === 'paused' ? 'paused' : 'none'
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estado?.proyectoActivo?.id, estado?.proyectoActivo?.nombre, estado?.playbackActivo?.estado])
+
   // playhead: recalculado en cada frame a partir del estado de reproduccion + offset de reloj
   useEffect(() => {
     let raf = 0
