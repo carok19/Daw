@@ -3,6 +3,7 @@ import http from 'node:http'
 import express from 'express'
 import { Server as SocketIOServer } from 'socket.io'
 import { AppState } from './state'
+import { DeviceRegistry } from './devices'
 import { registerSocketHandlers } from './socketHandlers'
 import { ensureBaseDir, projectsBaseDir } from './projects'
 
@@ -11,6 +12,7 @@ export interface AppServer {
   httpServer: http.Server
   io: SocketIOServer
   state: AppState
+  devices: DeviceRegistry
   start(preferredPort: number): Promise<number>
 }
 
@@ -25,6 +27,7 @@ export function createServer(rendererDir: string): AppServer {
   const httpServer = http.createServer(app)
   const io = new SocketIOServer(httpServer, { cors: { origin: '*' } })
   const state = new AppState()
+  const devices = new DeviceRegistry()
 
   app.use(express.json())
   app.use('/media', express.static(projectsBaseDir()))
@@ -33,7 +36,7 @@ export function createServer(rendererDir: string): AppServer {
     res.sendFile(path.join(rendererDir, 'index.html'))
   })
 
-  registerSocketHandlers(io, state)
+  registerSocketHandlers(io, state, devices)
 
   async function listenOn(port: number): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -59,5 +62,5 @@ export function createServer(rendererDir: string): AppServer {
     }
   }
 
-  return { app, httpServer, io, state, start }
+  return { app, httpServer, io, state, devices, start }
 }

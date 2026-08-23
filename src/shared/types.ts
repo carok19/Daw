@@ -148,3 +148,26 @@ export interface LockSetPayload {
 export interface ErrorPayload {
   mensaje: string
 }
+
+/**
+ * Fila del panel "Dispositivos conectados" (seccion 27) / contador junto al QR
+ * (seccion 26). Un dispositivo desconectado NO se quita de la lista: queda
+ * marcado `conectado: false` para que el operador vea si alguien se cayo a
+ * mitad de un culto, en vez de simplemente desaparecer.
+ */
+export interface DispositivoInfo {
+  id: string
+  origen: OrigenCliente
+  etiqueta: string
+  conectado: boolean
+  /**
+   * Ultimo drift (ms) reportado por ese dispositivo (ver sistema de
+   * sincronizacion continua). `null` = todavia no reporto ninguno (recien
+   * conectado, o no esta reproduciendo).
+   */
+  driftMs: number | null
+}
+
+export interface SyncReportPayload {
+  driftMs: number | null
+}

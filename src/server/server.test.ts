@@ -6,7 +6,7 @@ import path from 'node:path'
 import AdmZip from 'adm-zip'
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
 import { createServer } from './index'
-import type { EstadoCompleto, ClockSyncAck, ComandoProgramado } from '../shared/types'
+import type { EstadoCompleto, ClockSyncAck, ComandoProgramado, DispositivoInfo } from '../shared/types'
 
 function crearZipDePrueba(): string {
   const zip = new AdmZip()
@@ -208,4 +208,63 @@ test('margen de sincronizacion: instantaneo sin celulares, completo apenas se co
   fs.rmSync(tmpAppDir, { recursive: true, force: true })
   fs.rmSync(rendererDirFake, { recursive: true, force: true })
   fs.rmSync(zipPath, { force: true })
+})
+
+test('registro de dispositivos: etiquetas, sync:report y desconexion queda visible', async () => {
+  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
+  process.env.MULTITRACK_APP_DIR = tmpAppDir
+  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
+  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+
+  const server = createServer(rendererDirFake)
+  const port = await server.start(0)
+
+  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
+  const listaAlConectarCompu = new Promise<DispositivoInfo[]>((resolve) => compu.once('dispositivos:actualizado', resolve))
+  await new Promise<void>((r) => compu.on('connect', r))
+  const listaCompu = await listaAlConectarCompu
+  assert.equal(listaCompu.length, 1)
+  assert.equal(listaCompu[0].origen, 'compu')
+  assert.equal(listaCompu[0].etiqueta, 'Computadora')
+  assert.equal(listaCompu[0].conectado, true)
+
+  const celular1 = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
+  const [listaTrasCelular1] = await Promise.all([
+    new Promise<DispositivoInfo[]>((resolve) => compu.once('dispositivos:actualizado', resolve)),
+    new Promise<void>((r) => celular1.on('connect', r))
+  ])
+  assert.equal(listaTrasCelular1.length, 2)
+  const celular1Info = listaTrasCelular1.find((d) => d.origen === 'celular')
+  assert.equal(celular1Info?.etiqueta, 'Celular 1')
+
+  const celular2 = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
+  const [listaTrasCelular2] = await Promise.all([
+    new Promise<DispositivoInfo[]>((resolve) => compu.once('dispositivos:actualizado', resolve)),
+    new Promise<void>((r) => celular2.on('connect', r))
+  ])
+  const celular2Info = listaTrasCelular2.find((d) => d.etiqueta === 'Celular 2')
+  assert.ok(celular2Info, 'esperaba que el segundo celular se etiquete "Celular 2"')
+
+  // sync:report actualiza el drift de ESE dispositivo y se ve en el broadcast
+  const listaConDrift = await new Promise<DispositivoInfo[]>((resolve) => {
+    compu.once('dispositivos:actualizado', resolve)
+    celular1.emit('sync:report', { driftMs: 42 })
+  })
+  const celular1ConDrift = listaConDrift.find((d) => d.etiqueta === 'Celular 1')
+  assert.equal(celular1ConDrift?.driftMs, 42)
+
+  // desconectar no lo borra de la lista: queda marcado, para que el operador lo note
+  const listaTrasDesconexion = await new Promise<DispositivoInfo[]>((resolve) => {
+    compu.once('dispositivos:actualizado', resolve)
+    celular1.close()
+  })
+  assert.equal(listaTrasDesconexion.length, 3)
+  const celular1Desconectado = listaTrasDesconexion.find((d) => d.etiqueta === 'Celular 1')
+  assert.equal(celular1Desconectado?.conectado, false)
+
+  compu.close()
+  celular2.close()
+  server.httpServer.close()
+  fs.rmSync(tmpAppDir, { recursive: true, force: true })
+  fs.rmSync(rendererDirFake, { recursive: true, force: true })
 })

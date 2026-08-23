@@ -33,6 +33,22 @@ export class AudioEngine {
   private ajusteManualMs = 0
   proyectoIdCargado: string | null = null
 
+  /**
+   * "Ancla" del punto de referencia de audio REAL (no de reloj de pared):
+   * ctx.currentTime en el que efectivamente arranco el `source.start()` vigente,
+   * y el offset de buffer (seg) con el que arranco. Con esto se puede calcular
+   * en cualquier momento posterior la posicion real que esta sonando, usando
+   * SOLO el reloj de audio (`ctx.currentTime`), sin depender del reloj de
+   * pared — son dos relojes distintos dentro del mismo dispositivo y pueden
+   * desviarse entre si con el tiempo (deriva de cristal del hardware de audio).
+   * `null` cuando no hay audio sonando (pausado/detenido, o el `start()`
+   * programado todavia no llego a su horario).
+   */
+  private audioAnchorCtxTime: number | null = null
+  private audioAnchorOffsetSec = 0
+  /** ctx.currentTime en el que termina la rampa de correccion suave en curso (0 = ninguna). */
+  private correccionActivaHastaCtxTime = 0
+
   constructor() {
     this.ctx = new AudioContext()
     this.masterGain = this.ctx.createGain()
@@ -159,10 +175,75 @@ export class AudioEngine {
         }
         track.source = source
       }
+      // nuevo punto de referencia de audio real; cualquier correccion de drift
+      // anterior queda obsoleta (las fuentes que corregia ya no existen)
+      this.audioAnchorCtxTime = targetTime
+      this.audioAnchorOffsetSec = offsetMs / 1000
+      this.correccionActivaHastaCtxTime = 0
     } else if (cmd.accion === 'pause' || cmd.accion === 'stop') {
       this.detenerFuentes(targetTime)
+      this.audioAnchorCtxTime = null
+      this.correccionActivaHastaCtxTime = 0
     }
     // 'seek': no hay audio sonando (el servidor solo la emite en pausa/stop), nada que programar aqui.
+  }
+
+  /**
+   * Posicion real (ms) que esta sonando AHORA MISMO, calculada solo con el
+   * reloj de audio (`ctx.currentTime`). `null` si no hay audio sonando o el
+   * `start()` programado todavia no llego a su horario.
+   */
+  posicionRealMs(): number | null {
+    if (this.audioAnchorCtxTime === null) return null
+    if (this.ctx.currentTime < this.audioAnchorCtxTime) return null
+    return (this.audioAnchorOffsetSec + (this.ctx.currentTime - this.audioAnchorCtxTime)) * 1000
+  }
+
+  /** true mientras una rampa de correccion suave esta en curso (para no pisarla con otra). */
+  enCorreccionSuave(): boolean {
+    return this.ctx.currentTime < this.correccionActivaHastaCtxTime
+  }
+
+  /**
+   * Corrige un drift chico sin cortes ni clicks: ajusta levemente la
+   * velocidad de reproduccion (`playbackRate`) de todas las pistas por
+   * `duracionSec` segundos, la cantidad justa para "absorber" `driftMs`, y
+   * vuelve a velocidad normal. Un cambio de velocidad menor a ~1% sostenido
+   * pocos segundos no se percibe al oido (misma tecnica que usan sistemas
+   * profesionales de sincronizacion de audio - "vari-speed drift compensation").
+   *
+   * driftMs > 0 = este dispositivo esta ADELANTADO (suena mas rapido/mas
+   * avanzado de lo esperado) -> se lo hace sonar mas LENTO un rato.
+   */
+  corregirDriftSuave(driftMs: number, duracionSec = 3): void {
+    if (this.audioAnchorCtxTime === null || !this.tracks.some((t) => t.source)) return
+    const now = this.ctx.currentTime
+    if (now < this.correccionActivaHastaCtxTime) return // ya hay una correccion en curso
+
+    const driftSec = driftMs / 1000
+    // sostener `rateObjetivo` por `duracionSec` reproduce exactamente
+    // `duracionSec * (rateObjetivo - 1)` segundos de mas/de menos, que
+    // elegimos para que sea igual a `-driftSec` (cancela el drift).
+    const rateObjetivo = clamp(1 - driftSec / duracionSec, 0.9, 1.1)
+    const rampIn = Math.min(0.2, duracionSec / 4)
+
+    for (const track of this.tracks) {
+      if (!track.source) continue
+      const p = track.source.playbackRate
+      p.cancelScheduledValues(now)
+      p.setValueAtTime(p.value, now)
+      p.linearRampToValueAtTime(rateObjetivo, now + rampIn)
+      p.setValueAtTime(rateObjetivo, now + duracionSec - rampIn)
+      p.linearRampToValueAtTime(1, now + duracionSec)
+    }
+
+    // el ancla se ajusta de inmediato asumiendo que la correccion ya se aplico
+    // por completo: durante la rampa `posicionRealMs()` queda un poco
+    // aproximado (no importa, las decisiones se pausan hasta que termine via
+    // `enCorreccionSuave()`), y coincide con el audio real justo cuando la
+    // rampa termina.
+    this.audioAnchorOffsetSec -= driftSec
+    this.correccionActivaHastaCtxTime = now + duracionSec
   }
 
   private detenerFuentes(atTime: number): void {
@@ -181,6 +262,8 @@ export class AudioEngine {
 
   private detenerFuentesInmediato(): void {
     this.detenerFuentes(this.ctx.currentTime)
+    this.audioAnchorCtxTime = null
+    this.correccionActivaHastaCtxTime = 0
   }
 
   /**

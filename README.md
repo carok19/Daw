@@ -88,6 +88,51 @@ ajustar si no es lo que se esperaba**:
     (`MULTITRACK_APP_DIR` permite sobreescribir la base, usado por los
     tests del servidor).
 
+## Sincronización continua (drift) — Fase 2
+
+Programar el `start()` con el mismo horario en todos los dispositivos alinea
+el *arranque*, pero no evita que se separen con el correr de los minutos: el
+reloj de audio de cada dispositivo (`AudioContext.currentTime`, gobernado por
+el cristal del hardware de audio) y el reloj de pared (`Date.now()`, el que
+sincronizamos con el servidor) son dos relojes distintos dentro del mismo
+dispositivo, y no tienen garantizado avanzar exactamente a la misma
+velocidad. Mientras se está reproduciendo, cada dispositivo (compu y cada
+celular) corre su propio monitor cada `INTERVALO_MONITOREO_MS` (4s,
+`src/renderer/src/sync/driftConfig.ts`):
+
+1. Calcula `drift = posición real (según el reloj de audio) − posición
+   esperada (según el modelo del servidor)`.
+2. `< UMBRAL_SUAVE_MS` (15ms): no hace nada.
+3. `< UMBRAL_DURO_MS` (150ms): corrección suave — ajusta levemente
+   `playbackRate` de todas las pistas por unos segundos (la cantidad justa
+   para absorber el drift) y vuelve a 1×. Un cambio de velocidad menor a
+   ~1% sostenido pocos segundos no se percibe al oído; es la misma técnica
+   ("vari-speed drift compensation") que usan sistemas profesionales de
+   sincronización de audio.
+4. `≥ UMBRAL_DURO_MS`: resincronización dura — para y vuelve a programar el
+   audio de ESE dispositivo en la posición correcta, reusando el mismo
+   mecanismo de `executeAtServerTime` (margen corto, ~400ms) que cualquier
+   otro comando de transporte.
+
+Es una corrección **puramente local**: cada dispositivo se corrige a sí
+mismo contra el modelo de tiempo del servidor (que ya tiene, no hace falta
+ningún mensaje de red nuevo para medir), así que quedan sincronizados entre
+sí por transitividad sin necesidad de compararse par a par. Cada salto de
+marcador (o Play) ya reprograma el audio desde cero, así que también actúa
+como punto de resincronización "gratis".
+
+El indicador 🟢/🟡/🔴 (en el transporte de la compu, y por celular en el
+panel "Conectar celulares") muestra exactamente ese mismo `drift` — no es
+un valor decorativo aparte.
+
+## Dispositivos conectados
+
+El servidor mantiene un roster (`src/server/devices.ts`) con etiqueta
+("Computadora", "Celular 1", "Celular 2"...), estado conectado/desconectado
+y último drift reportado. Un dispositivo que se desconecta **no desaparece**
+de la lista — queda marcado en rojo, para que el operador note si alguien
+se cayó a mitad de un culto. Se ve en el panel "Conectar celulares".
+
 ## Qué falta / próximos pasos posibles
 
 - No se armó un instalador (electron-builder está como dependencia pero sin

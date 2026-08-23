@@ -105,6 +105,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
           proyecto={proyecto}
           playback={estado?.playbackActivo ?? null}
           playheadMs={controller.playheadMs}
+          driftMs={controller.driftMs}
           onPlay={() => controller.play()}
           onPause={controller.pause}
           onStop={controller.stop}
@@ -125,7 +126,9 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         />
       )}
 
-      {pantalla === 'conexion' && <ConnectionPanel onCerrar={() => setPantalla('ninguna')} />}
+      {pantalla === 'conexion' && (
+        <ConnectionPanel dispositivos={controller.dispositivos} onCerrar={() => setPantalla('ninguna')} />
+      )}
     </div>
   )
 }

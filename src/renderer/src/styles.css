@@ -198,6 +198,17 @@ input[type='text'], input:not([type]) {
 .aviso { color: #ffb84d; }
 .qr { background: #fff; padding: 10px; border-radius: 8px; margin: 12px 0; }
 .conexion-url { font-size: 13px; color: #9299a8; }
+.conexion-contador { font-size: 13px; margin: 10px 0 0; }
+
+.panel-conexion { text-align: left; }
+.panel-conexion h2, .panel-conexion > p:first-of-type { text-align: center; }
+.dispositivos-titulo { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #9299a8; margin: 16px 0 6px; }
+.lista-dispositivos { list-style: none; margin: 0 0 12px; padding: 0; max-height: 220px; overflow-y: auto; }
+.dispositivo-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid #232733; font-size: 13px; }
+.dispositivo-etiqueta { flex: 1; }
+
+.sync-badge { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sync-badge-sin-datos { color: #9299a8; }
 
 .lista-proyectos { list-style: none; margin: 10px 0; padding: 0; max-height: 320px; overflow-y: auto; }
 .lista-proyectos li { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }

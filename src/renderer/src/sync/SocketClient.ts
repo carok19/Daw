@@ -2,6 +2,7 @@ import { io, Socket } from 'socket.io-client'
 import type {
   ClockSyncAck,
   ComandoProgramado,
+  DispositivoInfo,
   EstadoCompleto,
   ErrorPayload,
   OrigenCliente
@@ -110,6 +111,11 @@ export class SocketClient {
   onRechazado(cb: (err: ErrorPayload) => void): Desuscribir {
     this.socket.on('accion:rechazada', cb)
     return () => this.socket.off('accion:rechazada', cb)
+  }
+
+  onDispositivos(cb: (dispositivos: DispositivoInfo[]) => void): Desuscribir {
+    this.socket.on('dispositivos:actualizado', cb)
+    return () => this.socket.off('dispositivos:actualizado', cb)
   }
 
   onConexionCambia(cb: (conectado: boolean) => void): Desuscribir {

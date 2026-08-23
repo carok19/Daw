@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PlaybackState, Proyecto } from '@shared/types'
 import { formatMmSs } from '../format'
+import { SyncBadge } from './SyncBadge'
 
 interface Props {
   proyecto: Proyecto
   playback: PlaybackState | null
   playheadMs: number
+  driftMs: number | null
   onPlay: () => void
   onPause: () => void
   onStop: () => void
@@ -18,6 +20,7 @@ export function Transport({
   proyecto,
   playback,
   playheadMs,
+  driftMs,
   onPlay,
   onPause,
   onStop,
@@ -77,6 +80,11 @@ export function Transport({
         <span className="transport-tiempo">
           {formatMmSs(playheadMs)} / {formatMmSs(proyecto.duracionTotalMs)}
         </span>
+        {jugando && (
+          <span className="transport-sync" title="Sincronizacion de esta computadora respecto al reloj del servidor">
+            <SyncBadge driftMs={driftMs} />
+          </span>
+        )}
       </div>
 
       <div className="transport-track" ref={trackRef} onClick={onClickTrack}>

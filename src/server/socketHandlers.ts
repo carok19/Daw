@@ -11,6 +11,7 @@ import type {
   MixerActualizarPayload,
   OrigenCliente,
   PistasReordenarPayload,
+  SyncReportPayload,
   TabsClosePayload,
   TabsSwitchPayload,
   TransportPlayPayload,
@@ -20,6 +21,7 @@ import { AppState, posicionActual } from './state'
 import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ZipSinPistasError } from './zip'
 import { deleteProyecto, listProyectos, loadProyecto } from './projects'
+import type { DeviceRegistry } from './devices'
 
 /**
  * Margen (ms) para programar una accion de audio a futuro (seccion 7.3), usado
@@ -49,9 +51,23 @@ function rechazar(socket: Socket, mensaje: string): void {
   socket.emit('accion:rechazada', payload)
 }
 
-export function registerSocketHandlers(io: Server, state: AppState): void {
+export function registerSocketHandlers(io: Server, state: AppState, devices: DeviceRegistry): void {
   io.on('connection', (socket: Socket) => {
-    ;(socket.data as SocketData).origen = origenDe(socket)
+    const origen = origenDe(socket)
+    ;(socket.data as SocketData).origen = origen
+
+    devices.conectar(socket.id, origen)
+    io.emit('dispositivos:actualizado', devices.listar())
+
+    socket.on('disconnect', () => {
+      devices.desconectar(socket.id)
+      io.emit('dispositivos:actualizado', devices.listar())
+    })
+
+    socket.on('sync:report', (payload: SyncReportPayload) => {
+      devices.actualizarDrift(socket.id, payload?.driftMs ?? null)
+      io.emit('dispositivos:actualizado', devices.listar())
+    })
 
     socket.on('clock:sync', (_payload: unknown, ack?: (r: { tServer: number }) => void) => {
       ack?.({ tServer: Date.now() })

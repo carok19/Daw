@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { EstadoCompleto, Marcador, OrigenCliente, Pista, ProyectoResumen } from '@shared/types'
+import type { DispositivoInfo, EstadoCompleto, Marcador, OrigenCliente, PlaybackState, Pista, ProyectoResumen } from '@shared/types'
 import { posicionActualMs } from '@shared/playback'
 import { SocketClient } from '../sync/SocketClient'
 import { AudioEngine } from '../audio/AudioEngine'
+import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_SUAVE_MS } from '../sync/driftConfig'
 
 /** Ajuste fino de sincronizacion: guardado por dispositivo (localStorage es por navegador/celular). */
 const AJUSTE_FINO_KEY = 'multitrack:ajuste-fino-ms'
@@ -14,6 +15,27 @@ function leerAjusteFinoGuardado(): number {
   } catch {
     return 0
   }
+}
+
+/**
+ * (Re)ingresa en sincronia: programa un "play" local desde la posicion que
+ * el modelo del servidor dice que deberia estar sonando AHORA, con un margen
+ * corto a futuro. Se usa para tres casos: cargar un proyecto que ya estaba
+ * sonando, reconectarse a mitad de cancion, y la resincronizacion dura del
+ * monitoreo de drift — los tres son variantes de "ponerme al dia con lo que
+ * el servidor dice que deberia estar pasando".
+ */
+function reingresarEnSync(
+  engine: AudioEngine,
+  socket: SocketClient,
+  playback: PlaybackState,
+  tabId: string,
+  margenMs: number
+): void {
+  const serverNow = socket.serverNow()
+  const executeAt = serverNow + margenMs
+  const posicion = posicionActualMs(playback, executeAt)
+  engine.ejecutar({ tabId, accion: 'play', positionMs: posicion, executeAtServerTime: executeAt }, socket.clockOffsetMs)
 }
 
 export function useAppController() {
@@ -30,10 +52,17 @@ export function useAppController() {
   const [volumenGeneral, setVolumenGeneralState] = useState(100)
   const [audioListo, setAudioListo] = useState(false)
   const [ajusteManualMs, setAjusteManualMsState] = useState(0)
+  const [driftMs, setDriftMs] = useState<number | null>(null)
+  const [dispositivos, setDispositivos] = useState<DispositivoInfo[]>([])
 
   const proyectoIdEnCarga = useRef<string | null>(null)
   const detuvoAlFinal = useRef(false)
   const ajusteManualMsRef = useRef(0)
+  // Espejo del estado, actualizado en cada render: lo lee el loop de monitoreo
+  // de drift (un setInterval con deps []) para no reinstalarse cada vez que
+  // cambia `estado`, y siempre leer el playback mas fresco.
+  const estadoRef = useRef<EstadoCompleto | null>(null)
+  estadoRef.current = estado
 
   useEffect(() => {
     const guardado = leerAjusteFinoGuardado()
@@ -82,6 +111,7 @@ export function useAppController() {
       })
     })
     const offError = socket.onRechazado((err) => setUltimoError(err.mensaje))
+    const offDispositivos = socket.onDispositivos((lista) => setDispositivos(lista))
     const offConexion = socket.onConexionCambia(async (c) => {
       setConectado(c)
       if (c) {
@@ -111,18 +141,7 @@ export function useAppController() {
 
         // si nos unimos con la cancion ya sonando, nos programamos para entrar en sync
         if (nuevo.playbackActivo?.estado === 'playing') {
-          const serverNow = socket.serverNow()
-          const posicionAhora = posicionActualMs(nuevo.playbackActivo, serverNow)
-          const margen = esReconexion ? 600 : 300
-          engine.ejecutar(
-            {
-              tabId: nuevo.activeTabId ?? '',
-              accion: 'play',
-              positionMs: posicionAhora,
-              executeAtServerTime: serverNow + margen
-            },
-            socket.clockOffsetMs
-          )
+          reingresarEnSync(engine, socket, nuevo.playbackActivo, nuevo.activeTabId ?? '', esReconexion ? 600 : 300)
         }
       } else if (!esProyectoNuevo) {
         engine.aplicarMezcla(proyecto.pistas)
@@ -133,9 +152,46 @@ export function useAppController() {
       offEstado()
       offPlayback()
       offError()
+      offDispositivos()
       offConexion()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Monitoreo continuo de sincronizacion (drift): mientras se esta
+  // reproduciendo, cada INTERVALO_MONITOREO_MS compara la posicion que el
+  // reloj de audio de ESTE dispositivo dice que esta sonando contra la que
+  // el modelo del servidor dice que deberia sonar. Si se separan, corrige.
+  // Deps [] a proposito (igual que el atajo de teclado): lee todo por ref
+  // para no reinstalar el interval en cada render.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const socket = socketRef.current
+      const engine = engineRef.current
+      const estadoActual = estadoRef.current
+      const playback = estadoActual?.playbackActivo
+      if (!socket || !engine || !playback || playback.estado !== 'playing') {
+        setDriftMs(null)
+        return
+      }
+      const posicionReal = engine.posicionRealMs()
+      if (posicionReal === null) return // el start() programado todavia no llego a su horario
+
+      const posicionEsperada = posicionActualMs(playback, socket.serverNow())
+      const drift = posicionReal - posicionEsperada
+      setDriftMs(drift)
+      socket.emit('sync:report', { driftMs: drift })
+
+      if (engine.enCorreccionSuave()) return // ya hay una correccion en curso, esperar a que termine
+
+      const abs = Math.abs(drift)
+      if (abs >= UMBRAL_DURO_MS) {
+        reingresarEnSync(engine, socket, playback, estadoActual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS)
+      } else if (abs >= UMBRAL_SUAVE_MS) {
+        engine.corregirDriftSuave(drift)
+      }
+    }, INTERVALO_MONITOREO_MS)
+    return () => clearInterval(id)
   }, [])
 
   // playhead: recalculado en cada frame a partir del estado de reproduccion + offset de reloj
@@ -260,6 +316,8 @@ export function useAppController() {
     volumenGeneral,
     audioListo,
     ajusteManualMs,
+    driftMs,
+    dispositivos,
     ultimoError,
     ...acciones
   }
