@@ -103,10 +103,12 @@ celular) corre su propio monitor cada `INTERVALO_MONITOREO_MS` (4s,
 1. Calcula `drift = posición real (según el reloj de audio) − posición
    esperada (según el modelo del servidor)`.
 2. `< UMBRAL_SUAVE_MS` (15ms): no hace nada.
-3. `< UMBRAL_DURO_MS` (150ms): corrección suave — ajusta levemente
-   `playbackRate` de todas las pistas por unos segundos (la cantidad justa
-   para absorber el drift) y vuelve a 1×. Un cambio de velocidad menor a
-   ~1% sostenido pocos segundos no se percibe al oído; es la misma técnica
+3. `< UMBRAL_DURO_MS` (150ms): corrección suave — ajusta `playbackRate` de
+   todas las pistas y vuelve a 1×. **Velocidad fija, ventana variable**: la
+   desviación de velocidad queda siempre acotada a `MAX_RATE_DEV` (0.4%,
+   dentro de `AudioEngine.corregirDriftSuave()`), imperceptible al oído; lo
+   que varía es cuánto tarda en terminar — 15ms tarda ~3.75s, 50ms ~12.5s,
+   149ms ~37.25s, siempre a la misma velocidad. Es la misma técnica
    ("vari-speed drift compensation") que usan sistemas profesionales de
    sincronización de audio.
 4. `≥ UMBRAL_DURO_MS`: resincronización dura — para y vuelve a programar el

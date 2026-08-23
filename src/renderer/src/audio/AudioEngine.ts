@@ -259,25 +259,30 @@ export class AudioEngine {
 
   /**
    * Corrige un drift chico sin cortes ni clicks: ajusta levemente la
-   * velocidad de reproduccion (`playbackRate`) de todas las pistas por
-   * `duracionSec` segundos, la cantidad justa para "absorber" `driftMs`, y
-   * vuelve a velocidad normal. Un cambio de velocidad menor a ~1% sostenido
-   * pocos segundos no se percibe al oido (misma tecnica que usan sistemas
-   * profesionales de sincronizacion de audio - "vari-speed drift compensation").
+   * velocidad de reproduccion (`playbackRate`) de todas las pistas y vuelve
+   * a velocidad normal. Velocidad FIJA, ventana VARIABLE: en vez de una
+   * ventana fija con una desviacion de velocidad que crece con el drift
+   * (podia llegar a ser audible con drifts grandes), la desviacion de
+   * velocidad queda siempre acotada a `MAX_RATE_DEV` (~0.4%, imperceptible)
+   * y lo que se alarga es cuanto tarda en terminar. Ejemplos a 0.4%:
+   * 15ms -> ~3.75s, 50ms -> ~12.5s, 149ms -> ~37.25s — siempre al mismo
+   * 0.4% de desviacion, nunca mas.
    *
    * driftMs > 0 = este dispositivo esta ADELANTADO (suena mas rapido/mas
    * avanzado de lo esperado) -> se lo hace sonar mas LENTO un rato.
    */
-  corregirDriftSuave(driftMs: number, duracionSec = 3): void {
+  corregirDriftSuave(driftMs: number): void {
     if (this.audioAnchorCtxTime === null || !this.tracks.some((t) => t.source)) return
     const now = this.ctx.currentTime
     if (now < this.correccionActivaHastaCtxTime) return // ya hay una correccion en curso
 
+    const MAX_RATE_DEV = 0.004 // 0.4% — punto medio del rango pedido (0.3%-0.5%), inaudible
     const driftSec = driftMs / 1000
-    // sostener `rateObjetivo` por `duracionSec` reproduce exactamente
-    // `duracionSec * (rateObjetivo - 1)` segundos de mas/de menos, que
-    // elegimos para que sea igual a `-driftSec` (cancela el drift).
-    const rateObjetivo = clamp(1 - driftSec / duracionSec, 0.9, 1.1)
+    const rateObjetivo = 1 - Math.sign(driftSec) * MAX_RATE_DEV
+    // sostener `rateObjetivo` (desviacion fija) por `duracionSec` reproduce
+    // exactamente `duracionSec * MAX_RATE_DEV` segundos de mas/de menos, que
+    // elegimos para que sea igual a `|driftSec|` (cancela el drift).
+    const duracionSec = Math.max(0.5, Math.abs(driftSec) / MAX_RATE_DEV)
     const rampIn = Math.min(0.2, duracionSec / 4)
 
     for (const track of this.tracks) {
