@@ -197,6 +197,30 @@ export function useAppController() {
     return () => clearInterval(id)
   }, [])
 
+  // Al bloquear la pantalla o pasar la app a segundo plano, el navegador frena
+  // los temporizadores de JS — el monitor de drift de arriba deja de correr,
+  // aunque el audio siga sonando. Al volver a primer plano, en vez de esperar
+  // el proximo tick (hasta INTERVALO_MONITOREO_MS despues, con el drift
+  // acumulado mientras tanto sin corregir), se resincroniza de inmediato:
+  // primero el reloj (el offset tambien pudo quedar desactualizado) y, si
+  // estaba reproduciendo, un resync duro ya mismo.
+  useEffect(() => {
+    async function onVisible(): Promise<void> {
+      if (document.visibilityState !== 'visible') return
+      const socket = socketRef.current
+      const engine = engineRef.current
+      if (!socket || !engine) return
+      await socket.sincronizarReloj()
+      const estadoActual = estadoRef.current
+      const playback = estadoActual?.playbackActivo
+      if (playback?.estado === 'playing') {
+        reingresarEnSync(engine, socket, playback, estadoActual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+
   // playhead: recalculado en cada frame a partir del estado de reproduccion + offset de reloj
   useEffect(() => {
     let raf = 0

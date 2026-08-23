@@ -125,6 +125,25 @@ El indicador 🟢/🟡/🔴 (en el transporte de la compu, y por celular en el
 panel "Conectar celulares") muestra exactamente ese mismo `drift` — no es
 un valor decorativo aparte.
 
+### Pantalla bloqueada / app en segundo plano
+
+El motivo real detrás de "un rato está bien y después se desincroniza" sin
+Bluetooth de por medio: los navegadores móviles frenan los temporizadores de
+JS cuando la pantalla se bloquea o la pestaña pasa a segundo plano (para
+ahorrar batería) — el audio sigue sonando, pero el monitor de drift de
+arriba deja de correr, así que cualquier deriva que aparezca mientras tanto
+queda sin corregir. Dos mitigaciones (`src/renderer/src/mobile/useWakeLock.ts`
+y el efecto de `visibilitychange` en `useAppController`):
+
+1. **Wake Lock**: al tocar "Activar audio" se pide `navigator.wakeLock`
+   para que la pantalla no se apague sola mientras el celular está en uso
+   (se vuelve a pedir automáticamente si el sistema lo libera).
+2. **Resync inmediato al volver**: si aun así la pantalla se bloqueó (por
+   ejemplo el usuario apagó la pantalla a mano, o pasó a otra app), en
+   cuanto la pestaña vuelve a primer plano se resincroniza el reloj y se
+   reprograma el audio de inmediato — no se espera al próximo chequeo
+   periódico.
+
 ## Dispositivos conectados
 
 El servidor mantiene un roster (`src/server/devices.ts`) con etiqueta

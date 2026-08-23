@@ -2,11 +2,13 @@ import { useState } from 'react'
 import type { AppController } from '../App'
 import { formatMmSs } from '../format'
 import { LoadingRing } from './LoadingRing'
+import { useWakeLock } from './useWakeLock'
 
 export function MobileApp({ controller }: { controller: AppController }) {
   const { estado, conectado, playheadMs, audioListo, cargaProgreso } = controller
   const [audioActivo, setAudioActivo] = useState(false)
   const [mostrarAjuste, setMostrarAjuste] = useState(false)
+  useWakeLock(audioActivo)
   const proyecto = estado?.proyectoActivo ?? null
   const marcadoresOrdenados = [...(proyecto?.marcadores ?? [])].sort((a, b) => a.tiempoMs - b.tiempoMs)
 
