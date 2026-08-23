@@ -67,6 +67,14 @@ export interface EstadoCompleto {
   activeTabId: string | null
   locked: boolean
   proyectoActivo: Proyecto | null
+  /**
+   * Datos completos (pistas, archivos) de TODAS las pestanas abiertas, en el
+   * mismo orden que `tabs` (mismo indice = misma pestana) — no solo la
+   * activa. Necesario para que un cliente pueda precargar en segundo plano
+   * la/las siguientes canciones del setlist antes de que se activen (ver
+   * README, "Precarga y cache de audio").
+   */
+  proyectos: Proyecto[]
   playbackActivo: PlaybackState | null
   serverTime: number
 }
@@ -166,8 +174,29 @@ export interface DispositivoInfo {
    * conectado, o no esta reproduciendo).
    */
   driftMs: number | null
+  /** Estado de precarga de cada proyecto que este dispositivo esta siguiendo (ver PreparacionProyecto). */
+  preparaciones: PreparacionProyecto[]
 }
 
 export interface SyncReportPayload {
   driftMs: number | null
+}
+
+/**
+ * Distingue "tengo los bytes" de "el audio ya esta realmente listo para
+ * reproducirse" (seccion pedida explicitamente: descarga != preparacion):
+ * - 'sin-preparar': todavia no se empezo (puede estar en cola detras de
+ *   una precarga de mayor prioridad).
+ * - 'descargando': bajando el archivo por WiFi (`progreso` 0-1 disponible).
+ * - 'preparando': ya se bajaron los bytes, decodificando a AudioBuffer.
+ * - 'listo': decodificado y activable desde cache al instante.
+ * - 'error': fallo la descarga o la decodificacion.
+ */
+export type EstadoPreparacion = 'sin-preparar' | 'descargando' | 'preparando' | 'listo' | 'error'
+
+export interface PreparacionProyecto {
+  proyectoId: string
+  estado: EstadoPreparacion
+  /** 0 a 1, solo tiene sentido durante 'descargando'. */
+  progreso?: number
 }

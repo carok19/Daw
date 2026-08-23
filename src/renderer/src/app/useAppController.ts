@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DispositivoInfo, EstadoCompleto, Marcador, OrigenCliente, PlaybackState, Pista, ProyectoResumen } from '@shared/types'
+import type {
+  DispositivoInfo,
+  EstadoCompleto,
+  Marcador,
+  OrigenCliente,
+  PlaybackState,
+  PreparacionProyecto,
+  Pista,
+  Proyecto,
+  ProyectoResumen
+} from '@shared/types'
 import { posicionActualMs } from '@shared/playback'
 import { SocketClient } from '../sync/SocketClient'
 import { AudioEngine } from '../audio/AudioEngine'
@@ -36,6 +46,36 @@ function reingresarEnSync(
   const executeAt = serverNow + margenMs
   const posicion = posicionActualMs(playback, executeAt)
   engine.ejecutar({ tabId, accion: 'play', positionMs: posicion, executeAtServerTime: executeAt }, socket.clockOffsetMs)
+}
+
+/** Proyectos que nunca se desalojan del cache: el activo y el siguiente del setlist (por orden de pestanas). */
+function calcularProtegidos(estado: EstadoCompleto): string[] {
+  const activeIndex = estado.tabs.findIndex((t) => t.tabId === estado.activeTabId)
+  if (activeIndex === -1) return []
+  const activo = estado.proyectos[activeIndex]?.id
+  const siguiente = estado.proyectos[activeIndex + 1]?.id
+  return [activo, siguiente].filter((id): id is string => !!id)
+}
+
+/**
+ * Prioridad de precarga en segundo plano (mas chico = antes): siguiente
+ * cancion del setlist primero, luego por cercania hacia adelante; lo que
+ * quedo "atras" (ya sonado) es la menor prioridad de todas.
+ */
+function prioridadDePrecarga(index: number, activeIndex: number): number {
+  return index > activeIndex ? index - activeIndex : 1000 + (activeIndex - index)
+}
+
+/** Siguiente proyecto a precargar en segundo plano (el de mayor prioridad que todavia no esta listo), o null si no queda nada por hacer. */
+function siguienteCandidatoDePrecarga(estado: EstadoCompleto, engine: AudioEngine): Proyecto | null {
+  const activeIndex = estado.tabs.findIndex((t) => t.tabId === estado.activeTabId)
+  if (activeIndex === -1) return null
+  const candidatos = estado.proyectos
+    .map((proyecto, index) => ({ proyecto, index }))
+    .filter(({ proyecto, index }) => index !== activeIndex && !engine.estaListo(proyecto.id))
+  if (candidatos.length === 0) return null
+  candidatos.sort((a, b) => prioridadDePrecarga(a.index, activeIndex) - prioridadDePrecarga(b.index, activeIndex))
+  return candidatos[0].proyecto
 }
 
 export function useAppController() {
@@ -122,18 +162,31 @@ export function useAppController() {
       }
     })
 
+    // Reporta el estado de preparacion (descarga/decodificacion) de un proyecto
+    // al Host (panel de dispositivos, seccion "precarga") y, si es el proyecto
+    // que esta cargando ESTA pantalla ahora mismo, tambien actualiza la rueda
+    // de progreso local.
+    function reportarPreparacion(p: PreparacionProyecto): void {
+      socket.emit('preparacion:reportar', p)
+      if (p.proyectoId === proyectoIdEnCarga.current && p.estado === 'descargando' && p.progreso !== undefined) {
+        setCargaProgreso(p.progreso)
+      }
+    }
+
     async function aplicarEstado(nuevo: EstadoCompleto, esReconexion = false): Promise<void> {
       setEstado(nuevo)
       const proyecto = nuevo.proyectoActivo
       if (!proyecto) return
 
       const engine = getEngine()
+      engine.setProtegidos(calcularProtegidos(nuevo))
+
       const esProyectoNuevo = engine.proyectoIdCargado !== proyecto.id
       if (esProyectoNuevo && proyectoIdEnCarga.current !== proyecto.id) {
         proyectoIdEnCarga.current = proyecto.id
         setAudioListo(false)
         setCargaProgreso(0)
-        const duracionDetectadaMs = await engine.cargarProyecto(proyecto, setCargaProgreso)
+        const duracionDetectadaMs = await engine.activarProyecto(proyecto, reportarPreparacion)
         proyectoIdEnCarga.current = null
         setAudioListo(true)
         detuvoAlFinal.current = false
@@ -160,6 +213,38 @@ export function useAppController() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Precarga en segundo plano (ver README "Precarga y cache de audio"): apenas
+  // cambia el setlist/la pestana activa, procesa de a UNA cancion por vez (por
+  // prioridad: siguiente > cercania > resto) las que todavia no esten en cache,
+  // sin competir por ancho de banda con lo que se esta reproduciendo ahora.
+  // Se re-dispara solo con cambios estructurales reales (`estado.tabs`/
+  // `estado.proyectos` mantienen la misma referencia entre actualizaciones de
+  // solo-playback, ver el merge en `offPlayback` de arriba).
+  const precargandoRef = useRef(false)
+  useEffect(() => {
+    async function procesarCola(): Promise<void> {
+      if (precargandoRef.current) return
+      precargandoRef.current = true
+      try {
+        for (;;) {
+          const socket = socketRef.current
+          const engine = engineRef.current
+          const estadoActual = estadoRef.current
+          if (!socket || !engine || !estadoActual) break
+          const candidato = siguienteCandidatoDePrecarga(estadoActual, engine)
+          if (!candidato) break
+          await engine.precargarProyecto(candidato, (p) => {
+            socket.emit('preparacion:reportar', p)
+          })
+        }
+      } finally {
+        precargandoRef.current = false
+      }
+    }
+    void procesarCola()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estado?.tabs, estado?.proyectos, estado?.activeTabId])
 
   // Monitoreo continuo de sincronizacion (drift): mientras se esta
   // reproduciendo, cada INTERVALO_MONITOREO_MS compara la posicion que el
@@ -356,6 +441,13 @@ export function useAppController() {
     []
   )
 
+  const siguienteProyecto = useMemo(() => {
+    if (!estado) return null
+    const activeIndex = estado.tabs.findIndex((t) => t.tabId === estado.activeTabId)
+    if (activeIndex === -1) return null
+    return estado.proyectos[activeIndex + 1] ?? null
+  }, [estado])
+
   return {
     origen,
     conectado,
@@ -367,6 +459,7 @@ export function useAppController() {
     ajusteManualMs,
     driftMs,
     dispositivos,
+    siguienteProyecto,
     ultimoError,
     ...acciones
   }

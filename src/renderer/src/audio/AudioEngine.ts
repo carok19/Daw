@@ -1,4 +1,4 @@
-import type { ComandoProgramado, Pista, Proyecto } from '@shared/types'
+import type { ComandoProgramado, Pista, PreparacionProyecto, Proyecto } from '@shared/types'
 
 interface PistaRuntime {
   pistaId: string
@@ -8,11 +8,30 @@ interface PistaRuntime {
   source: AudioBufferSourceNode | null
 }
 
+interface EntradaCache {
+  tracks: PistaRuntime[]
+  bytes: number
+  ultimoUso: number
+}
+
+/** PCM float32: duracion(seg) * sampleRate * canales * 4 bytes == buffer.length * canales * 4. */
+function bytesDeBuffer(buffer: AudioBuffer): number {
+  return buffer.length * buffer.numberOfChannels * 4
+}
+
 /**
  * Motor de audio multitrack (Web Audio API). Cada pista tiene su propio
- * GainNode (volumen) + StereoPannerNode (pan), persistentes mientras el
- * proyecto esta cargado; los AudioBufferSourceNode son de un solo uso y se
- * recrean en cada `ejecutar('play', ...)`.
+ * GainNode (volumen) + StereoPannerNode (pan); los AudioBufferSourceNode son
+ * de un solo uso y se recrean en cada `ejecutar('play', ...)`.
+ *
+ * Cache de proyectos (ver README "Precarga y cache de audio"): `this.tracks`
+ * es SOLO el set de pistas activo ahora mismo; `this.cache` retiene ademas
+ * los buffers ya decodificados de otras canciones del setlist (la actual
+ * incluida) para que volver a una cancion ya escuchada no vuelva a
+ * descargar ni decodificar nada — activacion instantanea desde `this.cache`.
+ * El cache tiene un presupuesto de memoria acotado con desalojo LRU; el
+ * proyecto activo y los marcados como "protegidos" (ver `setProtegidos`)
+ * nunca se desalojan.
  *
  * Un GainNode maestro adicional (`masterGain`) es el unico control disponible
  * en el celular (fader de volumen general, seccion 6): no afecta el pan ni
@@ -23,6 +42,16 @@ export class AudioEngine {
   private masterGain: GainNode
   private tracks: PistaRuntime[] = []
   private comandoPendiente: { cmd: ComandoProgramado; clockOffsetMs: number } | null = null
+
+  private cache = new Map<string, EntradaCache>()
+  private precargasEnCurso = new Map<
+    string,
+    { promise: Promise<void>; oyentes: Set<(p: PreparacionProyecto) => void> }
+  >()
+  private protegidos = new Set<string>()
+  /** ~800MB: unas 1-2 canciones tipicas (9 pistas, ~5min) de margen ademas de la activa/siguiente. Ver README. */
+  private readonly CACHE_MAX_BYTES = 800 * 1024 * 1024
+
   /**
    * Ajuste fino manual (ms), calibrado a oido por el musico en ESTE
    * dispositivo cuando la compensacion automatica no alcanza (tipicamente
@@ -69,68 +98,163 @@ export class AudioEngine {
     this.ajusteManualMs = ms
   }
 
-  /**
-   * Descarga y decodifica todas las pistas del proyecto. Devuelve la duracion
-   * (ms) de la mas larga. `onProgreso` (0 a 1) se llama con el avance
-   * combinado de bytes descargados de TODAS las pistas — para mostrar un
-   * porcentaje/rueda de carga en vez de un simple "cargando" sin datos
-   * (importante en celulares con WiFi lenta: varios MB de audio pueden
-   * tardar bastante y el musico necesita saber cuanto falta).
-   */
-  async cargarProyecto(proyecto: Proyecto, onProgreso?: (fraccion: number) => void): Promise<number> {
-    this.detenerFuentesInmediato()
-    this.tracks = []
-    this.proyectoIdCargado = proyecto.id
+  /** true si el proyecto ya esta decodificado y listo para activarse al instante. */
+  estaListo(proyectoId: string): boolean {
+    return this.cache.has(proyectoId)
+  }
 
-    const cargadosPorPista = new Array(proyecto.pistas.length).fill(0)
-    const totalesPorPista = new Array(proyecto.pistas.length).fill(0)
-    function reportarProgreso(): void {
-      const totalConocido = totalesPorPista.reduce((a, b) => a + b, 0)
-      if (totalConocido <= 0) return
-      const cargado = cargadosPorPista.reduce((a, b) => a + b, 0)
-      onProgreso?.(Math.min(1, cargado / totalConocido))
+  /**
+   * Proyectos que NUNCA se desalojan del cache aunque se supere el
+   * presupuesto de memoria — tipicamente [activo, siguiente del setlist].
+   * Llamar cada vez que cambian (p.ej. al cambiar de pestana activa).
+   */
+  setProtegidos(proyectoIds: string[]): void {
+    this.protegidos = new Set(proyectoIds)
+    this.evictarSiHaceFalta()
+  }
+
+  /**
+   * Descarga y decodifica un proyecto EN SEGUNDO PLANO, sin tocar la
+   * reproduccion activa (`this.tracks`), y lo deja en `this.cache` listo
+   * para activacion instantanea. Si ya esta en cache no repite trabajo. Si
+   * ya se esta precargando (p.ej. la precarga en segundo plano ya la habia
+   * arrancado y ahora el operador cambia a esa cancion antes de que
+   * termine), NO dispara una segunda descarga: se suma como oyente
+   * adicional a la MISMA descarga en curso, para que este llamador tambien
+   * reciba el progreso restante (sin esto, quien se "sube" a mitad de una
+   * descarga ya en marcha se quedaba sin actualizaciones de progreso).
+   * `onEstado` reporta las transiciones 'descargando' (con progreso 0-1) →
+   * 'preparando' (decodificando) → 'listo' | 'error'.
+   */
+  async precargarProyecto(proyecto: Proyecto, onEstado?: (p: PreparacionProyecto) => void): Promise<void> {
+    if (this.cache.has(proyecto.id)) {
+      onEstado?.({ proyectoId: proyecto.id, estado: 'listo' })
+      return
+    }
+    const enCurso = this.precargasEnCurso.get(proyecto.id)
+    if (enCurso) {
+      if (onEstado) enCurso.oyentes.add(onEstado)
+      return enCurso.promise
     }
 
-    const buffers = await Promise.all(
-      proyecto.pistas.map((pista, i) =>
-        this.descargarYDecodificar(proyecto.id, pista.archivo, (cargados, total) => {
-          cargadosPorPista[i] = cargados
-          totalesPorPista[i] = total
-          reportarProgreso()
-        })
-      )
-    )
+    const oyentes = new Set<(p: PreparacionProyecto) => void>()
+    if (onEstado) oyentes.add(onEstado)
+    const emitirATodos = (p: PreparacionProyecto): void => {
+      for (const oyente of oyentes) oyente(p)
+    }
 
-    // el proyecto pudo haber cambiado mientras esperabamos las descargas
-    if (this.proyectoIdCargado !== proyecto.id) return 0
-
-    this.tracks = proyecto.pistas.map((pista, i) => {
-      const gainNode = this.ctx.createGain()
-      const pannerNode = this.ctx.createStereoPanner()
-      gainNode.connect(pannerNode)
-      pannerNode.connect(this.masterGain)
-      return { pistaId: pista.id, buffer: buffers[i], gainNode, pannerNode, source: null }
+    const promise = this.precargarInterno(proyecto, emitirATodos).finally(() => {
+      this.precargasEnCurso.delete(proyecto.id)
     })
+    this.precargasEnCurso.set(proyecto.id, { promise, oyentes })
+    return promise
+  }
+
+  private async precargarInterno(proyecto: Proyecto, onEstado?: (p: PreparacionProyecto) => void): Promise<void> {
+    try {
+      const cargadosPorPista = new Array(proyecto.pistas.length).fill(0)
+      const totalesPorPista = new Array(proyecto.pistas.length).fill(0)
+      const reportarProgreso = (): void => {
+        const totalConocido = totalesPorPista.reduce((a, b) => a + b, 0)
+        if (totalConocido <= 0) return
+        const cargado = cargadosPorPista.reduce((a, b) => a + b, 0)
+        onEstado?.({ proyectoId: proyecto.id, estado: 'descargando', progreso: Math.min(1, cargado / totalConocido) })
+      }
+      onEstado?.({ proyectoId: proyecto.id, estado: 'descargando', progreso: 0 })
+
+      const bytesPorPista = await Promise.all(
+        proyecto.pistas.map((pista, i) =>
+          this.descargarBytes(proyecto.id, pista.archivo, (cargados, total) => {
+            cargadosPorPista[i] = cargados
+            totalesPorPista[i] = total
+            reportarProgreso()
+          })
+        )
+      )
+
+      onEstado?.({ proyectoId: proyecto.id, estado: 'preparando' })
+      const buffers = await Promise.all(bytesPorPista.map((b) => this.ctx.decodeAudioData(b)))
+
+      const tracks: PistaRuntime[] = proyecto.pistas.map((pista, i) => {
+        const gainNode = this.ctx.createGain()
+        const pannerNode = this.ctx.createStereoPanner()
+        gainNode.connect(pannerNode)
+        pannerNode.connect(this.masterGain)
+        return { pistaId: pista.id, buffer: buffers[i], gainNode, pannerNode, source: null }
+      })
+      aplicarMezclaATracks(tracks, proyecto.pistas)
+
+      const bytes = tracks.reduce((acc, t) => acc + bytesDeBuffer(t.buffer), 0)
+      this.cache.set(proyecto.id, { tracks, bytes, ultimoUso: Date.now() })
+      this.evictarSiHaceFalta()
+
+      onEstado?.({ proyectoId: proyecto.id, estado: 'listo' })
+    } catch (err) {
+      onEstado?.({ proyectoId: proyecto.id, estado: 'error' })
+      throw err
+    }
+  }
+
+  /**
+   * Activa un proyecto como el que suena ahora: instantaneo si ya esta en
+   * cache (no descarga ni decodifica nada — ni siquiera se llama a
+   * `onEstado`, mas alla del 'listo' final), o precarga primero si hace
+   * falta. Devuelve la duracion (ms) de la pista mas larga.
+   */
+  async activarProyecto(proyecto: Proyecto, onEstado?: (p: PreparacionProyecto) => void): Promise<number> {
+    if (this.cache.has(proyecto.id)) {
+      onEstado?.({ proyectoId: proyecto.id, estado: 'listo' })
+    } else {
+      await this.precargarProyecto(proyecto, onEstado)
+    }
+    return this.activarDesdeCache(proyecto)
+  }
+
+  private activarDesdeCache(proyecto: Proyecto): number {
+    const entrada = this.cache.get(proyecto.id)
+    if (!entrada) return 0 // la precarga fallo (ver 'error'); no hay nada que activar
+
+    this.detenerFuentesInmediato() // corta lo que estaba sonando de la cancion anterior
+    entrada.ultimoUso = Date.now()
+    this.tracks = entrada.tracks
+    this.proyectoIdCargado = proyecto.id
+    // por si el mixer cambio (compu) mientras esta cancion no estaba activa
     this.aplicarMezcla(proyecto.pistas)
 
-    // si mientras se descargaba/decodificaba llego un "play" (p.ej. un celular
-    // que se conecta justo cuando arranca la cancion), no se perdio: se aplica
-    // ahora. `ejecutar` ya sabe recalcular la posicion correcta si el horario
-    // original quedo en el pasado (ver mas abajo).
+    // si mientras se preparaba llego un "play" (p.ej. un celular que se
+    // conecta justo cuando arranca la cancion), no se perdio: se aplica
+    // ahora. `ejecutar` ya sabe recalcular la posicion correcta si el
+    // horario original quedo en el pasado.
     if (this.comandoPendiente) {
       const { cmd, clockOffsetMs } = this.comandoPendiente
       this.comandoPendiente = null
       this.ejecutar(cmd, clockOffsetMs)
     }
 
-    return Math.max(0, ...buffers.map((b) => b.duration * 1000))
+    return Math.max(0, ...entrada.tracks.map((t) => t.buffer.duration * 1000))
   }
 
-  private async descargarYDecodificar(
+  private evictarSiHaceFalta(): void {
+    let total = 0
+    for (const entrada of this.cache.values()) total += entrada.bytes
+    if (total <= this.CACHE_MAX_BYTES) return
+
+    const candidatos = [...this.cache.entries()]
+      .filter(([id]) => !this.protegidos.has(id) && id !== this.proyectoIdCargado)
+      .sort((a, b) => a[1].ultimoUso - b[1].ultimoUso) // mas viejo primero
+
+    for (const [id, entrada] of candidatos) {
+      if (total <= this.CACHE_MAX_BYTES) break
+      this.cache.delete(id)
+      total -= entrada.bytes
+    }
+  }
+
+  private async descargarBytes(
     proyectoId: string,
     archivoRelativo: string,
     onProgreso: (cargados: number, total: number) => void
-  ): Promise<AudioBuffer> {
+  ): Promise<ArrayBuffer> {
     const url = `/media/${proyectoId}/${archivoRelativo}`
     const resp = await fetch(url)
     const total = Number(resp.headers.get('content-length')) || 0
@@ -140,7 +264,7 @@ export class AudioEngine {
       // progreso fino: se descarga entero y se reporta de un salto al terminar
       const arrayBuffer = await resp.arrayBuffer()
       onProgreso(arrayBuffer.byteLength, arrayBuffer.byteLength || 1)
-      return this.ctx.decodeAudioData(arrayBuffer)
+      return arrayBuffer
     }
 
     const reader = resp.body.getReader()
@@ -161,19 +285,12 @@ export class AudioEngine {
       bytes.set(chunk, offset)
       offset += chunk.byteLength
     }
-    return this.ctx.decodeAudioData(bytes.buffer as ArrayBuffer)
+    return bytes.buffer as ArrayBuffer
   }
 
-  /** Aplica volumen/pan/mute/solo en tiempo real (sin recrear las fuentes). */
+  /** Aplica volumen/pan/mute/solo en tiempo real (sin recrear las fuentes) al set ACTIVO. */
   aplicarMezcla(pistas: Pista[]): void {
-    const haySolo = pistas.some((p) => p.solo)
-    for (const track of this.tracks) {
-      const pista = pistas.find((p) => p.id === track.pistaId)
-      if (!pista) continue
-      const silenciado = pista.mute || (haySolo && !pista.solo)
-      track.gainNode.gain.value = silenciado ? 0 : clamp(pista.volumen, 0, 100) / 100
-      track.pannerNode.pan.value = clamp(pista.pan, -100, 100) / 100
-    }
+    aplicarMezclaATracks(this.tracks, pistas)
   }
 
   /**
@@ -184,7 +301,7 @@ export class AudioEngine {
   ejecutar(cmd: ComandoProgramado, clockOffsetMs: number): void {
     if (cmd.accion === 'play' && this.tracks.length === 0) {
       // todavia no terminaron de decodificarse los buffers: se guarda para
-      // aplicarlo apenas termine `cargarProyecto` en vez de perderlo en silencio.
+      // aplicarlo apenas termine de activarse en vez de perderlo en silencio.
       this.comandoPendiente = { cmd, clockOffsetMs }
       return
     }
@@ -334,6 +451,17 @@ export class AudioEngine {
    */
   private latenciaDeSalidaSec(): number {
     return this.ctx.outputLatency ?? this.ctx.baseLatency ?? 0
+  }
+}
+
+function aplicarMezclaATracks(tracks: PistaRuntime[], pistas: Pista[]): void {
+  const haySolo = pistas.some((p) => p.solo)
+  for (const track of tracks) {
+    const pista = pistas.find((p) => p.id === track.pistaId)
+    if (!pista) continue
+    const silenciado = pista.mute || (haySolo && !pista.solo)
+    track.gainNode.gain.value = silenciado ? 0 : clamp(pista.volumen, 0, 100) / 100
+    track.pannerNode.pan.value = clamp(pista.pan, -100, 100) / 100
   }
 }
 

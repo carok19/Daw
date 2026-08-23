@@ -8,7 +8,7 @@ import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
 import { createServer } from './index'
 import type { EstadoCompleto, ClockSyncAck, ComandoProgramado, DispositivoInfo } from '../shared/types'
 
-function crearZipDePrueba(): string {
+function crearZipDePrueba(etiqueta = ''): string {
   const zip = new AdmZip()
   // wav header minimo valido (44 bytes, 0 frames) alcanza para probar el flujo de import
   const wavVacio = Buffer.from(
@@ -20,7 +20,8 @@ function crearZipDePrueba(): string {
   zip.addFile('click.wav', wavVacio)
   zip.addFile('notas.txt', Buffer.from('no es audio'))
   zip.addFile('__MACOSX/._voz_guia.wav', wavVacio)
-  const tmp = path.join(os.tmpdir(), `test-song-${Date.now()}.zip`)
+  const sufijo = etiqueta ? `${etiqueta}-` : ''
+  const tmp = path.join(os.tmpdir(), `test-song-${sufijo}${Date.now()}-${Math.random().toString(36).slice(2)}.zip`)
   zip.writeZip(tmp)
   return tmp
 }
@@ -267,4 +268,57 @@ test('registro de dispositivos: etiquetas, sync:report y desconexion queda visib
   server.httpServer.close()
   fs.rmSync(tmpAppDir, { recursive: true, force: true })
   fs.rmSync(rendererDirFake, { recursive: true, force: true })
+})
+
+test('protocolo de precarga: proyectos de todas las pestanas + preparacion:reportar', async () => {
+  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
+  process.env.MULTITRACK_APP_DIR = tmpAppDir
+  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
+  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+
+  const server = createServer(rendererDirFake)
+  const port = await server.start(0)
+
+  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
+  const celular = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
+  await Promise.all([
+    new Promise<void>((r) => compu.on('connect', r)),
+    new Promise<void>((r) => celular.on('connect', r))
+  ])
+
+  const zipA = crearZipDePrueba('A')
+  const zipB = crearZipDePrueba('B')
+  await emitAck<{ ok: boolean }>(compu, 'project:load-from-zip', { filePath: zipA })
+  await emitAck<{ ok: boolean }>(compu, 'project:load-from-zip', { filePath: zipB })
+
+  const estado = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  // dos pestanas abiertas, la B (cargada despues) es la activa
+  assert.equal(estado.tabs.length, 2)
+  assert.equal(estado.proyectos.length, 2)
+  // `proyectos` viaja en el MISMO orden/indice que `tabs`: el primero es la
+  // pestana NO activa (A), el segundo es la activa (B) — no solo esta ultima.
+  assert.notEqual(estado.proyectos[0].id, estado.proyectoActivo?.id)
+  assert.equal(estado.proyectos[1].id, estado.proyectoActivo?.id)
+  assert.equal(estado.tabs[0].tabId === estado.activeTabId, false)
+  assert.equal(estado.tabs[1].tabId === estado.activeTabId, true)
+  // la pestana inactiva (A) tambien trae sus pistas completas, no solo nombre/id
+  assert.ok(estado.proyectos[0].pistas.length > 0, 'se esperaban pistas completas para la pestana no activa')
+
+  // el celular reporta que ya tiene lista la cancion A (la "anterior", no la activa)
+  const proyectoAId = estado.proyectos[0].id
+  const listaConPreparacion = await new Promise<DispositivoInfo[]>((resolve) => {
+    compu.once('dispositivos:actualizado', resolve)
+    celular.emit('preparacion:reportar', { proyectoId: proyectoAId, estado: 'listo' })
+  })
+  const celularInfo = listaConPreparacion.find((d) => d.origen === 'celular')
+  const prepReportada = celularInfo?.preparaciones.find((p) => p.proyectoId === proyectoAId)
+  assert.equal(prepReportada?.estado, 'listo')
+
+  compu.close()
+  celular.close()
+  server.httpServer.close()
+  fs.rmSync(tmpAppDir, { recursive: true, force: true })
+  fs.rmSync(rendererDirFake, { recursive: true, force: true })
+  fs.rmSync(zipA, { force: true })
+  fs.rmSync(zipB, { force: true })
 })

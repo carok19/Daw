@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
-import type { DispositivoInfo } from '@shared/types'
+import type { DispositivoInfo, Proyecto } from '@shared/types'
 import { SyncBadge } from './SyncBadge'
+import { PreparacionBadge } from './PreparacionBadge'
 
 export function ConnectionPanel({
   dispositivos,
+  siguienteProyecto,
   onCerrar
 }: {
   dispositivos: DispositivoInfo[]
+  siguienteProyecto: Proyecto | null
   onCerrar: () => void
 }) {
   const [url, setUrl] = useState<string | null>(null)
@@ -66,6 +69,28 @@ export function ConnectionPanel({
             </li>
           ))}
         </ul>
+
+        {siguienteProyecto && dispositivos.some((d) => d.origen === 'celular') && (
+          <>
+            <h3 className="dispositivos-titulo">
+              Preparación de "{siguienteProyecto.nombre}" <span className="dispositivos-subtitulo">(siguiente)</span>
+            </h3>
+            <p className="dispositivos-ayuda">
+              Esto es solo informativo — el Play no espera a nadie. Si algún celular sigue en rojo/amarillo cuando
+              cambies de canción, se pone al día solo apenas termine.
+            </p>
+            <ul className="lista-dispositivos">
+              {dispositivos
+                .filter((d) => d.origen === 'celular' && d.conectado)
+                .map((d) => (
+                  <li key={d.id} className="dispositivo-row">
+                    <span className="dispositivo-etiqueta">{d.etiqueta}</span>
+                    <PreparacionBadge preparacion={d.preparaciones.find((p) => p.proyectoId === siguienteProyecto.id)} />
+                  </li>
+                ))}
+            </ul>
+          </>
+        )}
 
         <button onClick={onCerrar}>Cerrar</button>
       </div>

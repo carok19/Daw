@@ -210,6 +210,11 @@ input[type='text'], input:not([type]) {
 .sync-badge { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sync-badge-sin-datos { color: #9299a8; }
 
+.dispositivos-subtitulo { text-transform: none; letter-spacing: normal; font-weight: 400; }
+.dispositivos-ayuda { font-size: 12px; color: #9299a8; line-height: 1.5; margin: 0 0 8px; }
+.prep-badge { font-size: 12px; white-space: nowrap; }
+.prep-badge-espera { color: #9299a8; }
+
 .lista-proyectos { list-style: none; margin: 10px 0; padding: 0; max-height: 320px; overflow-y: auto; }
 .lista-proyectos li { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .proyecto-item { flex: 1; display: flex; flex-direction: column; align-items: flex-start; text-align: left; }

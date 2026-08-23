@@ -71,6 +71,11 @@ export class AppState {
     })
   }
 
+  /** Proyectos completos de todas las pestanas abiertas, mismo orden/indice que `listaTabs()`. */
+  listaProyectos(): Proyecto[] {
+    return this.orden.map((id) => this.tabs.get(id)!.proyecto)
+  }
+
   getTab(tabId: string | null): Tab | null {
     if (!tabId) return null
     return this.tabs.get(tabId) ?? null

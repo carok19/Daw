@@ -8,6 +8,7 @@ export function buildEstadoCompleto(state: AppState): EstadoCompleto {
     activeTabId: state.activeTabId,
     locked: state.locked,
     proyectoActivo: tab?.proyecto ?? null,
+    proyectos: state.listaProyectos(),
     playbackActivo: tab?.playback ?? null,
     serverTime: Date.now()
   }

@@ -173,6 +173,56 @@ y último drift reportado. Un dispositivo que se desconecta **no desaparece**
 de la lista — queda marcado en rojo, para que el operador note si alguien
 se cayó a mitad de un culto. Se ve en el panel "Conectar celulares".
 
+## Precarga y cache de audio
+
+**El problema que resuelve**: antes, cada vez que la compu cambiaba de
+canción (incluso volviendo a una que ya había sonado antes en el mismo
+culto), cada celular volvía a descargar y decodificar TODAS las pistas
+desde cero — `AudioEngine` no retenía nada entre canciones. Sesión de
+reproducción continua ahora significa: Socket.IO nunca se toca al cambiar
+de canción (ya no se tocaba antes tampoco), el clock offset tampoco se
+recalcula (idem), y los `AudioBuffer` decodificados sí se retienen.
+
+**Cache** (`src/renderer/src/audio/AudioEngine.ts`): `this.tracks` es
+únicamente el set de pistas *activo ahora mismo*; un `Map` aparte
+(`this.cache`, por `proyectoId`) retiene además los buffers ya
+decodificados de otras canciones del setlist. `activarProyecto()` primero
+consulta el cache — si está, activación instantánea (solo reconecta nodos
+ya existentes, cero descarga, cero decodificación); si no, precarga y
+activa. `A → B → A` no vuelve a descargar `A`.
+
+**Presupuesto de memoria**: un `AudioBuffer` decodificado pesa
+`duración × sampleRate × canales × 4 bytes` (PCM float32 sin comprimir,
+sin importar el formato original). Una canción típica (9 pistas, ~5min)
+decodificada entera ronda **500–700MB** — cachear un setlist completo sin
+límite son varios GB, inviable en un celular. Por eso el cache tiene un
+presupuesto (`CACHE_MAX_BYTES`, 800MB por defecto) con desalojo LRU
+(se descarta primero lo usado hace más tiempo); **la canción activa y la
+siguiente del setlist nunca se desalojan**, sin importar el presupuesto —
+solo gobierna cuántas canciones "extra" quedan dando vueltas.
+
+**Precarga en segundo plano** (`useAppController`): mientras suena la
+canción activa, se precargan de a una por vez las demás canciones del
+setlist que no estén cacheadas, por prioridad — siguiente primero, después
+por cercanía hacia adelante, lo de atrás ("ya sonado") al final — sin
+competir por ancho de banda entre sí, y sin interrumpir la que está
+sonando (la precarga nunca toca `this.tracks`).
+
+**Reporte de estado** (`preparacion:reportar` → `DeviceRegistry` →
+`estado:actualizado`): cada dispositivo informa `sin-preparar` /
+`descargando` (con %) / `preparando` (decodificando) / `listo` / `error`
+por proyecto — distinguiendo explícitamente "tengo los bytes" de "el audio
+ya está realmente utilizable". Se ve en el panel "Conectar celulares",
+bajo el nombre de la próxima canción.
+
+**Decisión explícita: NO bloquea `transport:play`.** Es solo informativo —
+el Play sigue funcionando exactamente igual que siempre, sin esperar a que
+nadie termine de preparar nada. Si un celular cambia de canción antes de
+terminar su propia precarga, el comando de audio que le llegue mientras
+tanto queda en espera (mecanismo ya existente de `comandoPendiente`) y se
+aplica solo apenas termine — no se pierde, pero tampoco bloquea a los
+demás dispositivos ni al operador.
+
 ## Qué falta / próximos pasos posibles
 
 - No se armó un instalador (electron-builder está como dependencia pero sin

@@ -127,7 +127,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
       )}
 
       {pantalla === 'conexion' && (
-        <ConnectionPanel dispositivos={controller.dispositivos} onCerrar={() => setPantalla('ninguna')} />
+        <ConnectionPanel
+          dispositivos={controller.dispositivos}
+          siguienteProyecto={controller.siguienteProyecto}
+          onCerrar={() => setPantalla('ninguna')}
+        />
       )}
     </div>
   )

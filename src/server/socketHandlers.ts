@@ -11,6 +11,7 @@ import type {
   MixerActualizarPayload,
   OrigenCliente,
   PistasReordenarPayload,
+  PreparacionProyecto,
   SyncReportPayload,
   TabsClosePayload,
   TabsSwitchPayload,
@@ -66,6 +67,16 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
 
     socket.on('sync:report', (payload: SyncReportPayload) => {
       devices.actualizarDrift(socket.id, payload?.driftMs ?? null)
+      io.emit('dispositivos:actualizado', devices.listar())
+    })
+
+    // Precarga (ver README "Precarga y cache de audio"): cada dispositivo
+    // informa el estado de preparacion de cada proyecto que esta siguiendo
+    // (activo y/o siguiente del setlist), puramente informativo — no
+    // condiciona transport:play en absoluto (opcion "visual" acordada).
+    socket.on('preparacion:reportar', (payload: PreparacionProyecto) => {
+      if (!payload?.proyectoId || !payload?.estado) return
+      devices.actualizarPreparacion(socket.id, payload)
       io.emit('dispositivos:actualizado', devices.listar())
     })
 
