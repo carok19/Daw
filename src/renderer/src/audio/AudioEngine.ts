@@ -69,14 +69,36 @@ export class AudioEngine {
     this.ajusteManualMs = ms
   }
 
-  /** Descarga y decodifica todas las pistas del proyecto. Devuelve la duracion (ms) de la mas larga. */
-  async cargarProyecto(proyecto: Proyecto): Promise<number> {
+  /**
+   * Descarga y decodifica todas las pistas del proyecto. Devuelve la duracion
+   * (ms) de la mas larga. `onProgreso` (0 a 1) se llama con el avance
+   * combinado de bytes descargados de TODAS las pistas — para mostrar un
+   * porcentaje/rueda de carga en vez de un simple "cargando" sin datos
+   * (importante en celulares con WiFi lenta: varios MB de audio pueden
+   * tardar bastante y el musico necesita saber cuanto falta).
+   */
+  async cargarProyecto(proyecto: Proyecto, onProgreso?: (fraccion: number) => void): Promise<number> {
     this.detenerFuentesInmediato()
     this.tracks = []
     this.proyectoIdCargado = proyecto.id
 
+    const cargadosPorPista = new Array(proyecto.pistas.length).fill(0)
+    const totalesPorPista = new Array(proyecto.pistas.length).fill(0)
+    function reportarProgreso(): void {
+      const totalConocido = totalesPorPista.reduce((a, b) => a + b, 0)
+      if (totalConocido <= 0) return
+      const cargado = cargadosPorPista.reduce((a, b) => a + b, 0)
+      onProgreso?.(Math.min(1, cargado / totalConocido))
+    }
+
     const buffers = await Promise.all(
-      proyecto.pistas.map((pista) => this.descargarYDecodificar(proyecto.id, pista.archivo))
+      proyecto.pistas.map((pista, i) =>
+        this.descargarYDecodificar(proyecto.id, pista.archivo, (cargados, total) => {
+          cargadosPorPista[i] = cargados
+          totalesPorPista[i] = total
+          reportarProgreso()
+        })
+      )
     )
 
     // el proyecto pudo haber cambiado mientras esperabamos las descargas
@@ -104,11 +126,42 @@ export class AudioEngine {
     return Math.max(0, ...buffers.map((b) => b.duration * 1000))
   }
 
-  private async descargarYDecodificar(proyectoId: string, archivoRelativo: string): Promise<AudioBuffer> {
+  private async descargarYDecodificar(
+    proyectoId: string,
+    archivoRelativo: string,
+    onProgreso: (cargados: number, total: number) => void
+  ): Promise<AudioBuffer> {
     const url = `/media/${proyectoId}/${archivoRelativo}`
     const resp = await fetch(url)
-    const arrayBuffer = await resp.arrayBuffer()
-    return this.ctx.decodeAudioData(arrayBuffer)
+    const total = Number(resp.headers.get('content-length')) || 0
+
+    if (!resp.body || total <= 0) {
+      // sin Content-Length (o navegador sin streaming body) no se puede medir
+      // progreso fino: se descarga entero y se reporta de un salto al terminar
+      const arrayBuffer = await resp.arrayBuffer()
+      onProgreso(arrayBuffer.byteLength, arrayBuffer.byteLength || 1)
+      return this.ctx.decodeAudioData(arrayBuffer)
+    }
+
+    const reader = resp.body.getReader()
+    const chunks: Uint8Array[] = []
+    let cargados = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        chunks.push(value)
+        cargados += value.byteLength
+        onProgreso(cargados, total)
+      }
+    }
+    const bytes = new Uint8Array(cargados)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    return this.ctx.decodeAudioData(bytes.buffer as ArrayBuffer)
   }
 
   /** Aplica volumen/pan/mute/solo en tiempo real (sin recrear las fuentes). */

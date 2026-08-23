@@ -51,6 +51,7 @@ export function useAppController() {
   const [playheadMs, setPlayheadMs] = useState(0)
   const [volumenGeneral, setVolumenGeneralState] = useState(100)
   const [audioListo, setAudioListo] = useState(false)
+  const [cargaProgreso, setCargaProgreso] = useState(0)
   const [ajusteManualMs, setAjusteManualMsState] = useState(0)
   const [driftMs, setDriftMs] = useState<number | null>(null)
   const [dispositivos, setDispositivos] = useState<DispositivoInfo[]>([])
@@ -130,7 +131,9 @@ export function useAppController() {
       const esProyectoNuevo = engine.proyectoIdCargado !== proyecto.id
       if (esProyectoNuevo && proyectoIdEnCarga.current !== proyecto.id) {
         proyectoIdEnCarga.current = proyecto.id
-        const duracionDetectadaMs = await engine.cargarProyecto(proyecto)
+        setAudioListo(false)
+        setCargaProgreso(0)
+        const duracionDetectadaMs = await engine.cargarProyecto(proyecto, setCargaProgreso)
         proyectoIdEnCarga.current = null
         setAudioListo(true)
         detuvoAlFinal.current = false
@@ -315,6 +318,7 @@ export function useAppController() {
     playheadMs,
     volumenGeneral,
     audioListo,
+    cargaProgreso,
     ajusteManualMs,
     driftMs,
     dispositivos,

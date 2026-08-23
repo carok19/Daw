@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import type { AppController } from '../App'
 import { formatMmSs } from '../format'
+import { LoadingRing } from './LoadingRing'
 
 export function MobileApp({ controller }: { controller: AppController }) {
-  const { estado, conectado, playheadMs, audioListo } = controller
+  const { estado, conectado, playheadMs, audioListo, cargaProgreso } = controller
   const [audioActivo, setAudioActivo] = useState(false)
   const [mostrarAjuste, setMostrarAjuste] = useState(false)
   const proyecto = estado?.proyectoActivo ?? null
@@ -73,7 +74,14 @@ export function MobileApp({ controller }: { controller: AppController }) {
         </div>
       )}
 
-      {proyecto && (
+      {proyecto && !audioListo && (
+        <div className="mobile-cargando-pantalla">
+          <LoadingRing progreso={cargaProgreso} />
+          <p>Descargando la canción…</p>
+        </div>
+      )}
+
+      {proyecto && audioListo && (
         <>
           <div className="mobile-marcadores">
             {marcadoresOrdenados.length === 0 && <p className="markers-vacio">Todavía no hay marcadores.</p>}
@@ -102,7 +110,6 @@ export function MobileApp({ controller }: { controller: AppController }) {
               />
               <span>🔊</span>
             </div>
-            {!audioListo && <span className="mobile-cargando">Cargando audio…</span>}
           </div>
         </>
       )}
