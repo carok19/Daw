@@ -175,6 +175,11 @@ se cayó a mitad de un culto. Se ve en el panel "Conectar celulares".
 
 ## Precarga y cache de audio
 
+> Esta sección describe **la compu** (`AudioEngine`), que sigue funcionando
+> exactamente así. El celular pasó a un modelo distinto — streaming
+> progresivo por buffer deslizante — descrito en la sección siguiente; ya NO
+> descarga ni cachea canciones completas.
+
 **El problema que resuelve**: antes, cada vez que la compu cambiaba de
 canción (incluso volviendo a una que ya había sonado antes en el mismo
 culto), cada celular volvía a descargar y decodificar TODAS las pistas
@@ -222,6 +227,117 @@ terminar su propia precarga, el comando de audio que le llegue mientras
 tanto queda en espera (mecanismo ya existente de `comandoPendiente`) y se
 aplica solo apenas termine — no se pierde, pero tampoco bloquea a los
 demás dispositivos ni al operador.
+
+## Streaming progresivo (buffer deslizante) — Fase 1, solo WAV
+
+**El problema que resuelve**: la precarga de arriba mejora las repeticiones,
+pero el celular seguía descargando y decodificando la canción **entera** la
+primera vez (500–700MB de RAM por canción). El objetivo de esta fase es que
+el receptor — especialmente la futura APK Android — nunca necesite tener la
+canción completa: el Host retiene todo el audio (como hasta ahora); el
+celular solo mantiene en memoria una **ventana móvil** de unos segundos
+alrededor del playhead.
+
+**Alcance explícito de la Fase 1**: solo WAV. Nada de MP3/M4A, Opus, WebRTC,
+UDP, QUIC ni APK Android — eso queda para más adelante. Transporte: HTTP
+para los segmentos de audio, Socket.IO se sigue usando exclusivamente para
+control/sincronización (CLOCK SYNC, TRANSPORT SYNC, play/pause/seek/marker,
+DRIFT SYNC, estado de preparación, estado de dispositivos).
+
+**Por qué WAV y por qué HTTP Range sin tocar el servidor**: `decodeAudioData`
+no es incremental — no se puede decodificar un archivo comprimido a medida
+que crece. MP3 tiene estado entre frames ("bit reservoir") y M4A/AAC tiene
+delay de encoder: cortarlos en pedazos arbitrarios y decodificar cada uno
+por separado puede sonar con clicks en los bordes. WAV/PCM no tiene ese
+problema — es seguro cortarlo en cualquier sample. Mejor todavía: como WAV
+es PCM crudo con un header simple, **no hace falta decodificar nada en el
+servidor**: `express.static` (que ya servía `/media`) responde `206 Partial
+Content` ante un header `Range` de fábrica — verificado con una prueba
+directa antes de escribir código. El celular pide exactamente los bytes de
+cada segmento por offset de sample, sin descargar el resto del archivo, y
+los decodifica él mismo con un parser manual de WAV
+(`src/renderer/src/audio/wav.ts`) — nada de servidor nuevo.
+
+**Dos motores, mismo protocolo de transporte** (`src/renderer/src/audio/PlaybackEngine.ts`
+define la interfaz común que usa `useAppController`):
+- **Compu** → sigue siendo `AudioEngine`, sin ningún cambio: cache completo,
+  como en la sección anterior.
+- **Celular** → `StreamingEngine` (nuevo, `src/renderer/src/audio/StreamingEngine.ts`):
+  buffer deslizante por segmentos.
+
+**Ventana deslizante, no un `AudioBuffer` del tamaño de la canción**: cada
+pista mantiene un `Map<índiceDeSegmento, AudioBuffer>` donde cada segmento
+dura `SEGMENT_DURATION_SEC`. Nunca hay más de
+`~BUFFER_TARGET_SEC / SEGMENT_DURATION_SEC` segmentos cacheados por pista a
+la vez (con los valores por defecto, ~5 segmentos ≈ 10s). Apenas un segmento
+termina de sonar (`source.onended`), se borra del `Map` — queda libre para
+el recolector de basura. Verificado explícitamente antes del primer commit:
+en todo `StreamingEngine.ts` hay un solo `ctx.createBuffer(...)`, siempre
+dimensionado a un segmento (`frameCountReal`, acotado a
+`SEGMENT_DURATION_SEC` de audio), y cero llamadas a `decodeAudioData`.
+
+**Umbrales configurables** (`src/renderer/src/audio/streamConfig.ts`, mismo
+patrón que `driftConfig.ts` — nada hardcodeado dentro de `StreamingEngine`,
+para poder probar otros valores sin tocar la lógica):
+
+| Constante | Valor por defecto | Significado |
+|---|---|---|
+| `SEGMENT_DURATION_SEC` | 2 | Duración de cada segmento pedido por HTTP Range |
+| `BUFFER_TARGET_SEC` | 8 | Por encima: 🟢 normal |
+| `BUFFER_CRITICAL_SEC` | 3 | Entre crítico y objetivo: 🟡 rellenando. Por debajo: 🔴 crítico |
+| `BUFFER_MIN_START_SEC` | 3 | Mínimo antes de programar un arranque/reingreso a sync |
+
+`StreamingEngine.estadoBuffer()`/`bufferSegundosDisponibles()` ya calculan
+esto (min entre pistas); no está cableado a una UI todavía — queda listo
+para cuando haga falta mostrarlo.
+
+**Encadenado gapless**: cada segmento es un `AudioBufferSourceNode` de un
+solo uso. En vez de temporizadores, el próximo segmento de cada pista se
+programa con `source.start(cursor, offset)` donde `cursor` es
+`cursorAnterior + duraciónExactaDelSegmentoAnterior` (aritmética de
+muestras, no de reloj) — el empalme entre segmentos consecutivos no tiene
+huecos ni superposición. Los `GainNode`/`StereoPannerNode` por pista son
+persistentes (se crean una vez en `activarProyecto`, igual que en
+`AudioEngine`): cada segmento nuevo se conecta a los mismos nodos, así el
+mixer (fader/pan/mute/solo) sigue aplicando sin ningún cambio.
+
+**Garantía dura: nunca se programa sobre una región no disponible.** El
+`tick()` (cada 300ms) solo llama `source.start()` para el próximo índice si
+ya está decodificado en TODAS las pistas. Si al segmento que hace falta le
+queda menos de medio segundo de margen y todavía no llegó, el motor entra
+en estado "esperando": deja de encadenar (nunca inyecta silencio sintético,
+nunca reproduce datos incorrectos — lo que ya estaba sonando simplemente
+termina) y sigue pidiendo agresivamente lo que falta. Apenas se junta de
+nuevo `BUFFER_MIN_START_SEC`, el motor llama a `onRequiereResync()` — un
+enganche hacia `reingresarEnSync()`, el mecanismo de reingreso a sync **ya
+existente** (el mismo que usan la reconexión y el resync duro de drift) —
+en vez de que `StreamingEngine` invente su propio scheduling. Este
+dispositivo se pone al día solo, con el mecanismo de siempre; no fuerza a
+pausar a los demás.
+
+**Seek / salto de marcador**: el servidor programa cualquier salto (incluso
+un `marker:jump`) como un `play` nuevo con `positionMs` + `executeAtServerTime`
+(mecanismo ya existente, sin tocar). `StreamingEngine.ejecutar()` interpreta
+todo `play` como "arrancar en esta posición", nunca como "seguir bajando
+desde donde estaba": descarta los segmentos anteriores a la nueva posición
+y pide directamente la ventana alrededor del nuevo índice — nunca descarga
+el tramo intermedio (p.ej. saltar de 00:30 a 02:15 no baja nada de
+00:30–02:15). Si el buffer ya tenía algo cacheado cerca de la nueva
+posición (resyncs chicos), lo reutiliza en vez de re-pedirlo.
+
+**Integración con DRIFT SYNC (fórmula y umbrales sin tocar)**: la corrección
+suave (`corregirDriftSuave`) usa exactamente la misma fórmula que
+`AudioEngine` (0.4% de desviación de velocidad, ventana variable) — lo único
+que cambia es dónde se aplica: en vez de una única fuente por pista, se
+aplica a todas las fuentes activas de todas las pistas, y la rampa en curso
+se re-aplica a cualquier segmento que se encadene mientras dura (para que no
+haya un salto de velocidad audible justo en el borde entre dos segmentos).
+
+**Qué NO se tocó**: `AudioEngine.ts` (motor de la compu, cero cambios),
+`socketHandlers.ts`/`state.ts`/`devices.ts` (CLOCK/TRANSPORT/DRIFT SYNC y
+marker resync del lado servidor), el mixer, y el servidor de medios
+(`/media` sigue siendo `express.static` puro — el soporte de `Range` ya
+venía de fábrica).
 
 ## Qué falta / próximos pasos posibles
 

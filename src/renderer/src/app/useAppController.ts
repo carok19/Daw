@@ -13,6 +13,8 @@ import type {
 import { posicionActualMs } from '@shared/playback'
 import { SocketClient } from '../sync/SocketClient'
 import { AudioEngine } from '../audio/AudioEngine'
+import { StreamingEngine } from '../audio/StreamingEngine'
+import type { PlaybackEngine } from '../audio/PlaybackEngine'
 import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_SUAVE_MS } from '../sync/driftConfig'
 
 /** Ajuste fino de sincronizacion: guardado por dispositivo (localStorage es por navegador/celular). */
@@ -36,7 +38,7 @@ function leerAjusteFinoGuardado(): number {
  * el servidor dice que deberia estar pasando".
  */
 function reingresarEnSync(
-  engine: AudioEngine,
+  engine: PlaybackEngine,
   socket: SocketClient,
   playback: PlaybackState,
   tabId: string,
@@ -67,7 +69,7 @@ function prioridadDePrecarga(index: number, activeIndex: number): number {
 }
 
 /** Siguiente proyecto a precargar en segundo plano (el de mayor prioridad que todavia no esta listo), o null si no queda nada por hacer. */
-function siguienteCandidatoDePrecarga(estado: EstadoCompleto, engine: AudioEngine): Proyecto | null {
+function siguienteCandidatoDePrecarga(estado: EstadoCompleto, engine: PlaybackEngine): Proyecto | null {
   const activeIndex = estado.tabs.findIndex((t) => t.tabId === estado.activeTabId)
   if (activeIndex === -1) return null
   const candidatos = estado.proyectos
@@ -82,8 +84,29 @@ export function useAppController() {
   const origen: OrigenCliente = typeof window !== 'undefined' && window.electronAPI ? 'compu' : 'celular'
 
   const socketRef = useRef<SocketClient | null>(null)
-  const engineRef = useRef<AudioEngine | null>(null)
+  const engineRef = useRef<PlaybackEngine | null>(null)
   if (!socketRef.current) socketRef.current = new SocketClient(origen)
+
+  // compu: AudioEngine (cache completo, sin cambios). celular: StreamingEngine
+  // (buffer deslizante por segmentos, ver README "Streaming progresivo") — el
+  // receptor nunca descarga ni cachea la cancion entera. `onRequiereResync` es
+  // el enganche del celular hacia el mecanismo de reingreso YA EXISTENTE
+  // (`reingresarEnSync`, mas abajo) para cuando el buffer se agota o recien
+  // arranca: el motor nunca inventa su propio scheduling absoluto.
+  function crearEngine(): PlaybackEngine {
+    const engine: PlaybackEngine = origen === 'compu' ? new AudioEngine() : new StreamingEngine()
+    engine.setAjusteManualMs(ajusteManualMsRef.current)
+    if (origen === 'celular') {
+      engine.onRequiereResync?.(() => {
+        const socket = socketRef.current
+        const estadoActual = estadoRef.current
+        const playback = estadoActual?.playbackActivo
+        if (!socket || !playback || playback.estado !== 'playing') return
+        reingresarEnSync(engine, socket, playback, estadoActual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS)
+      })
+    }
+    return engine
+  }
 
   const [conectado, setConectado] = useState(false)
   const [estado, setEstado] = useState<EstadoCompleto | null>(null)
@@ -115,11 +138,8 @@ export function useAppController() {
   useEffect(() => {
     const socket = socketRef.current!
 
-    function getEngine(): AudioEngine {
-      if (!engineRef.current) {
-        engineRef.current = new AudioEngine()
-        engineRef.current.setAjusteManualMs(ajusteManualMsRef.current)
-      }
+    function getEngine(): PlaybackEngine {
+      if (!engineRef.current) engineRef.current = crearEngine()
       return engineRef.current
     }
 
@@ -223,6 +243,12 @@ export function useAppController() {
   // solo-playback, ver el merge en `offPlayback` de arriba).
   const precargandoRef = useRef(false)
   useEffect(() => {
+    // Solo la compu precarga canciones completas de antemano. El celular
+    // (StreamingEngine) NUNCA descarga una cancion entera por adelantado —
+    // eso es exactamente lo que el streaming progresivo evita — asi que este
+    // loop no aplica de ese lado (ver README "Streaming progresivo").
+    if (origen !== 'compu') return
+
     async function procesarCola(): Promise<void> {
       if (precargandoRef.current) return
       precargandoRef.current = true
@@ -358,10 +384,7 @@ export function useAppController() {
   const acciones = useMemo(
     () => ({
       async activarAudio(): Promise<void> {
-        if (!engineRef.current) {
-          engineRef.current = new AudioEngine()
-          engineRef.current.setAjusteManualMs(ajusteManualMsRef.current)
-        }
+        if (!engineRef.current) engineRef.current = crearEngine()
         await engineRef.current.resumeSiHaceFalta()
       },
       setVolumenGeneral(v: number): void {
