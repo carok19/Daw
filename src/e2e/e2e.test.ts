@@ -20,6 +20,7 @@ import { chromium, devices, type Browser, type BrowserContext, type Page } from 
 import { createServer, type AppServer } from '../server'
 import { rutaFfmpeg } from '../server/audio'
 import { buildEstadoCompleto } from '../server/estado'
+import { ANUNCIOS, inicioCompas, zipConGuia } from '../server/__fixtures__/sintetico'
 
 const RENDERER = path.resolve(__dirname, '../renderer')
 const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -94,6 +95,33 @@ function desfase(p: Page): Promise<number | null> {
   })
 }
 
+/**
+ * Sync de los celulares contra el reloj del servidor (y por lo tanto entre ellos):
+ *  - nunca cerca del resync duro (150 ms);
+ *  - todos juntos a menos de 20 ms, y si alguno se corrio, vuelve solo en un tiempo acotado.
+ * En Chromium headless (4 nucleos compartidos con el servidor y los otros navegadores) el dispositivo de
+ * audio falso a veces se atrasa de golpe 20-90 ms, como un corte de audio en un celular real: se mide
+ * (con la posicion que de verdad suena, incluso a mitad de una correccion) que el monitor de drift lo
+ * detecte y lo absorba con el ajuste de velocidad inaudible.
+ */
+async function enSync(celulares: Page[], contexto: string, convergerMs = 25000): Promise<void> {
+  const fin = Date.now() + convergerMs
+  for (;;) {
+    const d = await Promise.all(celulares.map((c) => desfase(c)))
+    if (d.some((x) => x === null)) {
+      // justo en un salto/vuelta del loop (el nuevo arranque esta programado un instante despues)
+      assert.ok(Date.now() < fin, `${contexto}: un celular no suena`)
+      await esperar(100)
+      continue
+    }
+    const v = d as number[]
+    assert.ok(v.every((x) => Math.abs(x) < 150), `${contexto}: desfase fuera de control ${v.join(' / ')} ms`)
+    if (v.every((x) => Math.abs(x) < 20)) return
+    assert.ok(Date.now() < fin, `${contexto}: no volvió a sync (${v.join(' / ')} ms)`)
+    await esperar(250)
+  }
+}
+
 test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-e2e-'))
   process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
@@ -102,6 +130,8 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
 
   const server: AppServer = createServer(RENDERER, { compuToken: 'e2e' })
   const port = await server.start(0)
+  const biblioteca = path.join(tmp, 'Biblioteca')
+  server.iniciarServicios(biblioteca)
   const base = `http://localhost:${port}`
   const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
   t.after(async () => {
@@ -113,16 +143,26 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   // ---- compu (ventana de Electron simulada con el token verdadero) ----
   const ctxCompu: BrowserContext = await browser.newContext({ viewport: { width: 1280, height: 800 } })
   ctxCompu.setDefaultTimeout(15000)
-  await ctxCompu.addInitScript(() => {
-    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+  // lo que "entiende" el reconocedor de voz falso en cada frase de la guia (el Whisper real no se baja en las pruebas)
+  const frases: [number, string][] = ANUNCIOS.map(([, texto, compas]) => [inicioCompas(compas) * 1000 - 250, texto])
+  await ctxCompu.addInitScript((tabla: [number, string][]) => {
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown; __asrFalso: unknown; __asrLlamadas: number }
     g.__zip = null
     g.electronAPI = {
       isElectron: true,
       compuToken: 'e2e',
       pickZipFile: async () => g.__zip,
-      getConnectionInfo: async () => ({ url: 'http://192.168.0.10:4848', ip: '192.168.0.10', port: 4848 })
+      getConnectionInfo: async () => ({ url: 'http://192.168.0.10:4848', ip: '192.168.0.10', port: 4848 }),
+      elegirCarpeta: async () => null,
+      abrirCarpeta: async () => {}
     }
-  })
+    g.__asrLlamadas = 0
+    g.__asrFalso = async (audio: Float32Array, info: { finMs: number }) => {
+      g.__asrLlamadas++
+      if (!(audio instanceof Float32Array) || audio.length < 1600) throw new Error('frase sin audio')
+      return tabla.find(([fin]) => Math.abs(fin - info.finMs) < 200)?.[1] ?? ''
+    }
+  }, frases)
   const compu = await ctxCompu.newPage()
   const errores: string[] = []
   compu.on('pageerror', (e) => errores.push(e.message))
@@ -135,7 +175,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
       if (await vacio.isVisible()) await vacio.click()
       else await compu.locator('.boton-nueva').click()
     }
-    await compu.getByRole('button', { name: /Importar canción/ }).click()
+    await compu.getByRole('button', { name: /Importar \.zip/ }).click()
     await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
   }
 
@@ -173,11 +213,8 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await compu.locator('.fader').first().click()
     await compu.keyboard.press('Space')
     await esperar(6000)
-    for (const cel of celulares) {
-      assert.ok((await vivas(cel)) > 0, 'un celular no suena')
-      const d = await desfase(cel)
-      assert.ok(d !== null && Math.abs(d) < 20, `desfase ${d}ms`)
-    }
+    for (const cel of celulares) assert.ok((await vivas(cel)) > 0, 'un celular no suena')
+    await enSync(celulares, 'al arrancar')
   })
 
   await t.test('secciones: marcar con M, borrar y deshacer; los celulares las ven', async () => {
@@ -205,16 +242,14 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     for (const tecla of ['2', '1']) {
       await compu.keyboard.press(tecla)
       await esperar(3500)
-      for (const cel of celulares) {
-        const d = await desfase(cel)
-        assert.ok(d !== null && Math.abs(d) < 20, `desfase tras saltar: ${d}ms`)
-      }
+      await enSync(celulares, `tras saltar a la sección ${tecla}`)
     }
     await compu.keyboard.press('l')
-    for (let i = 0; i < 12; i++) {
+    // 12 s de loop (secciones de 8 s): cada vuelta los celulares vuelven a entrar en sync
+    const finLoop = Date.now() + 12000
+    while (Date.now() < finLoop) {
       await esperar(1000)
-      const d = await desfase(celulares[0])
-      if (d !== null) assert.ok(Math.abs(d) < 20, `desfase en el loop: ${d}ms`)
+      await enSync(celulares, 'en el loop')
     }
     assert.match((await compu.locator('.seccion-pill').textContent()) ?? '', /Sección 1/)
     await compu.keyboard.press('l')
@@ -265,6 +300,122 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await esperar(1000)
     for (const cel of celulares) assert.equal(await vivas(cel), 0)
     assert.deepEqual(await compu.locator('.setlist-nombre').allTextContents(), ['Cuan Grande Es El'])
+  })
+
+  await t.test('biblioteca: un zip copiado en una subcarpeta se importa solo (categoría y BPM)', async () => {
+    fs.mkdirSync(path.join(biblioteca, 'Adoración'), { recursive: true })
+    fs.copyFileSync(zipConGuia(tmp, 'Santo Santo'), path.join(biblioteca, 'Adoración', 'Santo Santo.zip'))
+    await compu.locator('.boton-nueva').click()
+    assert.match((await compu.locator('.biblioteca-ruta').textContent()) ?? '', /Biblioteca$/)
+    const fila = compu.locator('.lista-fila', { hasText: 'Santo Santo' })
+    await fila.waitFor({ timeout: 60000 })
+    // el tempo sale del click apenas se importa (la lista se refresca sola)
+    await compu.waitForFunction(
+      () => Array.from(document.querySelectorAll('.lista-fila')).some((f) => /Santo Santo/.test(f.textContent ?? '') && /90 BPM 4\/4/.test(f.textContent ?? '')),
+      null,
+      { timeout: 60000 }
+    )
+    await compu.getByRole('tab', { name: /Adoración/ }).click()
+    assert.deepEqual(await compu.locator('.lista-titulo').allTextContents(), ['Santo Santo'])
+    await compu.getByRole('tab', { name: /Todas/ }).click()
+    await compu.getByRole('button', { name: 'A–Z' }).click()
+    assert.deepEqual(await compu.locator('.lista-titulo').allTextContents(), ['Cuan Grande Es El', 'Rey de Reyes', 'Santo Santo'])
+    await fila.getByRole('button', { name: /Agregar/ }).click()
+    await compu.waitForSelector('.modal', { state: 'detached' })
+    await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Santo Santo')
+  })
+
+  await t.test('secciones automáticas por la voz guía, en el "1" del compás', async () => {
+    await compu.waitForFunction(() => document.querySelectorAll('.seccion-fila').length === 6, null, { timeout: 60000 })
+    assert.deepEqual(await compu.locator('.seccion-nombre').allTextContents(), ['Verso 1', 'Coro', 'Verso 2', 'Coro 2', 'Puente', 'Final'])
+    assert.equal(await compu.locator('.seccion-origen').count(), 6)
+    assert.match((await compu.locator('.analisis-linea').textContent()) ?? '', /voz guía/)
+    assert.match((await compu.locator('.chip-tempo').textContent()) ?? '', /90 BPM · 4\/4/)
+    const santo = server.state.getActiveTab()!.proyecto
+    santo.marcadores.forEach((m, i) =>
+      assert.ok(Math.abs(m.tiempoMs - inicioCompas(ANUNCIOS[i][2]) * 1000) <= 8, `${m.nombre} en ${m.tiempoMs} ms: fuera del compás`)
+    )
+    for (const cel of celulares) await cel.waitForFunction(() => document.querySelectorAll('.m-marcador').length === 6)
+
+    // arrastrar una seccion en la linea de tiempo: cae en el "1" del compas mas cercano; con Alt, queda libre
+    const compases = santo.tempo!.compasesMs
+    const coroId = santo.marcadores[1].id
+    const tiempoDelCoro = (): number => server.state.getActiveTab()!.proyecto.marcadores.find((m) => m.id === coroId)!.tiempoMs
+    async function arrastrarCoro(deltaMs: number, alt: boolean): Promise<void> {
+      const linea = (await compu.locator('.timeline').boundingBox())!
+      const marca = (await compu.locator('.timeline-marca').nth(1).boundingBox())!
+      const x = marca.x + marca.width / 2
+      const y = marca.y + marca.height / 2
+      const antes = tiempoDelCoro()
+      if (alt) await compu.keyboard.down('Alt')
+      await compu.mouse.move(x, y)
+      await compu.mouse.down()
+      await compu.mouse.move(x + (deltaMs / santo.duracionTotalMs) * linea.width, y, { steps: 6 })
+      await compu.mouse.up()
+      if (alt) await compu.keyboard.up('Alt')
+      for (let i = 0; i < 50 && tiempoDelCoro() === antes; i++) await esperar(50)
+      // y que la pantalla ya lo muestre ahi (el proximo arrastre agarra la marca donde se ve)
+      await compu.waitForFunction(
+        ([ms, dur]) => Math.abs(parseFloat((document.querySelectorAll('.timeline-marca')[1] as HTMLElement).style.left) - (ms / dur) * 100) < 0.01,
+        [tiempoDelCoro(), santo.duracionTotalMs] as const
+      )
+    }
+    await arrastrarCoro(2000, false)
+    assert.equal(tiempoDelCoro(), compases[7], 'no quedó en el compás')
+    await arrastrarCoro(-700, true)
+    const libre = tiempoDelCoro()
+    assert.ok(Math.abs(libre - (compases[7] - 700)) < 150 && !compases.includes(libre), `con Alt tenía que quedar libre: ${libre}`)
+  })
+
+  await t.test('los celulares precargan la siguiente canción: al pasar, arranca sin esperar la red', async () => {
+    const santoId = server.state.getActiveTab()!.proyecto.id
+    // despues del cambio, ningun celular tendria que volver a pedir lo precargado: el encabezado del WAV
+    // (bytes=0-) ni los 2 primeros segmentos de cada pista (encabezado de 44 bytes, segmentos de igual largo)
+    let cambio = false
+    const repetidos: string[] = []
+    for (const cel of celulares) {
+      cel.on('request', (r) => {
+        if (!cambio || !r.url().includes(`/media/${santoId}/`)) return
+        const [, desde, hasta] = /bytes=(\d+)-(\d+)/.exec(r.headers()['range'] ?? '')?.map(Number) ?? []
+        const indice = desde === 0 ? -1 : Math.round((desde - 44) / (hasta - desde + 1))
+        if (indice < 2) repetidos.push(`${r.url()} ${r.headers()['range']}`)
+      })
+    }
+    await compu.keyboard.press('Enter') // al principio: la precarga es desde donde va a arrancar
+    await compu.locator('.setlist-tab').nth(0).click()
+    await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Cuan Grande Es El')
+    type Diag = { precarga: { proyectoId: string; pistas: number[] } | null; pistas: { seg: number[]; cues: number }[] }
+    const diagnostico = (cel: Page): Promise<Diag> =>
+      cel.evaluate(
+        () => (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): Diag } } } }).__mt.engineRef.current.diagnostico()
+      )
+    for (const cel of celulares) {
+      await cel.waitForFunction(
+        (id) => {
+          const d = (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): Diag } } } }).__mt.engineRef.current.diagnostico()
+          return d.precarga?.proyectoId === id && d.precarga.pistas.every((n) => n >= 2)
+        },
+        santoId,
+        { timeout: 20000 }
+      )
+    }
+    cambio = true
+    await compu.locator('.setlist-tab').nth(1).click()
+    await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Santo Santo')
+    for (const cel of celulares) {
+      await cel.waitForFunction(
+        (id) => (globalThis as unknown as { __mt: { engineRef: { current: { proyectoIdCargado: string } } } }).__mt.engineRef.current.proyectoIdCargado === id,
+        santoId
+      )
+      const d = await diagnostico(cel)
+      assert.ok(d.pistas.every((p) => p.seg.includes(0) && p.seg.includes(1)), `sin el principio listo: ${JSON.stringify(d.pistas)}`)
+    }
+    await compu.keyboard.press('Space')
+    await esperar(4000)
+    for (const cel of celulares) assert.ok((await vivas(cel)) > 0, 'no suena')
+    await enSync(celulares, 'canción precargada')
+    await compu.keyboard.press('Space')
+    assert.deepEqual(repetidos, [], 'se volvió a bajar lo que ya estaba precargado')
   })
 
   await t.test('sin errores de JavaScript en la compu', () => {

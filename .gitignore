@@ -4,4 +4,5 @@ dist/
 dist-electron/
 *.log
 .DS_Store
-modelos/
+modelos/*
+!modelos/LEEME.txt

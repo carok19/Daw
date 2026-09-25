@@ -24,15 +24,24 @@ Instaladores (se generan en `dist/`; hay que correr cada uno en su sistema
 operativo, o en un CI con Windows/macOS):
 
 ```bash
+npm run modelos        # (opcional, una vez) incluye el reconocedor de voz en el instalador
 npm run dist:win       # instalador .exe (NSIS)
 npm run dist:mac       # .dmg
 npm run dist:linux     # AppImage
 ```
 
+`npm run modelos` baja a `modelos/` el reconocedor de voz (~80 MB) con el que
+se detectan las secciones por la voz guía, y `dist` lo mete en el instalador:
+así en la iglesia no hay que descargar nada. Si no se incluye, la app ofrece
+bajarlo una sola vez desde el panel de secciones.
+
 Datos guardados: `~/MultitrackApp/` → `proyectos/` (una carpeta por canción
 con sus pistas en WAV y `proyecto.json`), `setlists/` y `sesion.json` (las
 canciones abiertas, para recuperarlas si la app se cierra a mitad de un
 culto). `MULTITRACK_APP_DIR` cambia esa carpeta (lo usan los tests).
+`~/MultitrackApp/modelos/` guarda el reconocedor de voz si se bajó desde la
+app. La **carpeta de canciones** (biblioteca) es, por defecto,
+`Documentos/Multitrack Alabanza`.
 
 ### Desarrollo
 
@@ -40,12 +49,20 @@ culto). `MULTITRACK_APP_DIR` cambia esa carpeta (lo usan los tests).
 - `npm run test:server` — tests de integración del servidor (Express +
   Socket.IO + ffmpeg reales, clientes "compu" y "celular" por socket): import
   de WAV/MP3, seguridad, sincronización, loop, fin de canción, dispositivos,
-  sesión, setlists, migración de canciones viejas.
+  sesión, setlists, migración de canciones viejas; y el análisis automático
+  (BPM y compás del click, secciones de la voz guía, marcadores de WAV/MIDI/
+  texto, biblioteca que importa sola, categorías, zips movidos/actualizados).
+  La voz guía de prueba es voz sintética en español (`__fixtures__/guia`).
 - `npm run test:e2e` — prueba de punta a punta con la interfaz real en
   Chromium: una compu y dos celulares; importa WAV y MP3, reproduce, marca
   secciones, salta, repite secciones, bloquea, cierra la canción que suena, y
   mide el desfase real de cada celular contra el servidor (tiene que quedar
-  por debajo de 20 ms). La primera vez: `npx playwright install chromium`.
+  por debajo de 20 ms, y si se corre, volver solo). También copia un zip a la
+  biblioteca y verifica que se importe con su categoría y BPM, que las
+  secciones salgan de la voz guía en el “1” del compás, el arrastre con imán,
+  y que los celulares precarguen la siguiente canción. El reconocedor de voz
+  se reemplaza por uno falso (`window.__asrFalso`). La primera vez:
+  `npx playwright install chromium`.
 - `npm run dev:renderer` — solo la interfaz en un navegador (sin servidor).
 - Con `?debug` en la URL del celular se expone `window.__mt` (motor, socket y
   estado) para diagnosticar en pruebas de campo.
@@ -61,7 +78,11 @@ culto). `MULTITRACK_APP_DIR` cambia esa carpeta (lo usan los tests).
    celulares no pueden conectarse).
 3. Abrí la app: si se había cerrado, **el setlist vuelve solo**. Si no, armalo
    con **+ Canción** (importar `.zip` o abrir una guardada) o abrí un setlist
-   guardado.
+   guardado. Lo más cómodo: copiar los `.zip` en la **carpeta de canciones**
+   (con subcarpetas por categoría) antes del culto; se importan y se analizan
+   solos, y en **+ Canción** aparecen ordenados por categoría, recientes o A–Z.
+   Conviene abrir cada canción nueva una vez antes, para revisar sus
+   secciones.
 4. **Celulares:** botón **Celulares** (arriba a la derecha) → escanear el QR →
    **“Tocá para empezar”** → conectar auriculares. En ⚙ cada músico puede
    ponerle nombre a su celular (“Batería”, “Bajo”…).
@@ -93,6 +114,7 @@ lo avisa (en el celular y en la compu) y se pone al día sola cuando mejora.
 | 1 … 9 | Ir a la sección 1 a 9 |
 | M | Marcar una sección en la posición actual |
 | L | Repetir la sección actual |
+| Alt + arrastrar | Mover una sección sin ajustarla al compás |
 | Re Pág / Av Pág | Canción anterior / siguiente |
 | ? | Ayuda de atajos |
 
@@ -134,6 +156,49 @@ cada pista recibe un color distinto por orden (editable). Las canciones
 guardadas con versiones anteriores (por ejemplo con MP3 que no sonaban en los
 celulares) se migran solas al abrirlas.
 
+### Análisis automático: tempo, compás y secciones
+
+Al importar (y en segundo plano, **nunca mientras suena una canción**):
+
+1. **Click → BPM, compás y el “1”.** Se busca la pista de click por nombre
+   (*Click*, *Metrónomo*…) y, si no, por cómo suena (golpes cortos y
+   regulares). De los golpes salen el BPM, el compás (4/4, 3/4, 6/8…) y
+   dónde cae cada “1” (el golpe acentuado). Se muestra como **90 BPM · 4/4**
+   en el transporte, con rayitas de compás en la línea de tiempo.
+2. **Secciones desde los archivos**, si el zip las trae: marcadores de los
+   WAV (cue/labl, los que exportan Ableton, Reaper, Logic…), un `.mid` con
+   marcadores (usa su mapa de tempo) o un `.txt`/`.csv` con líneas
+   `0:32 Coro` (también el formato de etiquetas de Audacity).
+3. **Si no, por la voz guía.** Se busca la pista de guía (*Guía*, *Guide*,
+   *Cues*…), se detectan las frases habladas y la compu las escucha con un
+   **reconocedor de voz local** (Whisper “base”, en español, corre en la
+   compu sin internet). “Verso uno”, “Coro”, “Puente”, “Final”, “Intro”…
+   (también en inglés) se convierten en secciones que arrancan en el “1” del
+   compás siguiente al anuncio; repetidas quedan como *Coro 2*, *Coro 3*.
+4. Nunca pisa secciones marcadas a mano. **Detectar** (panel de secciones)
+   vuelve a analizar la canción y las reemplaza (pide confirmación).
+5. **Imán de compás** (el botón al lado del BPM, prendido por defecto):
+   marcar con **M** o arrastrar una sección la deja en el “1” más cercano;
+   con **Alt** queda donde se suelta.
+
+El reconocedor (~80 MB) viene en el instalador si se corrió `npm run
+modelos`; si no, el panel de secciones ofrece bajarlo **una sola vez** de
+Hugging Face (después funciona sin internet). Corre en un *Web Worker* con
+WebAssembly (`@huggingface/transformers` + ONNX Runtime), de a una frase y
+pausado mientras suena música.
+
+### Carpeta de canciones (biblioteca)
+
+La app vigila una carpeta (por defecto `Documentos/Multitrack Alabanza`, se
+cambia en **+ Canción**): cada `.zip` que se copia ahí se importa solo, y las
+**subcarpetas son categorías** (*Adoración*, *Alabanza*, *Navidad/2024*…).
+Mover un zip de carpeta cambia su categoría; reemplazarlo por uno nuevo
+actualiza la canción conservando la mezcla y las secciones marcadas a mano
+(los celulares descartan el audio viejo); borrarlo no borra la canción. No
+importa nada mientras suena música (espera a que pare) y avisa una sola vez
+por tanda. Sirve también una carpeta sincronizada (Drive, Dropbox…) para
+preparar las canciones desde otra computadora.
+
 ### Streaming de audio (celulares y compu)
 
 Nadie descarga ni decodifica la canción entera. Cada pista se pide por
@@ -148,6 +213,9 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
   posición actual, y se mantienen en memoria los primeros segundos de cada
   sección ("cues"): saltar de sección o repetir una sección entra en sync sin
   esperar la red.
+- **Siguiente canción precargada:** con la canción actual asegurada, cada
+  celular baja de a poco el comienzo de la siguiente del setlist (desde donde
+  va a arrancar): al pasar de canción, suena sin esperar la red.
 - **Nunca suena algo incorrecto:** si un segmento no llega a tiempo, el motor
   espera (sin silencio sintético) y, cuando junta 3 s, se reincorpora en el
   punto exacto. El estado del buffer se muestra en el celular y en la compu.
@@ -162,6 +230,7 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
 | `BUFFER_CRITICAL_SEC` | 3 | Por debajo: aviso de conexión lenta |
 | `BUFFER_MIN_START_SEC` | 3 | Mínimo para (re)arrancar |
 | `MAX_CUES` / `SEGMENTOS_POR_CUE` | 16 / 2 | Arranques de sección precargados |
+| `SEGMENTOS_PRECARGA_SIGUIENTE` | 2 | Comienzo de la próxima canción precargado |
 
 ### Sincronización
 
@@ -179,9 +248,13 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
    latencia que informa su sistema (`outputLatency`) más el ajuste fino
    manual. El drift se mide sobre lo que *se escucha*, descontando esa
    compensación (si no, el monitor la "corregiría" y la desharía).
-5. **Drift continuo** (cada 4 s): < 15 ms nada; 15–150 ms corrección suave
+5. **Drift continuo** (cada 2 s): < 15 ms nada; 15–150 ms corrección suave
    cambiando la velocidad 0,4 % (inaudible) el tiempo justo; ≥ 150 ms
-   resincronización dura de ese dispositivo.
+   resincronización dura de ese dispositivo. Mientras dura una corrección
+   suave, la posición informada es la que realmente suena (lo que falta
+   absorber se sigue mostrando como desfase). Un corte de audio del celular
+   (el sistema no llegó a tiempo y el reloj de audio se atrasa de golpe) se
+   corrige así en pocos segundos.
 6. **Pantalla bloqueada / segundo plano:** la pantalla se mantiene encendida
    (NoSleep.js: Wake Lock si está disponible, si no un video mudo; la app se
    sirve por `http://` y ahí el Wake Lock nativo no existe), Media Session
@@ -233,7 +306,10 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
 9. **Puerto fijo:** 4848, y si está ocupado 4849, 4850… (misma dirección y
    mismo QR de un día al otro).
 10. **Sin base de datos externa:** todo en archivos JSON locales con
-    escritura atómica. Funciona sin internet.
+    escritura atómica. Funciona sin internet (una base en la nube, como
+    Supabase, haría depender el culto de internet sin aportar nada acá).
+11. **Lo automático nunca compite con el vivo:** análisis, reconocimiento de
+    voz e importación de la biblioteca esperan a que no suene nada.
 
 ## Limitaciones conocidas / próximos pasos
 
@@ -243,6 +319,11 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
   latencia de cada modelo y el Bluetooth solo se pueden medir con hardware.
   Prueba sugerida: 2–3 celulares juntos reproduciendo solo el click; si se
   oye "eco", usar el ajuste fino en el que suena atrasado.
+- **Reconocimiento de la voz guía:** la cadena completa (frases, ajuste al
+  compás, nombres de sección) está probada con voz sintética en español y un
+  reconocedor simulado; el modelo Whisper real no se pudo probar en el
+  entorno de desarrollo (sin acceso a huggingface.co). Si alguna guía no se
+  entiende bien, las secciones se corrigen a mano o con marcadores en el zip.
 - **iPhone:** Safari puede frenar el audio si se bloquea la pantalla; la app
   mantiene la pantalla encendida, pero conviene no bloquearla a mano.
 - Los instaladores no están firmados: Windows (SmartScreen) y macOS

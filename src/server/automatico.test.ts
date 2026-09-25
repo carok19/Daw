@@ -3,51 +3,13 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import AdmZip from 'adm-zip'
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
 import { createServer, type AppServer } from './index'
-import { armarGuia, generarClick, SR, SR_GUIA, wav16 } from './__fixtures__/sintetico'
+import { ANUNCIOS, inicioCompas, SR_GUIA, textoDeFrase, zipConGuia } from './__fixtures__/sintetico'
 import type { EstadoBiblioteca, EstadoCompleto, PedidoVoz, ProyectoResumen } from '../shared/types'
 
 const TOKEN = 't'
 const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
-
-// Cancion de prueba: 90 BPM 4/4 (compas = 2.667 s, el primero en 0.5 s), con una voz guia que
-// anuncia cada parte terminando ~0.25 s antes del compas en el que empieza.
-const COMPAS = (60 / 90) * 4
-const inicioCompas = (k: number): number => 0.5 + k * COMPAS
-const ANUNCIOS: [string, string, number][] = [
-  // [archivo, texto que "reconoce" el Whisper falso, compas donde empieza la seccion]
-  ['verso-uno', 'Verso uno.', 2],
-  ['coro', 'Coro.', 6],
-  ['verso-dos', 'Verso dos.', 10],
-  ['coro', '¡Coro!', 14],
-  ['puente', 'Puente', 18],
-  ['final', 'Final', 22]
-]
-const DURACION_S = 64
-
-function duracionFixture(archivo: string): number {
-  const buf = fs.readFileSync(path.resolve(__dirname, '../../src/server/__fixtures__/guia', `${archivo}.wav`))
-  let off = 12
-  while (buf.toString('ascii', off, off + 4) !== 'data') off += 8 + buf.readUInt32LE(off + 4)
-  return buf.readUInt32LE(off + 4) / 2 / SR_GUIA
-}
-
-function zipConGuia(dir: string, nombre: string, extra: Record<string, Buffer> = {}): string {
-  const zip = new AdmZip()
-  zip.addFile('01 Click.wav', wav16(generarClick(90, 4, DURACION_S), SR))
-  const guia = armarGuia(
-    ANUNCIOS.map(([archivo, , compas]) => [archivo, inicioCompas(compas) - 0.25 - duracionFixture(archivo)]),
-    DURACION_S
-  )
-  zip.addFile('02 Guía.wav', wav16(guia, SR_GUIA))
-  zip.addFile('03 Pad.wav', wav16(new Float32Array(DURACION_S * SR).map((_, i) => 0.2 * Math.sin((2 * Math.PI * 220 * i) / SR)), SR))
-  for (const [n, b] of Object.entries(extra)) zip.addFile(n, b)
-  const destino = path.join(dir, `${nombre}.zip`)
-  zip.writeZip(destino)
-  return destino
-}
 
 async function entorno(t: { after(fn: () => unknown): void }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-auto-'))
@@ -103,8 +65,9 @@ test('al importar: tempo del click, frases de la guía, y secciones ubicadas en 
       assert.equal(resp.status, 200)
       const muestras = (await resp.arrayBuffer()).byteLength / 4
       assert.ok(muestras > SR_GUIA * 0.2, 'la frase tiene audio')
-      const anuncio = ANUNCIOS.find(([, , compas]) => Math.abs(inicioCompas(compas) * 1000 - 250 - c.finMs) < 200)!
-      return { n: c.n, texto: anuncio[1] }
+      const texto = textoDeFrase(c.finMs)
+      assert.ok(texto, `frase inesperada que termina en ${c.finMs} ms`)
+      return { n: c.n, texto }
     })
   )
   const cambio = new Promise<EstadoCompleto>((res) => compu.on('estado:actualizado', (e: EstadoCompleto) => e.proyectoActivo?.analisis?.estado === 'listo' && res(e)))

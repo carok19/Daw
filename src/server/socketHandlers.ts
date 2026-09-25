@@ -138,7 +138,7 @@ export function registerSocketHandlers(
         emitirEstadoPronto()
       }
       aCompus('proyectos:cambio', { proyectoId: id })
-      if (aviso) aCompus('aviso', { tipo: 'info', texto: aviso })
+      if (aviso) aCompus('aviso', { tipo: 'info', texto: aviso, grupo: 'secciones' })
     },
     pedidosVoz: (pedidos) => aCompus('analisis:pedidos', pedidos),
     puedeTrabajar: () => !algoSuena()
@@ -157,10 +157,30 @@ export function registerSocketHandlers(
     return p
   }
 
+  // lo que importo la biblioteca se avisa de una sola vez cuando termina la tanda (copiar 50 zips no son 50 avisos)
+  const tanda = { nuevas: [] as string[], actualizadas: [] as string[] }
+  function avisarTanda(): void {
+    const { nuevas, actualizadas } = tanda
+    if (nuevas.length + actualizadas.length === 0) return
+    let texto: string
+    if (nuevas.length + actualizadas.length === 1)
+      texto = nuevas.length ? `Nueva canción en la biblioteca: “${nuevas[0]}”` : `Se actualizó “${actualizadas[0]}” desde la biblioteca`
+    else
+      texto = `Biblioteca: ${[
+        nuevas.length ? `${nuevas.length} ${nuevas.length === 1 ? 'canción nueva' : 'canciones nuevas'}` : '',
+        actualizadas.length ? `${actualizadas.length} ${actualizadas.length === 1 ? 'actualizada' : 'actualizadas'}` : ''
+      ]
+        .filter(Boolean)
+        .join(' y ')}`
+    tanda.nuevas = []
+    tanda.actualizadas = []
+    aCompus('aviso', { tipo: 'info', texto })
+  }
+
   const biblioteca = new Biblioteca({
     async importar(zip, categoria, reemplazarId) {
       const p = await importarZip(zip, categoria, reemplazarId)
-      aCompus('aviso', { tipo: 'info', texto: reemplazarId ? `Se actualizó “${p.nombre}” desde la biblioteca` : `Nueva canción en la biblioteca: “${p.nombre}”` })
+      ;(reemplazarId ? tanda.actualizadas : tanda.nuevas).push(p.nombre)
       return p
     },
     moverCategoria(id, categoria) {
@@ -170,7 +190,10 @@ export function registerSocketHandlers(
       aCompus('proyectos:cambio', { proyectoId: id })
     },
     puedeTrabajar: () => !algoSuena(),
-    estado: (e) => aCompus('biblioteca:estado', e),
+    estado: (e) => {
+      aCompus('biblioteca:estado', e)
+      if (e.pendientes === 0 && !e.importando) avisarTanda()
+    },
     error: (mensaje) => aCompus('aviso', { tipo: 'error', texto: `Biblioteca: ${mensaje}` })
   })
 

@@ -119,7 +119,7 @@ export class AppState {
   listaTabs(): TabResumen[] {
     return this.orden.map((id) => {
       const t = this.tabs.get(id)!
-      return { tabId: t.tabId, nombre: t.proyecto.nombre, proyectoId: t.proyecto.id }
+      return { tabId: t.tabId, nombre: t.proyecto.nombre, proyectoId: t.proyecto.id, posicionMs: Math.round(posicionActual(t.playback)) }
     })
   }
 

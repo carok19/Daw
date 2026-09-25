@@ -1,0 +1,9 @@
+Reconocedor de voz para detectar secciones por la voz guía (Whisper "base", ~80 MB).
+
+Para incluirlo en el instalador (así no hay que descargar nada en la iglesia):
+
+    npm run modelos
+    npm run dist
+
+Si no se incluye, la app ofrece descargarlo una sola vez desde el panel de
+secciones y lo guarda en la carpeta de datos de la app.

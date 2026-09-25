@@ -54,3 +54,10 @@ if (existsSync('src/server/automatico.test.ts')) {
     outfile: 'out/main/automatico.test.cjs'
   })
 }
+
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/server/modelosCli.ts'],
+  outfile: 'out/main/modelos-cli.cjs',
+  logLevel: 'warning'
+})

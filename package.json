@@ -10,6 +10,7 @@
     "build:renderer": "vite build --config src/renderer/vite.config.ts",
     "build:main": "node scripts/build-main.mjs",
     "build": "npm run build:renderer && npm run build:main",
+    "modelos": "npm run build:main && node out/main/modelos-cli.cjs",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.e2e.json && tsc --noEmit -p src/renderer/tsconfig.json",
     "test:server": "npm run build:main && node --test out/main/analisis.test.cjs out/main/server.test.cjs out/main/automatico.test.cjs",
@@ -79,6 +80,16 @@
     "linux": {
       "target": "AppImage",
       "category": "Audio"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "modelos",
+        "to": "modelos",
+        "filter": [
+          "**/*",
+          "!**/*.parte"
+        ]
+      }
+    ]
   }
 }

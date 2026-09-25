@@ -31,8 +31,8 @@ export interface PlaybackEngine {
   setMezclaPersonal(mezcla: MezclaPersonal): void
 
   activarProyecto(proyecto: Proyecto, posicionMs: number): void
-  /** baja de a poco el principio de la proxima cancion del setlist (null = ninguna) */
-  precargar(proyecto: Proyecto | null): void
+  /** baja de a poco el arranque (desde `posicionMs`) de la proxima cancion del setlist (null = ninguna) */
+  precargar(proyecto: Proyecto | null, posicionMs?: number): void
   aplicarMezcla(pistas: Pista[]): void
   /** tiempos (ms) cuyo arranque conviene tener precargado (marcadores) */
   setCues(tiemposMs: number[]): void

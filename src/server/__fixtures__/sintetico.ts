@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import AdmZip from 'adm-zip'
 
 /**
  * Audio sintetico para las pruebas: WAV, click con acento y una pista de voz
@@ -63,3 +64,51 @@ export function armarGuia(anuncios: [string, number][], segundos: number, sr = S
   return x
 }
 
+
+// ---- Cancion de prueba completa ----
+// 90 BPM 4/4 (compas = 2.667 s, el primero en 0.5 s), con una voz guia que
+// anuncia cada parte terminando ~0.25 s antes del compas en el que empieza.
+export const BPM_GUIA = 90
+const COMPAS_SEG = (60 / BPM_GUIA) * 4
+export const inicioCompas = (k: number): number => 0.5 + k * COMPAS_SEG
+/** [archivo de voz, texto que "reconoce" el Whisper falso, compas donde empieza la seccion] */
+export const ANUNCIOS: [string, string, number][] = [
+  ['verso-uno', 'Verso uno.', 2],
+  ['coro', 'Coro.', 6],
+  ['verso-dos', 'Verso dos.', 10],
+  ['coro', '¡Coro!', 14],
+  ['puente', 'Puente', 18],
+  ['final', 'Final', 22]
+]
+export const DURACION_GUIA_S = 64
+
+function duracionFixture(archivo: string): number {
+  const buf = fs.readFileSync(path.join(FIXTURES, `${archivo}.wav`))
+  let off = 12
+  while (buf.toString('ascii', off, off + 4) !== 'data') off += 8 + buf.readUInt32LE(off + 4)
+  return buf.readUInt32LE(off + 4) / 2 / SR_GUIA
+}
+
+/** Zip "Click + Guía + Pad" con la voz guia de ANUNCIOS. */
+export function zipConGuia(dir: string, nombre: string, extra: Record<string, Buffer> = {}): string {
+  const zip = new AdmZip()
+  zip.addFile('01 Click.wav', wav16(generarClick(BPM_GUIA, 4, DURACION_GUIA_S), SR))
+  const guia = armarGuia(
+    ANUNCIOS.map(([archivo, , compas]) => [archivo, inicioCompas(compas) - 0.25 - duracionFixture(archivo)]),
+    DURACION_GUIA_S
+  )
+  zip.addFile('02 Guía.wav', wav16(guia, SR_GUIA))
+  zip.addFile(
+    '03 Pad.wav',
+    wav16(new Float32Array(DURACION_GUIA_S * SR).map((_, i) => 0.2 * Math.sin((2 * Math.PI * 220 * i) / SR)), SR)
+  )
+  for (const [n, b] of Object.entries(extra)) zip.addFile(n, b)
+  const destino = path.join(dir, `${nombre}.zip`)
+  zip.writeZip(destino)
+  return destino
+}
+
+/** Lo que "diria" el reconocedor para la frase que termina en `finMs` (Whisper falso de las pruebas). */
+export function textoDeFrase(finMs: number): string {
+  return ANUNCIOS.find(([, , compas]) => Math.abs(inicioCompas(compas) * 1000 - 250 - finMs) < 200)?.[1] ?? ''
+}

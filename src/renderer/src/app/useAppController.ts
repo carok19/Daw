@@ -187,7 +187,8 @@ export function useAppController() {
     // la siguiente del setlist se va bajando de a poco: al pasar, arranca sin esperar la red.
     // (despues de activar: si la activada ES la que se venia precargando, primero se aprovecha)
     const iActiva = nuevo.tabs.findIndex((t) => t.tabId === nuevo.activeTabId)
-    engine.precargar(iActiva === -1 ? null : (nuevo.proyectos[iActiva + 1] ?? null))
+    const siguiente = iActiva === -1 ? null : (nuevo.proyectos[iActiva + 1] ?? null)
+    engine.precargar(siguiente, nuevo.tabs[iActiva + 1]?.posicionMs ?? 0)
   }, [])
 
   const crearEngine = useCallback((): PlaybackEngine => {
@@ -224,6 +225,25 @@ export function useAppController() {
   // ---- conexion ----
   useEffect(() => {
     const socket = socketRef.current!
+
+    // avisos que llegan en tanda (secciones detectadas en varias canciones): uno solo con el resumen
+    const grupos = new Map<string, { textos: string[]; timer?: ReturnType<typeof setTimeout>; desde: number }>()
+    function avisarAgrupado(a: { tipo: 'info' | 'error'; texto: string; grupo?: string }): void {
+      if (!a.grupo) return avisar({ tipo: a.tipo, texto: a.texto }, 6000)
+      const grupo = a.grupo
+      const g = grupos.get(grupo) ?? { textos: [], desde: Date.now() }
+      clearTimeout(g.timer)
+      g.textos.push(a.texto)
+      const vaciar = (): void => {
+        grupos.delete(grupo)
+        const n = g.textos.length
+        const texto = n === 1 ? g.textos[0] : grupo === 'secciones' ? `Se detectaron las secciones de ${n} canciones por la voz guía` : `${n} avisos nuevos`
+        avisar({ tipo: a.tipo, texto }, 6000)
+      }
+      // se espera a que la tanda se calme (como mucho 15 s desde el primero)
+      g.timer = setTimeout(vaciar, Math.max(0, Math.min(3000, g.desde + 15000 - Date.now())))
+      grupos.set(grupo, g)
+    }
 
     function aplicarEstado(nuevo: EstadoCompleto, esReconexion = false): void {
       setEstado(nuevo)
@@ -267,7 +287,7 @@ export function useAppController() {
       socket.on<{ proyectoId: string; hechos: number; total: number }>('analisis:progreso', (p) =>
         setProgresoAnalisis((prev) => ({ ...prev, [p.proyectoId]: { hechos: p.hechos, total: p.total } }))
       ),
-      socket.on<{ tipo: 'info' | 'error'; texto: string }>('aviso', (a) => avisar({ tipo: a.tipo, texto: a.texto }, 6000)),
+      socket.on<{ tipo: 'info' | 'error'; texto: string; grupo?: string }>('aviso', (a) => avisarAgrupado(a)),
       socket.on('proyectos:cambio', () => setVersionProyectos((v) => v + 1)),
       socket.onConexionCambia(async (c) => {
         setConectado(c)
@@ -277,7 +297,10 @@ export function useAppController() {
         }
       })
     ]
-    return () => offs.forEach((off) => off())
+    return () => {
+      offs.forEach((off) => off())
+      for (const g of grupos.values()) clearTimeout(g.timer)
+    }
   }, [avisar, sincronizarMotor])
 
   // compu: el sonido local se enciende/apaga segun la preferencia (en Electron no hace falta un gesto del usuario)
@@ -335,7 +358,7 @@ export function useAppController() {
     return () => clearInterval(id)
   }, [origen])
 
-  // estado del buffer/errores: se revisa cada segundo (no cada 4s como el drift) para que el aviso
+  // estado del buffer/errores: se revisa cada segundo (no cada 2s como el drift) para que el aviso
   // de "WiFi lento" aparezca enseguida en el celular y en la compu
   useEffect(() => {
     let anterior = ''

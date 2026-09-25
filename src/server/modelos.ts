@@ -64,53 +64,64 @@ export class ModelosVoz {
   }
 
   /** Descarga el modelo desde Hugging Face (una sola vez) a ~/MultitrackApp/modelos. */
-  async descargar(host = 'https://huggingface.co'): Promise<void> {
+  async descargar(host = HOST_MODELOS): Promise<void> {
     if (this.info.estado === 'descargando') return
     if (this.dirDisponible()) {
       this.set({ estado: 'listo' })
       return
     }
-    const destino = path.join(dirModelosUsuario(), MODELO_VOZ.nombre)
-    fs.mkdirSync(path.join(destino, 'onnx'), { recursive: true })
-    const archivos = [...MODELO_VOZ.obligatorios.map((f) => ({ f, obligatorio: true })), ...MODELO_VOZ.opcionales.map((f) => ({ f, obligatorio: false }))]
     try {
       this.set({ estado: 'descargando', progreso: 0 })
-      // tamaños aproximados para una barra de progreso pareja (los .onnx son casi todo)
-      const pesos = archivos.map(({ f }) => (f.includes('encoder') ? 25 : f.includes('decoder') ? 55 : f === 'tokenizer.json' ? 2 : 0.1))
-      const total = pesos.reduce((a, b) => a + b, 0)
-      let hecho = 0
-      for (let i = 0; i < archivos.length; i++) {
-        const { f, obligatorio } = archivos[i]
-        const final = path.join(destino, f)
-        if (fs.existsSync(final)) {
-          hecho += pesos[i]
-          continue
-        }
-        const resp = await fetch(`${host}/${MODELO_VOZ.repo}/resolve/main/${f}`)
-        if (!resp.ok || !resp.body) {
-          if (!obligatorio && resp.status === 404) continue
-          throw new Error(`No se pudo bajar ${f} (HTTP ${resp.status})`)
-        }
-        const largo = Number(resp.headers.get('content-length')) || 0
-        const parcial = `${final}.parte`
-        const salida = fs.createWriteStream(parcial)
-        let recibidos = 0
-        const reader = resp.body.getReader()
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          recibidos += value.byteLength
-          if (!salida.write(value)) await new Promise<void>((r) => salida.once('drain', () => r()))
-          if (largo) this.set({ estado: 'descargando', progreso: Math.min(0.999, (hecho + pesos[i] * (recibidos / largo)) / total) })
-        }
-        await new Promise<void>((r, rej) => salida.end((err?: Error | null) => (err ? rej(err) : r())))
-        fs.renameSync(parcial, final)
-        hecho += pesos[i]
-        this.set({ estado: 'descargando', progreso: hecho / total })
-      }
+      await descargarModeloVoz(dirModelosUsuario(), (progreso) => this.set({ estado: 'descargando', progreso }), host)
       this.set({ estado: this.dirDisponible() ? 'listo' : 'error', mensaje: this.dirDisponible() ? undefined : 'Faltan archivos del modelo' })
     } catch (err) {
       this.set({ estado: 'error', mensaje: `No se pudo descargar el reconocedor de voz: ${(err as Error).message}. Revisá la conexión a internet.` })
     }
+  }
+}
+
+export const HOST_MODELOS = 'https://huggingface.co'
+
+/**
+ * Baja los archivos del modelo a `<base>/whisper-base/` (lo que ya esta se
+ * saltea; cada archivo se escribe como `.parte` y se renombra al terminar,
+ * asi un corte nunca deja un archivo a medias que parezca completo).
+ */
+export async function descargarModeloVoz(base: string, onProgreso: (fraccion: number) => void, host = HOST_MODELOS): Promise<void> {
+  const destino = path.join(base, MODELO_VOZ.nombre)
+  fs.mkdirSync(path.join(destino, 'onnx'), { recursive: true })
+  const archivos = [...MODELO_VOZ.obligatorios.map((f) => ({ f, obligatorio: true })), ...MODELO_VOZ.opcionales.map((f) => ({ f, obligatorio: false }))]
+  // tamaños aproximados para una barra de progreso pareja (los .onnx son casi todo)
+  const pesos = archivos.map(({ f }) => (f.includes('encoder') ? 25 : f.includes('decoder') ? 55 : f === 'tokenizer.json' ? 2 : 0.1))
+  const total = pesos.reduce((a, b) => a + b, 0)
+  let hecho = 0
+  for (let i = 0; i < archivos.length; i++) {
+    const { f, obligatorio } = archivos[i]
+    const final = path.join(destino, f)
+    if (fs.existsSync(final)) {
+      hecho += pesos[i]
+      continue
+    }
+    const resp = await fetch(`${host}/${MODELO_VOZ.repo}/resolve/main/${f}`)
+    if (!resp.ok || !resp.body) {
+      if (!obligatorio && resp.status === 404) continue
+      throw new Error(`No se pudo bajar ${f} (HTTP ${resp.status})`)
+    }
+    const largo = Number(resp.headers.get('content-length')) || 0
+    const parcial = `${final}.parte`
+    const salida = fs.createWriteStream(parcial)
+    let recibidos = 0
+    const reader = resp.body.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      recibidos += value.byteLength
+      if (!salida.write(value)) await new Promise<void>((r) => salida.once('drain', () => r()))
+      if (largo) onProgreso(Math.min(0.999, (hecho + pesos[i] * (recibidos / largo)) / total))
+    }
+    await new Promise<void>((r, rej) => salida.end((err?: Error | null) => (err ? rej(err) : r())))
+    fs.renameSync(parcial, final)
+    hecho += pesos[i]
+    onProgreso(hecho / total)
   }
 }

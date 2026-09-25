@@ -23,6 +23,21 @@ interface CorreccionActiva {
   rateObjetivo: number
   duracionSec: number
   rampIn: number
+  /** cuanto hay que absorber (seg, con signo: + = adelantado) */
+  driftSec: number
+}
+
+/** Fraccion (0-1) del drift ya absorbido `t` segundos despues de empezar la correccion (rampa-meseta-rampa). */
+function fraccionCorregida(c: CorreccionActiva, t: number): number {
+  const { duracionSec: d, rampIn: r } = c
+  if (t <= 0) return 0
+  if (t >= d) return 1
+  const total = d - r // area del trapecio (en unidades de "desvio de velocidad x seg")
+  let area: number
+  if (t < r) area = (t * t) / (2 * r)
+  else if (t <= d - r) area = t - r / 2
+  else area = total - ((d - t) * (d - t)) / (2 * r)
+  return Math.min(1, Math.max(0, area / total))
 }
 
 interface PistaStream {
@@ -62,6 +77,8 @@ interface PistaPrecargada {
 interface Precarga {
   proyectoId: string
   revision: number
+  /** primer segmento a bajar (la cancion arranca donde se la dejo) */
+  indiceInicio: number
   pistas: Map<string, PistaPrecargada>
   /** "pistaId:indice" -> pedido en vuelo */
   enVuelo: Map<string, AbortController>
@@ -196,8 +213,8 @@ export class StreamingEngine implements PlaybackEngine {
           pannerNode,
           wavInfo: aprovechable?.wavInfo ?? null,
           wavInfoPromise: null,
-          segmentos: new Map(),
-          // el principio de la cancion siempre es un cue: queda guardado ahi y entra a la ventana en prepararEn
+          // lo precargado entra directo a la ventana (prepararEn descarta lo que no sirva) y, si es un cue, queda como cue
+          segmentos: new Map(aprovechable?.segmentos ?? []),
           cueSegmentos: new Map(aprovechable?.segmentos ?? []),
           enVuelo: new Map(),
           fuentesActivas: [],
@@ -214,17 +231,20 @@ export class StreamingEngine implements PlaybackEngine {
     if (!this.reproduciendo) this.prepararEn(posicionMs)
   }
 
-  precargar(proyecto: Proyecto | null): void {
+  precargar(proyecto: Proyecto | null, posicionMs = 0): void {
     const revision = proyecto?.revision ?? 0
     if (!proyecto || proyecto.id === this.proyectoId) {
       this.cancelarPrecarga()
       return
     }
-    if (this.precarga?.proyectoId === proyecto.id && this.precarga.revision === revision) return
+    const indiceInicio = Math.floor(Math.max(0, posicionMs) / 1000 / SEGMENT_DURATION_SEC)
+    const pre = this.precarga
+    if (pre?.proyectoId === proyecto.id && pre.revision === revision && pre.indiceInicio === indiceInicio) return
     this.cancelarPrecarga()
     this.precarga = {
       proyectoId: proyecto.id,
       revision,
+      indiceInicio,
       pistas: new Map(
         proyecto.pistas.map((p) => [p.id, { archivo: p.archivo, wavInfo: null, segmentos: new Map(), finEnIndice: null, error: false }])
       ),
@@ -339,11 +359,19 @@ export class StreamingEngine implements PlaybackEngine {
     this.correccionActual = null
   }
 
-  /** Posicion que se ESCUCHA ahora (la del nodo menos la compensacion de latencia/ajuste con la que se programo). */
+  /**
+   * Posicion que se ESCUCHA ahora (la del nodo menos la compensacion de latencia/ajuste con la que se
+   * programo). Durante una correccion suave el ancla ya quedo movida al valor final: se le suma lo que
+   * todavia falta absorber, para no informar como corregido un desfase que se esta corrigiendo.
+   */
   posicionRealMs(): number | null {
     if (this.audioAnchorCtxTime === null) return null
-    if (this.ctx.currentTime < this.audioAnchorCtxTime + this.compensacionSec) return null
-    return (this.audioAnchorOffsetSec + (this.ctx.currentTime - this.audioAnchorCtxTime) - this.compensacionSec) * 1000
+    const now = this.ctx.currentTime
+    if (now < this.audioAnchorCtxTime + this.compensacionSec) return null
+    let pendienteSec = 0
+    const c = this.correccionActual
+    if (c && now < this.correccionActivaHastaCtxTime) pendienteSec = c.driftSec * (1 - fraccionCorregida(c, now - c.now))
+    return (this.audioAnchorOffsetSec + (now - this.audioAnchorCtxTime) - this.compensacionSec + pendienteSec) * 1000
   }
 
   enCorreccionSuave(): boolean {
@@ -365,7 +393,7 @@ export class StreamingEngine implements PlaybackEngine {
     const rateObjetivo = 1 - Math.sign(driftSec) * MAX_RATE_DEV
     const duracionSec = Math.max(0.5, Math.abs(driftSec) / MAX_RATE_DEV)
     const rampIn = Math.min(0.2, duracionSec / 4)
-    const correccion: CorreccionActiva = { now, rateObjetivo, duracionSec, rampIn }
+    const correccion: CorreccionActiva = { now, rateObjetivo, duracionSec, rampIn, driftSec }
 
     this.correccionActual = correccion
     for (const pista of this.pistas.values()) {
@@ -396,7 +424,10 @@ export class StreamingEngine implements PlaybackEngine {
       posicionRealMs: this.posicionRealMs(),
       outputLatency: this.ctx.outputLatency,
       baseLatency: this.ctx.baseLatency,
-      pistas: [...this.pistas.values()].map((p) => ({ n: p.nombre, seg: [...p.segmentos.keys()], cues: p.cueSegmentos.size, vuelo: p.enVuelo.size, err: p.error }))
+      pistas: [...this.pistas.values()].map((p) => ({ n: p.nombre, seg: [...p.segmentos.keys()], cues: p.cueSegmentos.size, vuelo: p.enVuelo.size, err: p.error })),
+      precarga: this.precarga
+        ? { proyectoId: this.precarga.proyectoId, pistas: [...this.precarga.pistas.values()].map((p) => (p.error ? -1 : p.segmentos.size)) }
+        : null
     }
   }
 
@@ -579,7 +610,7 @@ export class StreamingEngine implements PlaybackEngine {
     const pre = this.precarga
     if (!pre || Date.now() < pre.esperarHasta) return
     const maxEnVuelo = this.reproduciendo ? 1 : 3
-    for (let indice = 0; indice < SEGMENTOS_PRECARGA_SIGUIENTE; indice++) {
+    for (let indice = pre.indiceInicio; indice < pre.indiceInicio + SEGMENTOS_PRECARGA_SIGUIENTE; indice++) {
       for (const [pistaId, p] of pre.pistas) {
         if (pre.enVuelo.size >= maxEnVuelo) return
         if (p.error || p.segmentos.has(indice) || (p.finEnIndice !== null && indice >= p.finEnIndice)) continue

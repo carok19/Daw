@@ -10,7 +10,7 @@ export const UMBRAL_SUAVE_MS = 15
 export const UMBRAL_DURO_MS = 150
 
 /** Cada cuanto se mide el drift mientras se esta reproduciendo. */
-export const INTERVALO_MONITOREO_MS = 4000
+export const INTERVALO_MONITOREO_MS = 2000
 
 /** Margen para un resync duro: es autocorreccion de UN dispositivo, no hace falta coordinar con otros. */
 export const MARGEN_RESYNC_DURO_MS = 400

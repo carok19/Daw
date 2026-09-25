@@ -1985,10 +1985,10 @@ input[type='range'].slider::-moz-range-thumb {
   font-size: 12px;
   color: var(--text-2);
   line-height: 1.5;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+}
+.biblioteca-estado > svg {
+  vertical-align: -2px;
+  margin-right: 5px;
 }
 .biblioteca-estado.error-texto {
   color: #ff8a8a;

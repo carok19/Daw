@@ -170,6 +170,8 @@ export interface TabResumen {
   tabId: string
   nombre: string
   proyectoId: string
+  /** donde arranca esta cancion si se pasa a ella (queda pausada donde se la dejo); los celulares precargan desde ahi */
+  posicionMs: number
 }
 
 /** Snapshot completo enviado a un cliente que se conecta o ante cambios estructurales. */

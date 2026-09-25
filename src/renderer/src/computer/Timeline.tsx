@@ -93,7 +93,8 @@ export function Timeline({ secciones, duracionMs, compasesMs, loop, onSeek, onMo
                   setArrastre({ id, ms: ultimo })
                   setHover(ultimo)
                 }
-                const soltar = (): void => {
+                const soltar = (ev: PointerEvent): void => {
+                  alt = alt || ev.altKey
                   el.removeEventListener('pointermove', mover)
                   el.removeEventListener('pointerup', soltar)
                   el.removeEventListener('pointercancel', soltar)
