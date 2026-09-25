@@ -3,6 +3,8 @@ import type {
   AjustesConexion,
   ComandoProgramado,
   DatosInvitacion,
+  DiagnosticoDispositivo,
+  DiagnosticoServidor,
   DispositivoInfo,
   EstadoBiblioteca,
   EstadoBuffer,
@@ -56,18 +58,53 @@ export interface Aviso {
 
 /**
  * (Re)ingresa en sincronia: programa un "play" local desde la posicion que
- * el servidor dice que deberia estar sonando AHORA, con un margen corto a
- * futuro. Se usa al cargar un proyecto que ya estaba sonando, al
- * reconectarse, al activar el audio a mitad de cancion, cuando el buffer se
- * recupera y para la resincronizacion dura del monitoreo de drift.
+ * el servidor dice que deberia estar sonando, con un margen corto a futuro.
+ * Se usa al cargar un proyecto que ya estaba sonando, al reconectarse, al
+ * activar el audio a mitad de cancion, cuando el buffer se recupera y para la
+ * resincronizacion dura del monitoreo de drift.
+ *
+ * Con el tempo detectado (`compasesMs`), la entrada se hace en el "1" del
+ * proximo compas, como un musico que retoma: nunca a mitad de un acorde.
  */
-function reingresarEnSync(engine: PlaybackEngine, socket: SocketClient, playback: PlaybackState, tabId: string, margenMs: number): void {
-  const executeAt = socket.serverNow() + margenMs
-  const posicion = posicionActualMs(playback, executeAt)
-  engine.ejecutar(
-    { tabId, accion: 'play', positionMs: posicion, executeAtServerTime: executeAt, playback },
-    socket.clockOffsetMs
-  )
+function reingresarEnSync(
+  engine: PlaybackEngine,
+  socket: SocketClient,
+  playback: PlaybackState,
+  tabId: string,
+  margenMs: number,
+  compasesMs?: number[] | null
+): void {
+  let executeAt = socket.serverNow() + margenMs
+  let posicion = posicionActualMs(playback, executeAt)
+  const proximo = compasesMs ? proximoCompas(compasesMs, posicion) : null
+  if (proximo !== null && estaSonando(playback, executeAt)) {
+    const candidato = executeAt + (proximo - posicion)
+    // (si antes del compas hay un salto programado, no aplica: se entra donde toque)
+    if (Math.abs(posicionActualMs(playback, candidato) - proximo) < 2) {
+      executeAt = candidato
+      posicion = proximo
+    }
+  }
+  engine.ejecutar({ tabId, accion: 'play', positionMs: posicion, executeAtServerTime: executeAt, playback }, socket.clockOffsetMs)
+}
+
+/** Inicio del proximo compas desde `posicionMs` (null si no hay tempo o falta mas de un compas). */
+function proximoCompas(compasesMs: number[], posicionMs: number): number | null {
+  if (compasesMs.length < 2) return null
+  const k = compasesMs.findIndex((c) => c >= posicionMs - 1)
+  if (k <= 0) return null
+  const largo = compasesMs[k] - compasesMs[k - 1]
+  return compasesMs[k] - posicionMs <= largo + 1 ? compasesMs[k] : null
+}
+
+/** "Android · Chrome", "iPhone · Safari", "App Android"... (para el diagnostico). */
+function plataforma(origen: OrigenCliente): string {
+  if (origen === 'compu') return 'Computadora'
+  if (puenteAndroid()) return 'App Android'
+  const ua = navigator.userAgent
+  const so = /Android/i.test(ua) ? 'Android' : /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : 'Otro'
+  const nav = /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Edg\//.test(ua) ? 'Edge' : /Firefox|FxiOS/.test(ua) ? 'Firefox' : /Chrome|CriOS/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'navegador'
+  return `${so} · ${nav}`
 }
 
 /** Aplica el cambio de una pista del mixer a un estado (proyecto activo y lista de proyectos). */
@@ -130,6 +167,8 @@ export function useAppController() {
     }))
   }
   const engineRef = useRef<PlaybackEngine | null>(null)
+  /** resincronizaciones duras de este dispositivo (diagnostico) */
+  const resyncsRef = useRef(0)
   const reconocimientoRef = useRef<ReconocimientoGuia | null>(null)
   if (origen === 'compu' && !reconocimientoRef.current) {
     reconocimientoRef.current = new ReconocimientoGuia(socketRef.current!, () => estadoRef.current?.playbackActivo?.estado === 'playing')
@@ -162,6 +201,8 @@ export function useAppController() {
    * mientras estaba desconectado se pauso o se salto, el audio local quedo
    * desactualizado y no se puede esperar a un proximo comando.
    */
+  const compases = (): number[] | null => estadoRef.current?.proyectoActivo?.tempo?.compasesMs ?? null
+
   const sincronizarMotor = useCallback((nuevo: EstadoCompleto | null, margenReingreso: number, reconciliar = false) => {
     const engine = engineRef.current
     const socket = socketRef.current
@@ -175,7 +216,7 @@ export function useAppController() {
     if (engine.proyectoIdCargado !== proyecto.id || engine.revisionCargada !== (proyecto.revision ?? 0)) {
       engine.activarProyecto(proyecto, nuevo.playbackActivo ? posicionActualMs(nuevo.playbackActivo, now) : 0)
       if (nuevo.playbackActivo && estaSonando(nuevo.playbackActivo, now)) {
-        reingresarEnSync(engine, socket, nuevo.playbackActivo, nuevo.activeTabId ?? '', margenReingreso)
+        reingresarEnSync(engine, socket, nuevo.playbackActivo, nuevo.activeTabId ?? '', margenReingreso, proyecto.tempo?.compasesMs)
       }
     } else {
       engine.aplicarMezcla(proyecto.pistas)
@@ -183,7 +224,7 @@ export function useAppController() {
       if (reconciliar) {
         const pb = nuevo.playbackActivo
         if (pb && estaSonando(pb, now)) {
-          reingresarEnSync(engine, socket, pb, nuevo.activeTabId ?? '', margenReingreso)
+          reingresarEnSync(engine, socket, pb, nuevo.activeTabId ?? '', margenReingreso, proyecto.tempo?.compasesMs)
         } else {
           engine.ejecutar(
             {
@@ -206,7 +247,9 @@ export function useAppController() {
   }, [])
 
   const crearEngine = useCallback((): PlaybackEngine => {
-    const engine = new StreamingEngine()
+    // celulares: la mezcla la hace la compu (una pista estereo); la compu: pistas sueltas (faders al instante)
+    const modoForzado = new URLSearchParams(window.location.search).get('modo')
+    const engine = new StreamingEngine(modoForzado === 'pistas' || modoForzado === 'mezcla' ? modoForzado : origen === 'celular' ? 'mezcla' : 'pistas')
     const p = prefsRef.current
     engine.setVolumenGeneral(p.volumenGeneral)
     engine.setAjusteManualMs(p.ajusteManualMs)
@@ -216,7 +259,8 @@ export function useAppController() {
       const actual = estadoRef.current
       const playback = actual?.playbackActivo
       if (!socket || !playback || !estaSonando(playback, socket.serverNow())) return
-      reingresarEnSync(engine, socket, playback, actual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS)
+      resyncsRef.current++
+      reingresarEnSync(engine, socket, playback, actual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS, compases())
     })
     return engine
   }, [origen])
@@ -364,7 +408,8 @@ export function useAppController() {
           if (!engine.enCorreccionSuave()) {
             const abs = Math.abs(drift)
             if (abs >= UMBRAL_DURO_MS) {
-              reingresarEnSync(engine, socket, playback, actual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS)
+              resyncsRef.current++
+              reingresarEnSync(engine, socket, playback, actual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS, compases())
             } else if (abs >= UMBRAL_SUAVE_MS) {
               engine.corregirDriftSuave(drift)
             }
@@ -372,11 +417,9 @@ export function useAppController() {
         }
       }
       setDriftMs(drift)
-      const reporte = JSON.stringify({ d: drift === null ? null : Math.round(drift), buffer, error })
-      if (drift !== null || reporte !== ultimoReporte) {
-        socket.emit('sync:report', { driftMs: drift, buffer, error, audio: true })
-        ultimoReporte = reporte
-      }
+      // cada 2 s: desfase, buffer y el diagnostico (WiFi, colchon, cortes) para la compu
+      socket.emit('sync:report', { driftMs: drift, buffer, error, audio: true, diag: { ...engine.resumenDiagnostico(), resyncs: resyncsRef.current, plataforma: plataforma(origen) } })
+      ultimoReporte = JSON.stringify({ d: drift === null ? null : Math.round(drift), buffer, error })
     }, INTERVALO_MONITOREO_MS)
     return () => clearInterval(id)
   }, [origen])
@@ -413,7 +456,7 @@ export function useAppController() {
       const actual = estadoRef.current
       const playback = actual?.playbackActivo
       if (playback && estaSonando(playback, socket.serverNow())) {
-        reingresarEnSync(engine, socket, playback, actual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS)
+        reingresarEnSync(engine, socket, playback, actual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS, compases())
       }
     }
     document.addEventListener('visibilitychange', onVisible)
@@ -659,6 +702,17 @@ export function useAppController() {
       // ---- dispositivos ----
       forgetDevice(id: string): void {
         emit('devices:forget', { id })
+      },
+
+      // ---- diagnostico ----
+      /** lo que mide este dispositivo ahora (null = el audio no esta activado) */
+      diagnosticoLocal(): DiagnosticoDispositivo | null {
+        const engine = engineRef.current
+        return engine ? { ...engine.resumenDiagnostico(), resyncs: resyncsRef.current, plataforma: plataforma(origen) } : null
+      },
+      /** compu: todo junto para "Copiar diagnostico" */
+      async diagnosticoServidor(): Promise<DiagnosticoServidor | null> {
+        return socket.emitAck<DiagnosticoServidor | null>('diagnostico:obtener', {}, 5000)
       },
 
       // ---- conexion: codigo de la banda, invitar, ajustes (compu) ----

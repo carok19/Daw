@@ -254,8 +254,9 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
         )
       })}
       <p className="m-mezcla-pie">
-        Deslizá los faders de costado (para arriba o abajo, la pantalla se mueve sin tocar nada). Doble toque: vuelve a “igual”. Se
-        recuerda por nombre de pista, para todas las canciones.
+        Deslizá los faders de costado (para arriba o abajo, la pantalla se mueve sin tocar nada). Doble toque: vuelve a “igual”. La
+        mezcla la arma la compu para este celular: los cambios se escuchan en menos de un segundo. Se recuerda por nombre de pista,
+        para todas las canciones.
       </p>
     </section>
   )

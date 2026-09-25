@@ -14,7 +14,9 @@ import { crearRar4, crearRar5 } from './__fixtures__/rar'
 import dgram from 'node:dgram'
 import dnsPacket from 'dns-packet'
 import { responderMdns } from './descubrimiento'
-import { parseWavHeader } from '../shared/wav'
+import { decodePcmSegment, parseWavHeader } from '../shared/wav'
+import { codificarMezcla, coeficientesPaneo, type CanalMezcla } from '../shared/mezcla'
+import { wav16 } from './__fixtures__/sintetico'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
   AjustesConexion,
@@ -534,6 +536,106 @@ test('la compu se deja encontrar: alabanza.local (mDNS), búsqueda de la app And
   assert.equal(apk.status, 200)
   assert.equal(apk.headers.get('content-type'), 'application/vnd.android.package-archive')
   await env.cerrar()
+})
+
+/** WAV estereo 16 bits con L y R constantes. */
+function wavEstereoConstante(l: number, r: number, segundos: number, sr: number): Buffer {
+  const frames = Math.round(segundos * sr)
+  const data = Buffer.alloc(frames * 4)
+  for (let i = 0; i < frames; i++) {
+    data.writeInt16LE(Math.round(l * 32767), i * 4)
+    data.writeInt16LE(Math.round(r * 32767), i * 4 + 2)
+  }
+  const h = Buffer.alloc(44)
+  h.write('RIFF', 0)
+  h.writeUInt32LE(36 + data.length, 4)
+  h.write('WAVE', 8)
+  h.write('fmt ', 12)
+  h.writeUInt32LE(16, 16)
+  h.writeUInt16LE(1, 20)
+  h.writeUInt16LE(2, 22)
+  h.writeUInt32LE(sr, 24)
+  h.writeUInt32LE(sr * 4, 28)
+  h.writeUInt16LE(4, 32)
+  h.writeUInt16LE(16, 34)
+  h.write('data', 36)
+  h.writeUInt32LE(data.length, 40)
+  return Buffer.concat([h, data])
+}
+
+test('mezcla por celular: la compu arma UNA pista estéreo con la mezcla pedida (paneo, ganancias, otra frecuencia, límite)', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const zip = crearZip('Mezcla', {
+    'Guia.wav': wav16(new Float32Array(5 * 44100).fill(0.25), 44100),
+    'Pad.wav': wavEstereoConstante(0.2, -0.1, 5, 44100),
+    'Bajo.wav': wav16(new Float32Array(5 * 22050).fill(0.1), 22050) // otra frecuencia: se remuestrea
+  })
+  const estado = await cargarZip(compu, zip)
+  const p = estado.proyectoActivo!
+  const id = (nombre: string): string => p.pistas.find((x) => x.nombre === nombre)!.id
+  const base = `http://localhost:${env.port}/mezcla/${p.id}`
+
+  async function pedir(indice: number, canales: CanalMezcla[], extra = ''): Promise<Response> {
+    return fetch(`${base}/${indice}.wav?v=${p.revision ?? 0}&m=${codificarMezcla(canales)}${extra}`)
+  }
+  async function muestras(r: Response): Promise<{ L: Float32Array; R: Float32Array; sr: number }> {
+    assert.equal(r.status, 200)
+    assert.equal(r.headers.get('content-type'), 'audio/wav')
+    const buf = await r.arrayBuffer()
+    const info = parseWavHeader(buf)
+    assert.equal(info.numChannels, 2)
+    assert.equal(info.bitsPerSample, 16)
+    const [L, R] = decodePcmSegment(info, buf.slice(info.dataOffset))
+    return { L, R, sr: info.sampleRate }
+  }
+
+  const mezcla: CanalMezcla[] = [
+    { pistaId: id('Guia'), ganancia: 1, pan: -1 }, // todo a la izquierda
+    { pistaId: id('Pad'), ganancia: 0.5, pan: 0 },
+    { pistaId: id('Bajo'), ganancia: 2, pan: 0.5 }
+  ]
+  const b = coeficientesPaneo(0.5, 1)
+  const esperadoL = 0.25 + 0.5 * 0.2 + 2 * 0.1 * b.aLL
+  const esperadoR = 0 + 0.5 * -0.1 + 2 * 0.1 * b.aRR
+  const s0 = await muestras(await pedir(0, mezcla))
+  assert.equal(s0.sr, 44100, 'la frecuencia de la mayoria')
+  assert.equal(s0.L.length, 2 * 44100, 'segmentos de 2 s exactos')
+  for (const i of [0, 1000, 44100, 88199]) {
+    assert.ok(Math.abs(s0.L[i] - esperadoL) < 0.001, `L[${i}] = ${s0.L[i]} (esperado ${esperadoL})`)
+    assert.ok(Math.abs(s0.R[i] - esperadoR) < 0.001, `R[${i}] = ${s0.R[i]} (esperado ${esperadoR})`)
+  }
+
+  // "Mi mezcla": una pista que no se pide no suena
+  const sinGuia = await muestras(await pedir(1, mezcla.slice(1)))
+  assert.ok(Math.abs(sinGuia.L[500] - (esperadoL - 0.25)) < 0.001)
+
+  // pasarse de 0 dB no recorta duro: limitador suave entre 0,9 y 1
+  const fuerte = await muestras(await pedir(0, [{ pistaId: id('Guia'), ganancia: 4, pan: -1 }, { pistaId: id('Pad'), ganancia: 2, pan: -1 }]))
+  assert.ok(fuerte.L[100] > 0.9 && fuerte.L[100] < 1, `limitado: ${fuerte.L[100]}`)
+
+  // final de la cancion: el ultimo segmento es mas corto y lo avisa; despues, 416
+  const r2 = await pedir(2, mezcla)
+  assert.equal(r2.headers.get('x-ultimo'), '1')
+  assert.equal((await muestras(r2)).L.length, 44100)
+  assert.equal((await pedir(1, mezcla)).headers.get('x-ultimo'), '0')
+  assert.equal((await pedir(3, mezcla)).status, 416)
+
+  // pedidos invalidos
+  assert.equal((await fetch(`${base}/0.wav?v=${(p.revision ?? 0) + 1}&m=`)).status, 409, 'revision vieja')
+  assert.equal((await fetch(`${base}/0.wav?v=${p.revision ?? 0}&m=cualquier-cosa`)).status, 400)
+  assert.equal((await fetch(`${base}/x.wav?v=0&m=`)).status, 400)
+  assert.equal((await fetch(`http://localhost:${env.port}/mezcla/${crypto.randomUUID()}/0.wav?v=0&m=`)).status, 404)
+  // sin pistas pedidas: silencio (no error)
+  const silencio = await muestras(await pedir(0, []))
+  assert.equal(Math.max(...silencio.L.slice(0, 100)), 0)
+
+  // los celulares con la misma mezcla comparten el segmento (se calcula una vez)
+  const antes = env.server.mezclador.estadisticas()
+  await Promise.all([pedir(1, mezcla), pedir(1, mezcla), pedir(1, mezcla)].map(async (r) => (await r).arrayBuffer()))
+  const despues = env.server.mezclador.estadisticas()
+  assert.equal(despues.mezclados, antes.mezclados, 'ya estaba en la cache')
+  assert.equal(despues.aciertosCache - antes.aciertosCache, 3)
 })
 
 test('margen de sincronizacion: instantaneo sin celulares, completo apenas se conecta uno', async (t) => {

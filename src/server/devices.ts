@@ -1,4 +1,4 @@
-import type { DispositivoInfo, EstadoBuffer, OrigenCliente, SyncReportPayload } from '../shared/types'
+import type { DiagnosticoDispositivo, DispositivoInfo, EstadoBuffer, OrigenCliente, SyncReportPayload } from '../shared/types'
 
 interface DispositivoInterno extends DispositivoInfo {
   sockets: Set<string>
@@ -9,6 +9,30 @@ interface DispositivoInterno extends DispositivoInfo {
 
 const ID_DISPOSITIVO_RE = /^[A-Za-z0-9_-]{8,64}$/
 const BUFFERS_VALIDOS: EstadoBuffer[] = ['normal', 'rellenando', 'critico']
+
+const num = (v: unknown, min = 0, max = 1e6): number | null =>
+  typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : null
+
+/** Valida lo que manda un celular (viene de la red: nada se toma sin revisar). */
+export function limpiarDiagnostico(d: unknown): DiagnosticoDispositivo | null {
+  if (!d || typeof d !== 'object') return null
+  const x = d as Record<string, unknown>
+  return {
+    modo: x.modo === 'mezcla' ? 'mezcla' : 'pistas',
+    mbpsNecesarios: num(x.mbpsNecesarios, 0, 10000) ?? 0,
+    mbpsRecibidos: num(x.mbpsRecibidos, 0, 10000) ?? 0,
+    mbpsCapacidad: num(x.mbpsCapacidad, 0, 100000),
+    colchonSeg: num(x.colchonSeg, 0, 3600) ?? 0,
+    cortes: Math.round(num(x.cortes) ?? 0),
+    correcciones: Math.round(num(x.correcciones) ?? 0),
+    errores: Math.round(num(x.errores) ?? 0),
+    latenciaMs: num(x.latenciaMs, 0, 600000),
+    memoriaMB: num(x.memoriaMB, 0, 100000) ?? 0,
+    salidaMs: Math.round(num(x.salidaMs, 0, 10000) ?? 0),
+    resyncs: Math.round(num(x.resyncs) ?? 0),
+    plataforma: typeof x.plataforma === 'string' ? x.plataforma.slice(0, 40) : ''
+  }
+}
 
 export function limpiarNombreDispositivo(nombre: unknown): string | null {
   if (typeof nombre !== 'string') return null
@@ -82,6 +106,7 @@ export class DeviceRegistry {
     if (payload.buffer !== undefined) info.buffer = BUFFERS_VALIDOS.includes(payload.buffer as EstadoBuffer) ? payload.buffer! : null
     if (payload.error !== undefined) info.error = typeof payload.error === 'string' ? payload.error.slice(0, 200) : null
     if (typeof payload.audio === 'boolean') info.audio = payload.audio
+    if (payload.diag !== undefined) info.diag = limpiarDiagnostico(payload.diag)
   }
 
   renombrar(socketId: string, nombre: unknown): boolean {
@@ -129,7 +154,8 @@ export class DeviceRegistry {
       buffer: info.buffer,
       error: info.error,
       audio: info.audio,
-      desconectadoDesde: info.desconectadoDesde
+      desconectadoDesde: info.desconectadoDesde,
+      diag: info.diag ?? null
     }
   }
 }

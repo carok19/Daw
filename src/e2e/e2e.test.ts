@@ -20,7 +20,7 @@ import { chromium, devices, type Browser, type BrowserContext, type Page } from 
 import { createServer, type AppServer } from '../server'
 import { rutaFfmpeg } from '../server/audio'
 import { buildEstadoCompleto } from '../server/estado'
-import { ANUNCIOS, inicioCompas, zipConGuia } from '../server/__fixtures__/sintetico'
+import { ANUNCIOS, generarClick, inicioCompas, SR, wav16, zipConGuia } from '../server/__fixtures__/sintetico'
 import { crearRar5 } from '../server/__fixtures__/rar'
 
 const RENDERER = path.resolve(__dirname, '../renderer')
@@ -466,16 +466,15 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
 
   await t.test('los celulares precargan la siguiente canción: al pasar, arranca sin esperar la red', async () => {
     const santoId = server.state.getActiveTab()!.proyecto.id
-    // despues del cambio, ningun celular tendria que volver a pedir lo precargado: el encabezado del WAV
-    // (bytes=0-) ni los 2 primeros segmentos de cada pista (encabezado de 44 bytes, segmentos de igual largo)
+    // despues del cambio, ningun celular tendria que volver a pedir lo precargado: los 2 primeros segmentos
+    // de la mezcla que le arma la compu
     let cambio = false
     const repetidos: string[] = []
     for (const cel of celulares) {
       cel.on('request', (r) => {
-        if (!cambio || !r.url().includes(`/media/${santoId}/`)) return
-        const [, desde, hasta] = /bytes=(\d+)-(\d+)/.exec(r.headers()['range'] ?? '')?.map(Number) ?? []
-        const indice = desde === 0 ? -1 : Math.round((desde - 44) / (hasta - desde + 1))
-        if (indice < 2) repetidos.push(`${r.url()} ${r.headers()['range']}`)
+        if (!cambio || !r.url().includes(`/mezcla/${santoId}/`)) return
+        const indice = Number(/\/(\d+)\.wav/.exec(r.url())?.[1] ?? -1)
+        if (indice < 2) repetidos.push(r.url())
       })
     }
     await compu.keyboard.press('Enter') // al principio: la precarga es desde donde va a arrancar
@@ -513,6 +512,245 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await enSync(celulares, 'canción precargada')
     await compu.keyboard.press('Space')
     assert.deepEqual(repetidos, [], 'se volvió a bajar lo que ya estaba precargado')
+  })
+
+  await t.test('nadie tocó la mezcla del celular 2: nunca tuvo que cambiar de mezcla', async () => {
+    const d = await celulares[1].evaluate(
+      () => (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): { cambiosMezcla: number } } } } }).__mt.engineRef.current.diagnostico().cambiosMezcla
+    )
+    assert.equal(d, 0)
+  })
+
+  await t.test('el audio que sale del celular está donde el motor cree: con corrección fina, cambio de mezcla y salto', async () => {
+    // cancion de prueba: "Posicion" codifica en cada muestra en que segundo de la cancion esta (diente de sierra de 8 s),
+    // mas un click (tempo) y una pista muda (para cambiar la mezcla sin cambiar lo que suena)
+    const SEG = 40
+    const sierra = new Float32Array(SEG * SR)
+    for (let i = 0; i < sierra.length; i++) sierra[i] = (((i / SR) % 8) / 8) * 0.9
+    const zip = path.join(tmp, 'Posicion.zip')
+    const z = new AdmZip()
+    z.addFile('Posicion.wav', wav16(sierra, SR))
+    z.addFile('Click.wav', wav16(generarClick(120, 4, SEG), SR))
+    z.addFile('Pad.wav', wav16(new Float32Array(SEG * SR), SR))
+    z.writeZip(zip)
+    await importar(zip)
+    await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Posicion')
+    const tab = server.state.getActiveTab()!
+    for (let i = 0; i < 100 && !tab.proyecto.tempo; i++) await esperar(200)
+    assert.ok(tab.proyecto.tempo, 'se detecto el tempo del click')
+    server.state.crearMarcador(tab.tabId, 20000, 'Salto')
+    server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
+
+    const cel = celulares[0]
+    const pedidosMedia: string[] = []
+    cel.on('request', (r) => {
+      if (r.url().includes('/media/') && !r.url().includes('/analisis/')) pedidosMedia.push(r.url())
+    })
+    // en este celular, sin el click (sus golpes taparian la posicion)
+    await cel.getByRole('button', { name: 'Silenciar Click en este celular' }).click()
+    await compu.keyboard.press('Space')
+    await esperar(4000)
+
+    type Muestra = [number, number, number | null]
+    await cel.evaluate(async () => {
+      const g = globalThis as unknown as {
+        __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode; posicionNodoEn(t: number): number | null } } }
+        __muestras: Muestra[]
+        __grabador: AudioWorkletNode
+      }
+      const engine = g.__mt.engineRef.current
+      const codigo = `registerProcessor('grabador', class extends AudioWorkletProcessor {
+        constructor() { super(); this.lote = [] }
+        process(inputs) {
+          const x = inputs[0] && inputs[0][0]
+          if (x) this.lote.push([currentTime, x[0]])
+          if (this.lote.length >= 8) { this.port.postMessage(this.lote); this.lote = [] }
+          return true
+        }
+      })`
+      await engine.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' })))
+      const nodo = new AudioWorkletNode(engine.ctx, 'grabador', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' })
+      g.__muestras = []
+      // la posicion que calcula el motor se consulta enseguida (guarda unos segundos de historia)
+      nodo.port.onmessage = (e: MessageEvent<[number, number][]>) => {
+        for (const [t, v] of e.data) g.__muestras.push([t, v, engine.posicionNodoEn(t)])
+      }
+      engine.masterGain.connect(nodo)
+      g.__grabador = nodo
+    })
+    const diag = (): Promise<{ tramos: { rate: number }[]; clave: string; clavesProgramadas: string[]; modo: string }> =>
+      cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): never } } } }).__mt.engineRef.current.diagnostico())
+    assert.equal((await diag()).modo, 'mezcla', 'el celular pide la mezcla hecha por la compu')
+
+    await esperar(2000)
+    // 1) correccion fina forzada: 30 ms (tramos a otra velocidad)
+    await cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { corregirDriftSuave(ms: number): void } } } }).__mt.engineRef.current.corregirDriftSuave(30))
+    await esperar(1500)
+    assert.ok((await diag()).tramos.some((tr) => tr.rate !== 1), 'la corrección se aplica en tramos con otra velocidad')
+    await esperar(2500)
+    // 2) cambio de mezcla desde la compu (la pista muda: cambia la mezcla, no lo que suena)
+    const pad = tab.proyecto.pistas.find((p) => p.nombre === 'Pad')!
+    const claveAntes = (await diag()).clave
+    const pista = server.state.actualizarMixer(tab.tabId, pad.id, { volumen: 30 })!
+    server.io.emit('mixer:actualizado', { proyectoId: tab.proyecto.id, pista })
+    await cel.waitForFunction(
+      (antes) => {
+        const d = (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): { clave: string; clavesProgramadas: string[] } } } } }).__mt.engineRef.current.diagnostico()
+        return d.clave !== antes && d.clavesProgramadas.length > 0 && d.clavesProgramadas.every((c) => c === d.clave)
+      },
+      claveAntes,
+      { timeout: 5000 }
+    )
+    await esperar(1500)
+    // 3) salto inmediato a la seccion
+    await compu.keyboard.press('Shift+1')
+    await esperar(3000)
+    // 4) despues de un corte, vuelve a entrar en el "1" del proximo compas (sin salto de posicion)
+    const tResync = await cel.evaluate(() => {
+      const e = (globalThis as unknown as { __mt: { engineRef: { current: { onResyncCb(): void; ctx: AudioContext } } } }).__mt.engineRef.current
+      const t = e.ctx.currentTime
+      e.onResyncCb()
+      return t
+    })
+    await esperar(2500)
+    // el primer tramo programado despues del pedido (arranca a mitad de segmento: donde cae el compas)
+    const todos = (await diag()).tramos as unknown as { ini: number; pos: number; dur: number }[]
+    const nuevos = todos.filter((tr) => tr.ini > tResync && Math.abs(tr.pos / 2 - Math.round(tr.pos / 2)) > 1e-6)
+    const reentrada = nuevos.length ? nuevos[0].pos * 1000 : NaN
+    assert.ok(
+      tab.proyecto.tempo!.compasesMs.some((c) => Math.abs(c - reentrada) < 1),
+      `la reentrada (${reentrada?.toFixed(1)} ms) no cae en un compás · pedido en ${tResync.toFixed(3)} · tramos ${JSON.stringify(todos)} · compases ${JSON.stringify(tab.proyecto.tempo!.compasesMs.slice(8, 14))}`
+    )
+    // 5) cambio de mezcla con un salto por hacer (los 1,5 s de margen): el salto igual se hace, en todos lados
+    await compu.keyboard.press('Shift+1')
+    await esperar(150)
+    const pista2 = server.state.actualizarMixer(tab.tabId, pad.id, { volumen: 60 })!
+    server.io.emit('mixer:actualizado', { proyectoId: tab.proyecto.id, pista: pista2 })
+    await esperar(3500)
+
+    const muestras = (await cel.evaluate(() => {
+      const g = globalThis as unknown as { __muestras: Muestra[]; __grabador: AudioWorkletNode }
+      g.__grabador.disconnect()
+      g.__grabador.port.onmessage = null
+      return g.__muestras
+    })) as Muestra[]
+    await compu.keyboard.press('Space')
+
+    if (process.env.E2E_VOLCADO) fs.writeFileSync(process.env.E2E_VOLCADO, JSON.stringify({ muestras, vol: tab.proyecto.pistas.find((p) => p.nombre === 'Posicion')!.volumen }))
+    const vol = tab.proyecto.pistas.find((p) => p.nombre === 'Posicion')!.volumen / 100
+    // fader (curva cuadratica), paneo al centro de una pista mono y los dos pasos por 16 bits (x32767 / 32768)
+    const escala = 0.9 * vol * vol * Math.SQRT1_2 * (32767 / 32768) ** 2
+    const bloque = 128 / (await cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext } } } }).__mt.engineRef.current.ctx.sampleRate))
+    const difs: number[] = []
+    let saltos = 0
+    let anterior: number | null = null
+    for (let i = 20; i < muestras.length - 1; i++) {
+      const [t, v, p] = muestras[i]
+      if (p === null) continue
+      if (anterior !== null && Math.abs(p - anterior) > 0.5) saltos++
+      anterior = p
+      // el dispositivo de audio falso de Chromium sin pantalla a veces repite o saltea la hora de un bloque: esos no se miden
+      if (Math.abs(t - muestras[i - 1][0] - bloque) > 1e-6 || Math.abs(muestras[i + 1][0] - t - bloque) > 1e-6) continue
+      const enCiclo = p % 8
+      if (enCiclo < 0.02 || enCiclo > 7.98) continue // cerca del salto del diente de sierra
+      const real = (v / escala) * 8
+      let d = real - enCiclo
+      if (d > 4) d -= 8
+      if (d < -4) d += 8
+      difs.push(d * 1000)
+    }
+    assert.ok(difs.length > 3000, `pocas muestras: ${difs.length}`)
+    assert.equal(saltos, 2, 'los dos saltos de sección se ven en la posición (el segundo, con un cambio de mezcla en el medio)')
+    const peor = Math.max(...difs.map(Math.abs))
+    assert.ok(peor < 1.5, `el audio real se separa de la posición calculada: ${peor.toFixed(2)} ms`)
+    assert.deepEqual(pedidosMedia, [], 'el celular no baja pistas sueltas')
+  })
+
+  await t.test('WiFi lento (3 Mbps): con la mezcla de la compu suena sin cortes; con 8 pistas sueltas no alcanza', async (tt) => {
+    // cancion "pesada": 8 pistas estereo (L != R, no se pasan a mono) = 11 Mbps con pistas sueltas, 1,4 con la mezcla
+    const SEG = 24
+    const z = new AdmZip()
+    for (let k = 0; k < 8; k++) {
+      const frames = SEG * SR
+      const data = Buffer.alloc(frames * 4)
+      for (let i = 0; i < frames; i++) {
+        data.writeInt16LE(Math.round(3000 * Math.sin((2 * Math.PI * (200 + 40 * k) * i) / SR)), i * 4)
+        data.writeInt16LE(Math.round(3000 * Math.sin((2 * Math.PI * (300 + 55 * k) * i) / SR)), i * 4 + 2)
+      }
+      const h = Buffer.alloc(44)
+      h.write('RIFF', 0)
+      h.writeUInt32LE(36 + data.length, 4)
+      h.write('WAVE', 8)
+      h.write('fmt ', 12)
+      h.writeUInt32LE(16, 16)
+      h.writeUInt16LE(1, 20)
+      h.writeUInt16LE(2, 22)
+      h.writeUInt32LE(SR, 24)
+      h.writeUInt32LE(SR * 4, 28)
+      h.writeUInt16LE(4, 32)
+      h.writeUInt16LE(16, 34)
+      h.write('data', 36)
+      h.writeUInt32LE(data.length, 40)
+      z.addFile(`Pista ${k + 1}.wav`, Buffer.concat([h, data]))
+    }
+    const zip = path.join(tmp, 'Ocho Pistas.zip')
+    z.writeZip(zip)
+    await importar(zip)
+    await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Ocho Pistas')
+
+    type Resumen = { cortes: number; colchonSeg: number; mbpsNecesarios: number; mbpsCapacidad: number | null }
+    async function probar(modo: 'mezcla' | 'pistas'): Promise<{ r: Resumen; sono: boolean; ctx: BrowserContext; p: Page }> {
+      const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+      ctx.setDefaultTimeout(15000)
+      await ctx.addInitScript(espiaAudio)
+      const p = await ctx.newPage()
+      await p.goto(`${base}/?debug&modo=${modo}`)
+      await p.getByRole('button', { name: /Tocá para empezar/ }).click()
+      const cdp = await ctx.newCDPSession(p)
+      await cdp.send('Network.enable')
+      await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 20, downloadThroughput: (3e6 / 8) | 0, uploadThroughput: (1e6 / 8) | 0 })
+      await compu.keyboard.press('Enter') // al principio
+      await esperar(1500)
+      await compu.keyboard.press('Space')
+      let sono = false
+      for (let i = 0; i < 32; i++) {
+        await esperar(500)
+        if ((await vivas(p)) > 0) sono = true
+      }
+      const r = await p.evaluate(
+        () => (globalThis as unknown as { __mt: { engineRef: { current: { resumenDiagnostico(): Resumen } } } }).__mt.engineRef.current.resumenDiagnostico()
+      )
+      await compu.keyboard.press('Space')
+      await esperar(800)
+      return { r, sono, ctx, p }
+    }
+
+    const conMezcla = await probar('mezcla')
+    assert.ok(conMezcla.sono, 'con la mezcla de la compu suena')
+    assert.equal(conMezcla.r.cortes, 0, `con la mezcla no se corta: ${JSON.stringify(conMezcla.r)}`)
+    assert.ok(conMezcla.r.mbpsNecesarios < 1.6, `una sola pista estéreo: ${conMezcla.r.mbpsNecesarios} Mbps`)
+    assert.ok(conMezcla.r.mbpsCapacidad !== null && conMezcla.r.mbpsCapacidad < 4, `mide el WiFi limitado: ${conMezcla.r.mbpsCapacidad}`)
+
+    // la compu ve el diagnostico de ese celular y copia el informe para mandar por chat
+    await ctxCompu.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await compu.locator('.chip-dispositivos').click()
+    await compu.waitForFunction(() => /WiFi .* Mbps \(usa 1,4\) · colchón \d+ s · sin cortes/.test(document.querySelector('.modal .lista')?.textContent ?? ''))
+    await compu.getByRole('button', { name: /Copiar diagnóstico/ }).click()
+    await compu.getByRole('button', { name: 'Copiado' }).waitFor()
+    const informe = await compu.evaluate(() => navigator.clipboard.readText())
+    assert.match(informe, /Diagnóstico Multitrack Alabanza/)
+    assert.match(informe, /Canción: Ocho Pistas · 8 pistas/)
+    assert.match(informe, /modo mezcla de la compu · usa 1,41 Mbps/)
+    await compu.keyboard.press('Escape')
+    await conMezcla.ctx.close()
+
+    // lo mismo con las 8 pistas sueltas (como era antes): el WiFi no alcanza
+    const sueltas = await probar('pistas')
+    tt.diagnostic(`mezcla: ${JSON.stringify(conMezcla.r)} · sonó: ${conMezcla.sono}`)
+    tt.diagnostic(`pistas sueltas: ${JSON.stringify(sueltas.r)} · sonó: ${sueltas.sono}`)
+    assert.ok(sueltas.r.mbpsNecesarios > 10, `8 pistas estéreo: ${sueltas.r.mbpsNecesarios} Mbps`)
+    assert.ok(sueltas.r.cortes > 0 || !sueltas.sono, `con pistas sueltas tendría que cortarse: ${JSON.stringify(sueltas.r)}`)
+    await sueltas.ctx.close()
   })
 
   await t.test('código de la banda e invitar: el que llega tarde entra con el enlace de un compañero', async () => {

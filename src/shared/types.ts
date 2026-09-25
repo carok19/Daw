@@ -379,6 +379,8 @@ export interface DispositivoInfo {
   audio: boolean
   /** Date.now() del server cuando se desconecto (para mostrar "hace X min") */
   desconectadoDesde: number | null
+  /** ultimas mediciones del dispositivo (WiFi, colchon, cortes) */
+  diag?: DiagnosticoDispositivo | null
 }
 
 export interface SyncReportPayload {
@@ -386,6 +388,52 @@ export interface SyncReportPayload {
   buffer?: EstadoBuffer | null
   error?: string | null
   audio?: boolean
+  diag?: DiagnosticoDispositivo | null
+}
+
+/** Lo que mide el motor de audio de un dispositivo (para ver si el WiFi alcanza y si hubo cortes). */
+export interface DiagnosticoAudio {
+  /** 'mezcla' = una pista estereo mezclada por la compu; 'pistas' = todas las pistas sueltas */
+  modo: 'mezcla' | 'pistas'
+  /** lo que hace falta bajar para que suene (Mbps) */
+  mbpsNecesarios: number
+  /** lo que bajo en los ultimos 20 s (Mbps) */
+  mbpsRecibidos: number
+  /** la velocidad que dio el WiFi mientras bajaba (Mbps); null = todavia no hay datos */
+  mbpsCapacidad: number | null
+  /** segundos de audio listos por delante */
+  colchonSeg: number
+  /** veces que se quedo sin audio mientras sonaba */
+  cortes: number
+  /** correcciones finas de sync */
+  correcciones: number
+  /** pedidos de audio que fallaron */
+  errores: number
+  /** demora promedio de cada pedido de audio (ms) */
+  latenciaMs: number | null
+  /** audio guardado en memoria (MB) */
+  memoriaMB: number
+  /** latencia de salida de audio del dispositivo (ms) */
+  salidaMs: number
+}
+
+/** Todo lo que la compu junta para "Copiar diagnostico". */
+export interface DiagnosticoServidor {
+  version: string
+  sistema: string
+  direcciones: string[]
+  puerto: number
+  puertoCorto: number | null
+  mezcla: { pedidos: number; aciertosCache: number; mezclados: number; msPromedio: number; msMax: number; bytes: number } | null
+  cancion: { nombre: string; pistas: number; duracionMs: number; bpm: number | null } | null
+  dispositivos: DispositivoInfo[]
+}
+
+export interface DiagnosticoDispositivo extends DiagnosticoAudio {
+  /** resincronizaciones duras (desfase grande o vuelta despues de un corte) */
+  resyncs: number
+  /** "Android · Chrome", "iPhone · Safari", "App Android"... */
+  plataforma: string
 }
 
 export interface DeviceRenamePayload {

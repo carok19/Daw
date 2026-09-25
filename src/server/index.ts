@@ -8,13 +8,15 @@ import { Server as SocketIOServer } from 'socket.io'
 import { AppState } from './state'
 import { DeviceRegistry } from './devices'
 import { registerSocketHandlers, restaurarSesion } from './socketHandlers'
-import { ensureBaseDir, leerSesion, listProyectos, loadProyecto, projectsBaseDir } from './projects'
+import { ensureBaseDir, esIdValido, leerSesion, listProyectos, loadProyecto, projectDir, projectsBaseDir } from './projects'
 import type { Transporte } from './transport'
 import type { Analizador } from './analisis'
 import type { Biblioteca } from './biblioteca'
 import { ModelosVoz } from './modelos'
 import { leerAjustes, type Ajustes } from './ajustes'
 import { Descubrimiento } from './descubrimiento'
+import { Mezclador } from './mezclador'
+import { decodificarMezcla } from '../shared/mezcla'
 
 export interface AppServer {
   app: express.Express
@@ -26,6 +28,8 @@ export interface AppServer {
   analizador: Analizador
   biblioteca: Biblioteca
   modelos: ModelosVoz
+  /** mezcla de cada celular (una pista estereo en vez de todas las pistas) */
+  mezclador: Mezclador
   /** secreto que identifica a la ventana de Electron como "la compu" (ver socketHandlers.origenDe) */
   compuToken: string
   start(preferredPort: number): Promise<number>
@@ -101,6 +105,32 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     res.sendFile(rutaApk)
   })
 
+  // mezcla de cada celular: el segmento <n> (2 s) de la cancion como UN WAV estereo, con la mezcla que pide
+  // (?m=... = ganancia y paneo por pista, ver shared/mezcla.ts). Asi cada celular baja ~1,4 Mbps y no 20+.
+  const mezclador = new Mezclador(projectDir)
+  app.get('/mezcla/:proyectoId/:segmento', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store')
+    const { proyectoId, segmento } = req.params
+    const m = /^(\d{1,6})\.wav$/.exec(segmento)
+    if (!esIdValido(proyectoId) || !m) return res.status(400).end()
+    const proyecto = state.tabDeProyecto(proyectoId)?.proyecto
+    if (!proyecto) return res.status(404).end()
+    // audio reemplazado (zip actualizado): el celular tiene que volver a pedir con la revision nueva
+    if (String(proyecto.revision ?? 0) !== String(req.query.v ?? '0')) return res.status(409).end()
+    const texto = typeof req.query.m === 'string' ? req.query.m : ''
+    const canales = decodificarMezcla(texto)
+    if (!canales) return res.status(400).end()
+    try {
+      const seg = await mezclador.segmento(proyecto, Number(m[1]), canales, texto)
+      if (!seg) return res.status(416).end() // despues del final de la cancion
+      res.setHeader('Content-Type', 'audio/wav')
+      res.setHeader('X-Ultimo', seg.ultimo ? '1' : '0')
+      res.end(seg.wav)
+    } catch {
+      if (!res.headersSent) res.status(500).end()
+    }
+  })
+
   // audio de las pistas: express.static responde "206 Partial Content" a los pedidos Range del streaming
   app.use('/media', express.static(projectsBaseDir(), { fallthrough: false, maxAge: '1h' }))
 
@@ -127,7 +157,9 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
       return typeof a === 'object' && a ? a.port : 0
     },
     puertoCorto: () => puertoCortoActivo,
-    hayApk
+    hayApk,
+    estadisticasMezcla: () => mezclador.estadisticas(),
+    version
   })
 
   async function listenOn(port: number): Promise<number> {
@@ -230,6 +262,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     analizador,
     biblioteca,
     modelos,
+    mezclador,
     compuToken,
     ajustes,
     puertoCorto: () => puertoCortoActivo,

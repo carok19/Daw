@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { KeyRound, Laptop, Printer, Smartphone, Trash2, Wifi } from 'lucide-react'
+import { Check, ClipboardCopy, KeyRound, Laptop, Printer, Smartphone, Trash2, Wifi } from 'lucide-react'
 import type { AjustesConexion, DatosInvitacion, DispositivoInfo } from '@shared/types'
 import type { AppController } from '../app/useAppController'
-import { direccionVisible, enlaceConCodigo, textoQrWifi } from '../conexion'
+import { copiarTexto, direccionVisible, enlaceConCodigo, textoQrWifi } from '../conexion'
+import { informeTexto, nivelDiagnostico, resumenCorto } from '../diagnostico'
 import { Modal } from '../ui/Modal'
 import { useQr } from '../ui/useQr'
 import { SyncBadge } from './SyncBadge'
@@ -44,6 +45,26 @@ function EstadoDispositivo({ d, sonando }: { d: DispositivoInfo; sonando: boolea
     <span className="dispositivo-estado texto-verde">
       <span className="punto verde" /> Listo
     </span>
+  )
+}
+
+/** Copia un informe de texto (compu, cancion, WiFi y cortes de cada celular) para mandarlo por chat. */
+function BotonDiagnostico({ controller }: { controller: AppController }) {
+  const [estado, setEstado] = useState<'listo' | 'copiado' | 'error'>('listo')
+  async function copiar(): Promise<void> {
+    try {
+      const datos = await controller.diagnosticoServidor()
+      setEstado(datos && copiarTexto(informeTexto(datos)) ? 'copiado' : 'error')
+    } catch {
+      setEstado('error')
+    }
+    setTimeout(() => setEstado('listo'), 2500)
+  }
+  return (
+    <button onClick={() => void copiar()} title="Copia un informe para mandarlo por chat (WiFi, cortes y desfase de cada celular)">
+      {estado === 'copiado' ? <Check size={16} /> : <ClipboardCopy size={16} />}
+      {estado === 'copiado' ? 'Copiado' : estado === 'error' ? 'No se pudo copiar' : 'Copiar diagnóstico'}
+    </button>
   )
 }
 
@@ -94,6 +115,7 @@ export function ConnectionPanel({ controller, sonando, onCerrar }: { controller:
           <span className="ayuda" style={{ marginRight: 'auto', alignSelf: 'center' }}>
             Hoja con los QR del WiFi y de la app, para pegar en el ensayo.
           </span>
+          <BotonDiagnostico controller={controller} />
           <button onClick={() => window.print()} disabled={!datos}>
             <Printer size={16} /> Imprimir hoja para la banda
           </button>
@@ -154,6 +176,11 @@ export function ConnectionPanel({ controller, sonando, onCerrar }: { controller:
                 <div className="lista-principal">
                   <span className="lista-titulo">{d.etiqueta}</span>
                   {d.error && d.conectado && <span className="lista-meta texto-rojo">{d.error}</span>}
+                  {d.diag && d.conectado && d.origen === 'celular' && (
+                    <span className={`lista-meta diag-${nivelDiagnostico(d.diag)}`} title={d.diag.plataforma}>
+                      {resumenCorto(d.diag)}
+                    </span>
+                  )}
                 </div>
                 <EstadoDispositivo d={d} sonando={sonando} />
                 {!d.conectado && (

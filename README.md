@@ -79,8 +79,11 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
   la banda (incorrecto, correcto, recordado), "Invitar" desde un celular
   (QR del WiFi y de la app, WhatsApp) y que el que llega tarde entre con ese
   enlace, y la app Android simulada (`window.AlabanzaApp`: arranca sola y
-  guarda nombre y mezcla en la app). El reconocedor de voz se reemplaza por
-  uno falso (`window.__asrFalso`). La primera vez:
+  guarda nombre y mezcla en la app). También: que el audio que realmente sale
+  del celular coincida con la posición calculada (corrección, cambio de
+  mezcla, salto, reentrada en el compás) y que con el WiFi limitado a 3 Mbps
+  la mezcla de la compu suene sin cortes mientras 8 pistas sueltas no llegan.
+  El reconocedor de voz se reemplaza por uno falso (`window.__asrFalso`). La primera vez:
   `npx playwright install chromium`.
 - App Android: ver `android/LEEME.md` (Java sin librerías; la arma el CI).
 - `npm run dev:renderer` — solo la interfaz en un navegador (sin servidor).
@@ -151,11 +154,19 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
    tiempo espera al próximo compás, y la vuelta de “repetir” también va de
    compás a compás. Así, aunque se salte muy lejos, el pulso no se corta.
 
-**Ancho de banda:** cada celular recibe ~0,7 Mbps por pista mono y ~1,4 Mbps
-por pista estéreo (WAV sin comprimir, para que los saltos y el loop sean
-exactos). Una canción de 10 pistas ≈ 7–14 Mbps por celular. Un router
-decente en 5 GHz aguanta varios celulares; si alguno se queda corto, la app
-lo avisa (en el celular y en la compu) y se pone al día sola cuando mejora.
+**Ancho de banda:** la compu le arma a cada celular **su mezcla** (la del
+director + su “Mi mezcla”) y le manda **una sola pista estéreo**: ~1,4 Mbps
+por celular, tenga la canción 4 pistas o 20 (antes, con cada pista por
+separado, una canción de 20 pistas pedía más de 25 Mbps por celular y el WiFi
+no daba). Sigue siendo WAV sin comprimir, sin pérdida de calidad. Con 10
+celulares son ~14 Mbps en total: entra en cualquier router. Mover un fader de
+“Mi mezcla” se escucha en menos de un segundo.
+
+**¿Se corta?** En la ventana de Celulares, debajo de cada celular, se ve
+cuánto WiFi le da la red, cuánto necesita, cuántos segundos de audio tiene
+listos (colchón) y si tuvo cortes. **Copiar diagnóstico** copia un informe de
+todo (compu, canción, cada celular) para mandarlo por chat. En el celular, lo
+mismo en ⚙ → Estado.
 
 ### Atajos de teclado (compu)
 
@@ -282,11 +293,30 @@ ser del usuario: ni un zip actualizado ni un análisis automático las pisan
 
 ### Streaming de audio (celulares y compu)
 
-Nadie descarga ni decodifica la canción entera. Cada pista se pide por
-**HTTP Range** en segmentos de 2 s y se mantiene una ventana de ~8 s por
-delante de lo que suena; cada segmento se libera apenas termina. Los
-segmentos se encadenan por aritmética de muestras (sin huecos) sobre
-`GainNode` + `StereoPannerNode` persistentes por pista.
+Nadie descarga ni decodifica la canción entera: se piden segmentos de 2 s y
+cada segmento se libera apenas termina.
+
+- **Celulares: la mezcla la hace la compu.** El celular pide
+  `/mezcla/<canción>/<n>.wav?m=…` (ganancia y paneo de cada pista, ya con
+  su “Mi mezcla”) y recibe el segmento `n` como un WAV estéreo de 16 bits
+  (`server/mezclador.ts`, mismo paneo “equal power” que Web Audio y un
+  limitador suave por encima de 0,9). La compu no se traba: mezcla de a 2 por
+  vez y cede el turno entre pista y pista (los mensajes de sincronización
+  salen a tiempo), y guarda los segmentos recientes (los celulares con la
+  misma mezcla los comparten). ~20 ms por segmento con 20 pistas estéreo.
+  Colchón de 20 s por delante.
+- **Cambio de mezcla sin cortes:** mientras llega la mezcla nueva sigue
+  sonando la anterior; cuando llega, se pasa a ella en el mismo punto exacto
+  de la canción con un fundido de 20 ms (mientras se arrastra un fader, como
+  mucho cada 300 ms).
+- **La compu (sonido local)** sigue pidiendo cada pista por **HTTP Range**
+  (lee de su propio disco) con `GainNode` + `StereoPannerNode` por pista: sus
+  faders suenan al instante. Colchón de 8 s. `?modo=pistas` / `?modo=mezcla`
+  en la dirección fuerza uno u otro (pruebas).
+- **Encadenado exacto:** los segmentos se programan en Web Audio uno detrás
+  del otro por aritmética de muestras (sin huecos), solo 4 s por delante; lo
+  demás espera bajado. Cada tramo programado guarda qué parte de la canción
+  suena y a qué velocidad: la posición que se escucha sale de ahí, exacta.
 
 - **Orden de urgencia:** primero el próximo segmento de *todas* las pistas,
   después el siguiente (el navegador baja ~6 cosas a la vez por servidor).
@@ -307,7 +337,8 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
 | Constante (`audio/streamConfig.ts`) | Valor | Significado |
 |---|---|---|
 | `SEGMENT_DURATION_SEC` | 2 | Duración de cada segmento |
-| `BUFFER_TARGET_SEC` | 8 | Audio encadenado por delante |
+| `BUFFER_TARGET_SEC` | 20 / 8 | Colchón bajado por delante (mezcla / pistas sueltas) |
+| `HORIZONTE_PROGRAMADO_SEC` | 4 | Audio ya programado en Web Audio |
 | `BUFFER_CRITICAL_SEC` | 3 | Por debajo: aviso de conexión lenta |
 | `BUFFER_MIN_START_SEC` | 3 | Mínimo para (re)arrancar |
 | `MAX_CUES` / `SEGMENTOS_POR_CUE` | 16 / 2 | Arranques de sección precargados |
@@ -329,14 +360,22 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
    latencia que informa su sistema (`outputLatency`) más el ajuste fino
    manual. El drift se mide sobre lo que *se escucha*, descontando esa
    compensación (si no, el monitor la "corregiría" y la desharía).
-5. **Drift continuo** (cada 2 s): < 15 ms nada; 15–150 ms corrección suave
-   cambiando la velocidad 0,4 % (inaudible) el tiempo justo; ≥ 150 ms
-   resincronización dura de ese dispositivo. Mientras dura una corrección
-   suave, la posición informada es la que realmente suena (lo que falta
-   absorber se sigue mostrando como desfase). Un corte de audio del celular
-   (el sistema no llegó a tiempo y el reloj de audio se atrasa de golpe) se
-   corrige así en pocos segundos.
-6. **Pantalla bloqueada / segundo plano:** la pantalla se mantiene encendida
+5. **Drift continuo** (cada 2 s): < 15 ms nada; 15–150 ms corrección suave;
+   ≥ 150 ms resincronización dura de ese dispositivo. La corrección suave hace
+   sonar los próximos tramos un 0,4 % más lentos o rápidos (inaudible) y
+   calcula cuánto duran de verdad, así el siguiente arranca donde termina el
+   anterior. (Antes la velocidad se cambiaba sobre lo ya programado y cada
+   segmento nuevo arrancaba en el horario original: la corrección se deshacía
+   cada 2 s aunque el monitor creyera que estaba hecha.)
+6. **Volver a entrar en el “1”:** cuando un celular tiene que reincorporarse
+   (se quedó sin audio, un desfase grande, activó el audio tarde, volvió de
+   segundo plano), con el tempo detectado entra en el comienzo del próximo
+   compás, como un músico que retoma, y no a mitad de un acorde.
+7. **Verificado con el audio real:** una prueba graba lo que sale del motor
+   (AudioWorklet) con una pista que codifica en cada muestra en qué segundo de
+   la canción está, y lo compara con la posición que calcula el motor durante
+   una corrección, un cambio de mezcla y un salto: coinciden a menos de 1 ms.
+8. **Pantalla bloqueada / segundo plano:** la pantalla se mantiene encendida
    (NoSleep.js: Wake Lock si está disponible, si no un video mudo; la app se
    sirve por `http://` y ahí el Wake Lock nativo no existe), Media Session
    marca la página como reproducción de audio, y al volver a primer plano se
@@ -391,10 +430,11 @@ Todo por la WiFi local, sin internet ni servidores externos:
    Pasar a otra canción o quitar la que suena pide confirmación (corta el
    audio en todos). Importar o agregar canciones al setlist mientras algo
    suena no lo interrumpe: la nueva queda al final.
-3. **La mezcla del director llega a todos** en tiempo real (mensajes
-   livianos por pista, guardado a disco con debounce). Cada celular suma su
-   volumen general y su *Mi mezcla* (recordada por nombre de pista, vale
-   para todas las canciones).
+3. **La mezcla del director llega a todos** en menos de un segundo
+   (mensajes livianos por pista, guardado a disco con debounce): la compu
+   rehace la mezcla de cada celular con su *Mi mezcla* (recordada por nombre
+   de pista, vale para todas las canciones) y el celular pasa a ella con un
+   fundido. El volumen general de cada celular es local (al instante).
 4. **Curva de fader de audio** (cuadrática, se muestra en dB; doble click =
    −3,9 dB, el valor de importación). Faders y paneo con arrastre relativo:
    un click suelto no cambia el volumen.

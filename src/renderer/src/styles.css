@@ -2807,3 +2807,30 @@ input[type='range'].slider::-moz-range-thumb {
 .activar-proxima .ayuda:last-child {
   margin-bottom: 0;
 }
+.diag-bien {
+  color: var(--text-3);
+}
+.diag-justo {
+  color: var(--warn);
+}
+.diag-mal {
+  color: #ff7a7a;
+}
+.diag-celular {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.diag-celular span {
+  color: var(--text-2);
+}
+.diag-celular.diag-bien b {
+  color: var(--play);
+}

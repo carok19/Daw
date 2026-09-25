@@ -1,3 +1,4 @@
+import os from 'node:os'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Server, Socket } from 'socket.io'
@@ -27,6 +28,7 @@ import type {
   TransportSeekPayload,
   AjustesConexion,
   DatosInvitacion,
+  DiagnosticoServidor,
   MotivoCodigo
 } from '../shared/types'
 import type { AppState } from './state'
@@ -52,6 +54,7 @@ import { Analizador } from './analisis'
 import { Biblioteca } from './biblioteca'
 import type { ModelosVoz } from './modelos'
 import { guardarAjustes, normalizarCodigo, type Ajustes } from './ajustes'
+import type { EstadisticasMezcla } from './mezclador'
 import { direccionesLan, ipParaCliente } from './network'
 import { NOMBRE_FIJO } from './descubrimiento'
 
@@ -96,6 +99,10 @@ export interface Conexion {
   puerto(): number
   puertoCorto(): number | null
   hayApk(): boolean
+  /** como viene la mezcla por celular (para el diagnostico) */
+  estadisticasMezcla?(): EstadisticasMezcla
+  /** version de la app (para el diagnostico) */
+  version?: string
 }
 
 function errorCodigo(motivo: MotivoCodigo): Error {
@@ -340,6 +347,22 @@ export function registerSocketHandlers(
       conexion.ajustes.wifi = ssid ? { ssid, clave: typeof payload?.clave === 'string' ? payload.clave.slice(0, 64) : '' } : null
       guardarAjustes(conexion.ajustes)
       ack?.({ ok: true, ajustes: ajustesConexion() })
+    })
+
+    // "Copiar diagnostico" (compu): la compu, la cancion, la mezcla por celular y lo que mide cada dispositivo
+    socket.on('diagnostico:obtener', (_p: unknown, ack?: Ack<DiagnosticoServidor | null>) => {
+      if (!soloCompu(socket)) return ack?.(null)
+      const p = state.getActiveTab()?.proyecto ?? null
+      ack?.({
+        version: conexion.version ?? '',
+        sistema: `${os.type()} ${os.release()} · ${os.cpus().length} núcleos · ${Math.round(os.totalmem() / 1e9)} GB`,
+        direcciones: direccionesLan(),
+        puerto: conexion.puerto(),
+        puertoCorto: conexion.puertoCorto(),
+        mezcla: conexion.estadisticasMezcla?.() ?? null,
+        cancion: p ? { nombre: p.nombre, pistas: p.pistas.length, duracionMs: p.duracionTotalMs, bpm: p.tempo?.bpm ?? null } : null,
+        dispositivos: devices.listar()
+      })
     })
 
     socket.on('sync:report', (payload: SyncReportPayload) => {

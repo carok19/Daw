@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { RotateCcw, X } from 'lucide-react'
 import type { AppController } from '../app/useAppController'
+import { explicacion, nivelDiagnostico } from '../diagnostico'
 
 export function Hoja({ titulo, onCerrar, children }: { titulo: string; onCerrar: () => void; children: ReactNode }) {
   return (
@@ -34,6 +35,13 @@ export function HojaAjustes({
   onCerrar: () => void
 }) {
   const [nombre, setNombre] = useState(controller.nombreDispositivo)
+  // lo que mide el audio de este celular (WiFi, colchon, cortes), al dia mientras la hoja esta abierta
+  const leerDiag = controller.diagnosticoLocal
+  const [diag, setDiag] = useState(() => leerDiag())
+  useEffect(() => {
+    const id = setInterval(() => setDiag(leerDiag()), 2000)
+    return () => clearInterval(id)
+  }, [leerDiag])
   const ms = controller.ajusteManualMs
   const cambiar = (delta: number): void => controller.setAjusteManualMs(ms + delta)
 
@@ -104,6 +112,18 @@ export function HojaAjustes({
           <br />
           Conexión: <b>{controller.conectado ? 'conectado' : 'reconectando…'}</b>
         </p>
+        {diag && (
+          <div className={`diag-celular diag-${nivelDiagnostico(diag)}`}>
+            <b>{explicacion(diag)}</b>
+            <span>
+              WiFi: {diag.mbpsCapacidad !== null ? `${diag.mbpsCapacidad.toLocaleString('es-AR')} Mbps` : 'midiendo…'} · hace falta{' '}
+              {diag.mbpsNecesarios.toLocaleString('es-AR')} Mbps
+            </span>
+            <span>
+              Audio listo por delante: {Math.round(diag.colchonSeg)} s · cortes: {diag.cortes}
+            </span>
+          </div>
+        )}
       </div>
     </Hoja>
   )

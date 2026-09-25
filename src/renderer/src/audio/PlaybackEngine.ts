@@ -1,23 +1,8 @@
-import type { ComandoProgramado, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import type { ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 
-/** Ajuste personal de una pista en ESTE dispositivo ("Mi mezcla"), por nombre de pista. */
-export interface AjustePersonal {
-  /** multiplicador sobre la mezcla del director: 0 a 2 (1 = igual que el director) */
-  ganancia: number
-  mute: boolean
-}
-
-export type MezclaPersonal = Record<string, AjustePersonal>
-
-/** Clave estable por nombre de pista ("Click", "click ", "CLICK" -> "click"), para que el ajuste siga de cancion en cancion. */
-export function clavePista(nombre: string): string {
-  return nombre
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+export { clavePista } from '@shared/mezcla'
+export type { AjustePersonal, MezclaPersonal } from '@shared/mezcla'
+import type { MezclaPersonal } from '@shared/mezcla'
 
 /** Superficie del motor de audio que usa `useAppController`. */
 export interface PlaybackEngine {
@@ -46,6 +31,8 @@ export interface PlaybackEngine {
 
   estadoBuffer(): EstadoBuffer | null
   errorAudio(): string | null
+  /** mediciones para el diagnostico (WiFi, colchon, cortes) */
+  resumenDiagnostico(): DiagnosticoAudio
 
   onRequiereResync(cb: () => void): void
   dispose(): void
