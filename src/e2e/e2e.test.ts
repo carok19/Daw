@@ -162,7 +162,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   const server: AppServer = createServer(RENDERER, { compuToken: 'e2e' })
   const port = await server.start(0)
   const biblioteca = path.join(tmp, 'Biblioteca')
-  server.iniciarServicios(biblioteca)
+  server.iniciarServicios(biblioteca, { descubrimiento: false, puertoCorto: null })
   const base = `http://localhost:${port}`
   const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
   t.after(async () => {

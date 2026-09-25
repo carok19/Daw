@@ -24,7 +24,10 @@ import type {
   TabsReordenarPayload,
   TabsSwitchPayload,
   TransportPlayPayload,
-  TransportSeekPayload
+  TransportSeekPayload,
+  AjustesConexion,
+  DatosInvitacion,
+  MotivoCodigo
 } from '../shared/types'
 import type { AppState } from './state'
 import { buildEstadoCompleto } from './estado'
@@ -48,6 +51,9 @@ import { Transporte } from './transport'
 import { Analizador } from './analisis'
 import { Biblioteca } from './biblioteca'
 import type { ModelosVoz } from './modelos'
+import { guardarAjustes, normalizarCodigo, type Ajustes } from './ajustes'
+import { direccionesLan, ipParaCliente } from './network'
+import { NOMBRE_FIJO } from './descubrimiento'
 
 export { MARGIN_MS, MARGIN_SIN_CELULARES_MS } from './transport'
 
@@ -84,14 +90,66 @@ export interface Servicios {
   biblioteca: Biblioteca
 }
 
+/** Lo que la conexion de los celulares necesita del servidor (puertos, ajustes, app Android). */
+export interface Conexion {
+  ajustes: Ajustes
+  puerto(): number
+  puertoCorto(): number | null
+  hayApk(): boolean
+}
+
+function errorCodigo(motivo: MotivoCodigo): Error {
+  const e = new Error('codigo') as Error & { data?: unknown }
+  e.data = { motivo }
+  return e
+}
+
 export function registerSocketHandlers(
   io: Server,
   state: AppState,
   devices: DeviceRegistry,
   compuToken: string,
   modelos: ModelosVoz,
-  analisisAutomatico = true
+  analisisAutomatico = true,
+  conexion: Conexion = { ajustes: { codigoBanda: null, wifi: null, idInstalacion: 'local' }, puerto: () => 0, puertoCorto: () => null, hayApk: () => false }
 ): Servicios {
+  // codigo de la banda: un celular sin el codigo no entra (la compu siempre). Contra adivinarlo
+  // probando: 5 intentos fallidos desde un mismo celular lo frenan un minuto.
+  const intentos = new Map<string, { fallos: number; hasta: number }>()
+  io.use((socket, next) => {
+    const codigo = conexion.ajustes.codigoBanda
+    if (!codigo || origenDe(socket, compuToken) === 'compu') return next()
+    const ip = socket.handshake.address
+    const reg = intentos.get(ip)
+    if (reg && reg.hasta > Date.now()) return next(errorCodigo('codigo-bloqueado'))
+    if (reg && reg.hasta && reg.hasta <= Date.now()) intentos.delete(ip)
+    const dado = normalizarCodigo((socket.handshake.auth as AuthHandshake | undefined)?.codigo)
+    if (dado === codigo) {
+      intentos.delete(ip)
+      return next()
+    }
+    if (dado) {
+      const fallos = (intentos.get(ip)?.fallos ?? 0) + 1
+      intentos.set(ip, { fallos, hasta: fallos >= 5 ? Date.now() + 60_000 : 0 })
+      return next(errorCodigo(fallos >= 5 ? 'codigo-bloqueado' : 'codigo-incorrecto'))
+    }
+    next(errorCodigo('codigo-requerido'))
+  })
+
+  function datosInvitacion(ipCliente: string | undefined): DatosInvitacion {
+    const ip = ipParaCliente(ipCliente) ?? 'localhost'
+    const puerto = conexion.puerto()
+    const corto = conexion.puertoCorto()
+    return {
+      url: `http://${ip}:${puerto}`,
+      urlCorta: corto === 80 ? `http://${ip}` : null,
+      urlFija: corto === 80 ? `http://${NOMBRE_FIJO}` : `http://${NOMBRE_FIJO}:${puerto}`,
+      codigo: conexion.ajustes.codigoBanda,
+      wifi: conexion.ajustes.wifi,
+      apk: conexion.hayApk()
+    }
+  }
+
   function hayCelularesConectados(): boolean {
     for (const socket of io.sockets.sockets.values()) {
       if ((socket.data as SocketData).origen === 'celular') return true
@@ -242,6 +300,46 @@ export function registerSocketHandlers(
     socket.on('disconnect', () => {
       devices.desconectar(socket.id)
       emitirDispositivos()
+    })
+
+    // ---- conexion de celulares: invitar, codigo de la banda, WiFi ----
+
+    socket.on('invitacion:datos', (_p: unknown, ack?: Ack<DatosInvitacion>) => {
+      ack?.(datosInvitacion(socket.handshake.address))
+    })
+
+    function ajustesConexion(): AjustesConexion {
+      return {
+        codigoBanda: conexion.ajustes.codigoBanda,
+        wifi: conexion.ajustes.wifi,
+        direcciones: direccionesLan(),
+        puerto: conexion.puerto(),
+        puertoCorto: conexion.puertoCorto()
+      }
+    }
+
+    socket.on('ajustes:obtener', (_p: unknown, ack?: Ack<AjustesConexion | null>) => {
+      if (!soloCompu(socket)) return ack?.(null)
+      ack?.(ajustesConexion())
+    })
+
+    socket.on('ajustes:codigo', (payload: { codigo?: string | null }, ack?: Ack<{ ok: boolean; error?: string; ajustes?: AjustesConexion }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      const quitar = payload?.codigo === null || payload?.codigo === ''
+      const codigo = normalizarCodigo(payload?.codigo)
+      if (!quitar && !codigo) return ack?.({ ok: false, error: 'El código tiene que ser de 4 a 8 números' })
+      conexion.ajustes.codigoBanda = quitar ? null : codigo
+      guardarAjustes(conexion.ajustes)
+      // los celulares que ya estan conectados siguen (no se corta nada en vivo); el codigo vale para los que entren
+      ack?.({ ok: true, ajustes: ajustesConexion() })
+    })
+
+    socket.on('ajustes:wifi', (payload: { ssid?: string; clave?: string } | null, ack?: Ack<{ ok: boolean; ajustes?: AjustesConexion }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      const ssid = typeof payload?.ssid === 'string' ? payload.ssid.trim().slice(0, 64) : ''
+      conexion.ajustes.wifi = ssid ? { ssid, clave: typeof payload?.clave === 'string' ? payload.clave.slice(0, 64) : '' } : null
+      guardarAjustes(conexion.ajustes)
+      ack?.({ ok: true, ajustes: ajustesConexion() })
     })
 
     socket.on('sync:report', (payload: SyncReportPayload) => {

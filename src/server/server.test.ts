@@ -11,10 +11,15 @@ import { createServer, type AppServer } from './index'
 import { rutaFfmpeg, leerInfoWav } from './audio'
 import { nombrePistaDesdeArchivo } from './zip'
 import { crearRar4, crearRar5 } from './__fixtures__/rar'
+import dgram from 'node:dgram'
+import dnsPacket from 'dns-packet'
+import { responderMdns } from './descubrimiento'
 import { parseWavHeader } from '../shared/wav'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
+  AjustesConexion,
   ClockSyncAck,
+  DatosInvitacion,
   ComandoProgramado,
   DispositivoInfo,
   EstadoCompleto,
@@ -82,11 +87,15 @@ interface Entorno {
   cerrar(): Promise<void>
 }
 
-async function entorno(t: { after(fn: () => Promise<void> | void): void }, appDir = tmpDir('multitrack-test-')): Promise<Entorno> {
+async function entorno(
+  t: { after(fn: () => Promise<void> | void): void },
+  appDir = tmpDir('multitrack-test-'),
+  extra: { dirExtras?: string } = {}
+): Promise<Entorno> {
   process.env.MULTITRACK_APP_DIR = appDir
   const rendererDir = tmpDir('multitrack-renderer-')
   fs.writeFileSync(path.join(rendererDir, 'index.html'), '<html></html>')
-  const server = createServer(rendererDir, { compuToken: TOKEN, analisisAutomatico: false })
+  const server = createServer(rendererDir, { compuToken: TOKEN, analisisAutomatico: false, version: '9.9.9', ...extra })
   const port = await server.start(0)
   const sockets: ClientSocket[] = []
   let cerrado = false
@@ -415,6 +424,115 @@ test('canciones en .rar: RAR5, RAR4, en partes (eligiendo cualquier parte) y err
 
   const lista = await emitAck<ProyectoResumen[]>(compu, 'projects:list', {})
   assert.deepEqual(lista.map((p) => p.nombre).sort(), ['Rey de Reyes', 'Santo Santo', 'Viejo'])
+  await env.cerrar()
+})
+
+test('código de la banda: sin el código un celular no entra (la compu sí); 5 intentos fallidos lo frenan', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const intentar = (auth: Record<string, unknown>): Promise<string> =>
+    new Promise((res) => {
+      const s = ioClient(`http://localhost:${env.port}`, { auth, reconnection: false })
+      s.once('connect', () => {
+        s.close()
+        res('ok')
+      })
+      s.once('connect_error', (e: Error & { data?: { motivo?: string } }) => {
+        s.close()
+        res(e.data?.motivo ?? e.message)
+      })
+    })
+
+  assert.equal(await intentar({ origen: 'celular' }), 'ok', 'sin código configurado, entra cualquiera')
+  const mal = await emitAck<{ ok: boolean; error?: string }>(compu, 'ajustes:codigo', { codigo: '12a' })
+  assert.equal(mal.ok, false)
+  const r = await emitAck<{ ok: boolean; ajustes: AjustesConexion }>(compu, 'ajustes:codigo', { codigo: '12 34' })
+  assert.equal(r.ajustes.codigoBanda, '1234')
+  const info = (await (await fetch(`http://localhost:${env.port}/api/info`)).json()) as { requiereCodigo: boolean; app: string }
+  assert.equal(info.requiereCodigo, true)
+  assert.equal(info.app, 'multitrack-alabanza')
+
+  assert.equal(await intentar({ origen: 'celular' }), 'codigo-requerido')
+  assert.equal(await intentar({ origen: 'celular', codigo: '9999' }), 'codigo-incorrecto')
+  // un celular que dice ser la compu sin el token es un celular: tambien necesita el codigo
+  assert.equal(await intentar({ origen: 'compu', token: 'no' }), 'codigo-requerido')
+  assert.equal(await intentar({ origen: 'celular', codigo: '1234' }), 'ok')
+
+  // un celular con el codigo recibe lo necesario para invitar a otro
+  const cel = await env.conectar({ origen: 'celular', codigo: '1234', deviceId: 'cel-inv' })
+  const inv = await emitAck<DatosInvitacion>(cel, 'invitacion:datos', {})
+  assert.equal(inv.codigo, '1234')
+  assert.match(inv.url, new RegExp(`^http://.+:${env.port}$`))
+  assert.match(inv.urlFija, /alabanza\.local/)
+  cel.close()
+
+  // adivinar probando: al quinto intento fallido queda frenado (aunque despues ponga el bueno)
+  for (let i = 0; i < 4; i++) assert.equal(await intentar({ origen: 'celular', codigo: '0000' }), 'codigo-incorrecto')
+  assert.equal(await intentar({ origen: 'celular', codigo: '0000' }), 'codigo-bloqueado')
+  assert.equal(await intentar({ origen: 'celular', codigo: '1234' }), 'codigo-bloqueado')
+
+  // la compu no necesita codigo; y sin codigo vuelven a entrar todos
+  const compu2 = await env.conectar(compuAuth)
+  await emitAck(compu2, 'ajustes:codigo', { codigo: null })
+  assert.equal(await intentar({ origen: 'celular' }), 'ok')
+  // el ajuste queda guardado
+  const wifi = await emitAck<{ ok: boolean; ajustes: AjustesConexion }>(compu2, 'ajustes:wifi', { ssid: 'Alabanza 5G', clave: 'cantad;al"Señor' })
+  assert.deepEqual(wifi.ajustes.wifi, { ssid: 'Alabanza 5G', clave: 'cantad;al"Señor' })
+  const guardado = JSON.parse(fs.readFileSync(path.join(env.appDir, 'ajustes.json'), 'utf-8'))
+  assert.equal(guardado.wifi.ssid, 'Alabanza 5G')
+  await env.cerrar()
+})
+
+test('la compu se deja encontrar: alabanza.local (mDNS), búsqueda de la app Android (UDP), dirección corta y la app para bajar', async (t) => {
+  const extras = tmpDir('multitrack-extras-')
+  fs.writeFileSync(path.join(extras, 'alabanza.apk'), Buffer.from('PK apk de prueba'))
+  const env = await entorno(t, tmpDir('multitrack-test-'), { dirExtras: extras })
+  const puertoMdns = 40000 + Math.floor(Math.random() * 10000)
+  const puertoUdp = puertoMdns + 1
+  env.server.iniciarServicios(null, { puertoMdns, puertoUdp, puertoCorto: 0 })
+  await esperar(300)
+
+  // busqueda de la app Android: pregunta por UDP y la compu contesta con su IP, puerto e id
+  const udp = dgram.createSocket('udp4')
+  t.after(() => udp.close())
+  const respuesta = new Promise<Record<string, unknown>>((res) => udp.once('message', (m) => res(JSON.parse(m.toString()))))
+  udp.send('MULTITRACK-ALABANZA?', puertoUdp, '127.0.0.1')
+  const r = await respuesta
+  assert.equal(r.app, 'multitrack-alabanza')
+  assert.equal(r.puerto, env.port)
+  assert.equal(r.id, env.server.ajustes.idInstalacion)
+  assert.equal(r.version, '9.9.9')
+
+  // alabanza.local: una pregunta mDNS (directa) se contesta con la IP de la compu
+  const q = dnsPacket.encode({ type: 'query', id: 7, questions: [{ name: 'alabanza.local', type: 'A' }] })
+  const mdns = dgram.createSocket('udp4')
+  t.after(() => mdns.close())
+  const resp = new Promise<dnsPacket.Packet>((res) => mdns.once('message', (m) => res(dnsPacket.decode(m))))
+  mdns.send(q, puertoMdns, '127.0.0.1')
+  const a = (await resp).answers?.find((x) => x.type === 'A') as { name: string; data: string } | undefined
+  assert.ok(a && a.name === 'alabanza.local' && /^\d+\.\d+\.\d+\.\d+$/.test(a.data), 'responde la IP')
+
+  // el servicio que busca la app Android: PTR con SRV (puerto) y TXT (id)
+  const r2 = responderMdns([{ name: '_multitrack._tcp.local', type: 'PTR' }], { nombre: 'Multitrack Alabanza · PC', puerto: 4848, id: 'abc', version: '1', requiereCodigo: true }, '192.168.1.35')!
+  const srv = r2.additionals.find((x) => x.type === 'SRV') as { data: { port: number; target: string } }
+  assert.equal(srv.data.port, 4848)
+  assert.equal(srv.data.target, 'alabanza.local')
+  assert.ok((r2.additionals.find((x) => x.type === 'TXT') as { data: string[] }).data.includes('id=abc'))
+  assert.equal(responderMdns([{ name: 'otra.local', type: 'A' }], { nombre: 'x', puerto: 1, id: 'i', version: '1', requiereCodigo: false }, '1.2.3.4'), null)
+
+  // direccion corta: el puerto 80 (aca, uno cualquiera) redirige al puerto real
+  const corto = env.server.puertoCorto()
+  assert.ok(corto, 'levanta la dirección corta')
+  const red = await fetch(`http://127.0.0.1:${corto}/algo?x=1`, { redirect: 'manual' })
+  assert.equal(red.status, 302)
+  assert.equal(red.headers.get('location'), `http://127.0.0.1:${env.port}/algo?x=1`)
+
+  // la app Android se baja de la compu
+  const info = (await (await fetch(`http://localhost:${env.port}/api/info`)).json()) as { apk: boolean }
+  assert.equal(info.apk, true)
+  const apk = await fetch(`http://localhost:${env.port}/app/alabanza.apk`)
+  assert.equal(apk.status, 200)
+  assert.equal(apk.headers.get('content-type'), 'application/vnd.android.package-archive')
   await env.cerrar()
 })
 

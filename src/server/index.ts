@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import crypto from 'node:crypto'
@@ -11,6 +13,8 @@ import type { Transporte } from './transport'
 import type { Analizador } from './analisis'
 import type { Biblioteca } from './biblioteca'
 import { ModelosVoz } from './modelos'
+import { leerAjustes, type Ajustes } from './ajustes'
+import { Descubrimiento } from './descubrimiento'
 
 export interface AppServer {
   app: express.Express
@@ -28,11 +32,26 @@ export interface AppServer {
   /** reabre las canciones de la ultima sesion (pestanas abiertas al cerrar la app) */
   restaurarSesion(): Promise<void>
   /**
-   * Arranca la biblioteca (carpeta vigilada) y retoma los analisis que
-   * quedaron a medias o pendientes (canciones viejas sin analizar incluidas).
+   * Arranca la biblioteca (carpeta vigilada), retoma los analisis que
+   * quedaron a medias y deja a la compu "encontrable" por los celulares
+   * (alabanza.local, la app Android y la direccion corta en el puerto 80).
    */
-  iniciarServicios(bibliotecaPorDefecto: string | null): void
+  iniciarServicios(bibliotecaPorDefecto: string | null, opciones?: OpcionesServicios): void
+  /** ajustes de conexion (codigo de la banda, WiFi) */
+  ajustes: Ajustes
+  /** puerto de la direccion corta (80) si se pudo usar */
+  puertoCorto(): number | null
   close(): Promise<void>
+}
+
+export interface OpcionesServicios {
+  /** anunciarse por mDNS (alabanza.local) y responder a la busqueda de la app Android (por defecto si) */
+  descubrimiento?: boolean
+  /** puertos del descubrimiento (los tests usan otros) */
+  puertoMdns?: number
+  puertoUdp?: number
+  /** puerto de la direccion corta que redirige al principal (por defecto 80; null = no) */
+  puertoCorto?: number | null
 }
 
 export interface OpcionesServidor {
@@ -41,6 +60,10 @@ export interface OpcionesServidor {
   dirModelos?: string | null
   /** analizar tempo/secciones al importar (por defecto si; los tests que no lo prueban lo apagan) */
   analisisAutomatico?: boolean
+  /** carpeta con la app Android (alabanza.apk) incluida en el instalador (resources/extras) */
+  dirExtras?: string | null
+  /** version de la app (se informa a la app Android) */
+  version?: string
 }
 
 /**
@@ -57,6 +80,26 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
   const io = new SocketIOServer(httpServer, { cors: { origin: '*' }, pingInterval: 5000, pingTimeout: 8000 })
   const state = new AppState()
   const devices = new DeviceRegistry()
+  const ajustes = leerAjustes()
+  const version = opciones.version ?? '0.0.0'
+  const rutaApk = opciones.dirExtras ? path.join(opciones.dirExtras, 'alabanza.apk') : null
+  const hayApk = (): boolean => !!rutaApk && fs.existsSync(rutaApk)
+  let puertoCortoActivo: number | null = null
+  const nombreVisible = `Multitrack Alabanza · ${os.hostname()}`.slice(0, 60)
+
+  // para la app Android (y la pagina, que prueba si anda alabanza.local): que app es y si pide codigo
+  app.get('/api/info', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Cache-Control', 'no-store')
+    res.json({ app: 'multitrack-alabanza', nombre: nombreVisible, version, id: ajustes.idInstalacion, requiereCodigo: !!ajustes.codigoBanda, apk: hayApk() })
+  })
+  // la app Android se baja de la misma compu (sin Play Store ni internet)
+  app.get('/app/alabanza.apk', (_req, res) => {
+    if (!rutaApk || !hayApk()) return res.status(404).end()
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive')
+    res.setHeader('Content-Disposition', 'attachment; filename="alabanza.apk"')
+    res.sendFile(rutaApk)
+  })
 
   // audio de las pistas: express.static responde "206 Partial Content" a los pedidos Range del streaming
   app.use('/media', express.static(projectsBaseDir(), { fallthrough: false, maxAge: '1h' }))
@@ -77,7 +120,15 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     res.sendFile(path.join(rendererDir, 'index.html'))
   })
 
-  const { transporte, analizador, biblioteca } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true)
+  const { transporte, analizador, biblioteca } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
+    ajustes,
+    puerto: () => {
+      const a = httpServer.address()
+      return typeof a === 'object' && a ? a.port : 0
+    },
+    puertoCorto: () => puertoCortoActivo,
+    hayApk
+  })
 
   async function listenOn(port: number): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -108,16 +159,59 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     throw new Error('sin puerto disponible')
   }
 
-  function iniciarServicios(bibliotecaPorDefecto: string | null): void {
+  let descubrimiento: Descubrimiento | null = null
+  let servidorCorto: http.Server | null = null
+
+  function iniciarServicios(bibliotecaPorDefecto: string | null, op: OpcionesServicios = {}): void {
     for (const r of listProyectos()) {
       const p = loadProyecto(r.id)
       if (!p.analisis || p.analisis.estado === 'analizando') analizador.encolar(p.id)
       else analizador.registrarPendiente(p)
     }
     biblioteca.iniciar(bibliotecaPorDefecto)
+
+    if (op.descubrimiento ?? true) {
+      descubrimiento = new Descubrimiento(
+        () => {
+          const a = httpServer.address()
+          return {
+            nombre: nombreVisible,
+            puerto: typeof a === 'object' && a ? a.port : 0,
+            id: ajustes.idInstalacion,
+            version,
+            requiereCodigo: !!ajustes.codigoBanda
+          }
+        },
+        { puertoMdns: op.puertoMdns, puertoUdp: op.puertoUdp }
+      )
+      descubrimiento.iniciar()
+    }
+
+    // direccion corta: http://192.168.1.35 (o http://alabanza.local) sin ":4848", que redirige al puerto real.
+    // Si el puerto 80 esta ocupado o no se puede usar, no pasa nada: queda la direccion con puerto.
+    const puertoCorto = op.puertoCorto === undefined ? 80 : op.puertoCorto
+    if (puertoCorto !== null) {
+      const s = http.createServer((req, res) => {
+        const a = httpServer.address()
+        const puerto = typeof a === 'object' && a ? a.port : 0
+        const host = (req.headers.host ?? 'localhost').replace(/:\d+$/, '').replace(/[^a-zA-Z0-9.\-[\]:]/g, '')
+        res.writeHead(302, { Location: `http://${host}:${puerto}${req.url?.startsWith('/') ? req.url : '/'}`, 'Cache-Control': 'no-store' })
+        res.end()
+      })
+      s.on('error', () => {
+        puertoCortoActivo = null
+      })
+      s.listen(puertoCorto, () => {
+        const a = s.address()
+        puertoCortoActivo = typeof a === 'object' && a ? a.port : puertoCorto
+        servidorCorto = s
+      })
+    }
   }
 
   async function close(): Promise<void> {
+    descubrimiento?.detener()
+    servidorCorto?.close()
     biblioteca.apagar()
     analizador.detener()
     transporte.cancelarTimers()
@@ -137,6 +231,8 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     biblioteca,
     modelos,
     compuToken,
+    ajustes,
+    puertoCorto: () => puertoCortoActivo,
     start,
     restaurarSesion: () => restaurarSesion(state, leerSesion()),
     iniciarServicios,

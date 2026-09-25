@@ -64,7 +64,9 @@ app.whenReady().then(async () => {
   const rendererDir = path.join(__dirname, '../renderer')
   // modelo de voz incluido en el instalador (resources/modelos) o, en desarrollo, <repo>/modelos
   const dirModelos = app.isPackaged ? path.join(process.resourcesPath, 'modelos') : path.join(__dirname, '../../modelos')
-  server = createServer(rendererDir, { dirModelos })
+  // app Android incluida en el instalador (la baja cada celular desde la compu)
+  const dirExtras = app.isPackaged ? path.join(process.resourcesPath, 'extras') : path.join(__dirname, '../../extras')
+  server = createServer(rendererDir, { dirModelos, dirExtras, version: app.getVersion() })
   await server.restaurarSesion()
   puertoActivo = await server.start(PUERTO_PREFERIDO)
   server.iniciarServicios(path.join(app.getPath('documents'), 'Multitrack Alabanza'))

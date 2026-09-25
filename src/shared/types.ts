@@ -244,6 +244,34 @@ export interface AuthHandshake {
   deviceId?: string
   /** nombre elegido en el propio celular ("Bateria", "Guitarra"...) */
   nombre?: string
+  /** codigo de la banda, si la compu lo pide */
+  codigo?: string
+}
+
+/** Por que la compu no dejo conectar a un celular (error de conexion con mensaje "codigo"). */
+export type MotivoCodigo = 'codigo-requerido' | 'codigo-incorrecto' | 'codigo-bloqueado'
+
+/** Lo que hace falta para sumar otro celular (QR, enlaces, codigo, WiFi). */
+export interface DatosInvitacion {
+  /** http://IP:puerto (la IP de la compu en la red de quien pregunta) */
+  url: string
+  /** http://IP, si la compu pudo usar el puerto 80 */
+  urlCorta: string | null
+  /** http://alabanza.local(:puerto): no cambia aunque cambie la IP (iPhone y la app Android) */
+  urlFija: string
+  codigo: string | null
+  wifi: { ssid: string; clave: string } | null
+  /** la compu tiene la app Android para bajar */
+  apk: boolean
+}
+
+/** Ajustes de conexion que ve y cambia la compu. */
+export interface AjustesConexion {
+  codigoBanda: string | null
+  wifi: { ssid: string; clave: string } | null
+  direcciones: string[]
+  puerto: number
+  puertoCorto: number | null
 }
 
 export interface ClockSyncAck {

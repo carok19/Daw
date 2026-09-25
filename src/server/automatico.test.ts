@@ -112,7 +112,7 @@ test('biblioteca: importa sola, categorías por carpeta, mover, actualizar y no 
   const bib = path.join(tmp, 'Biblioteca')
   const estados: EstadoBiblioteca[] = []
   compu.on('biblioteca:estado', (e: EstadoBiblioteca) => estados.push(e))
-  server.iniciarServicios(bib)
+  server.iniciarServicios(bib, { descubrimiento: false, puertoCorto: null })
   assert.ok(fs.existsSync(bib), 'crea la carpeta')
 
   const lista = (): Promise<ProyectoResumen[]> => ack<ProyectoResumen[]>('projects:list', {})
@@ -170,7 +170,7 @@ test('biblioteca: importa sola, categorías por carpeta, mover, actualizar y no 
 test('biblioteca con .rar: uno en partes se importa una sola vez, y al importar uno de afuera se copian todas sus partes', { timeout: 120000 }, async (t) => {
   const { tmp, server, ack } = await entorno(t)
   const bib = path.join(tmp, 'Biblioteca')
-  server.iniciarServicios(bib)
+  server.iniciarServicios(bib, { descubrimiento: false, puertoCorto: null })
   const lista = (): Promise<ProyectoResumen[]> => ack<ProyectoResumen[]>('projects:list', {})
   const pistas = [
     { nombre: '01 Click.wav', datos: wav16(generarClick(90, 4, 6), SR) },
@@ -226,7 +226,7 @@ test('ficha de la canción: en otra compu (o reinstalando) vuelve con sus seccio
     compu.on('analisis:pedidos', (p: PedidoVoz[]) => pedidos.push(p))
     const ack = <T>(ev: string, payload: unknown, ms = 60000): Promise<T> =>
       new Promise((res, rej) => compu.timeout(ms).emit(ev, payload, (err: unknown, r: T) => (err ? rej(err) : res(r))))
-    server.iniciarServicios(bib)
+    server.iniciarServicios(bib, { descubrimiento: false, puertoCorto: null })
     const cerrar = async (): Promise<void> => {
       compu.close()
       await server.close()
