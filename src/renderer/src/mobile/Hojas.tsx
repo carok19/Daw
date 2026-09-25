@@ -1,10 +1,8 @@
 import { useState, type ReactNode } from 'react'
-import { RotateCcw, VolumeX, X } from 'lucide-react'
-import type { Proyecto } from '@shared/types'
+import { RotateCcw, X } from 'lucide-react'
 import type { AppController } from '../app/useAppController'
-import { clavePista } from '../audio/PlaybackEngine'
 
-function Hoja({ titulo, onCerrar, children }: { titulo: string; onCerrar: () => void; children: ReactNode }) {
+export function Hoja({ titulo, onCerrar, children }: { titulo: string; onCerrar: () => void; children: ReactNode }) {
   return (
     <div className="hoja-overlay" onClick={(e) => e.target === e.currentTarget && onCerrar()}>
       <div className="hoja" role="dialog" aria-modal>
@@ -97,66 +95,6 @@ export function HojaAjustes({
           Conexión: <b>{controller.conectado ? 'conectado' : 'reconectando…'}</b>
         </p>
       </div>
-    </Hoja>
-  )
-}
-
-export function HojaMezcla({ controller, proyecto, onCerrar }: { controller: AppController; proyecto: Proyecto; onCerrar: () => void }) {
-  const mezcla = controller.mezclaPersonal
-  const hayCambios = Object.keys(mezcla).length > 0
-
-  function set(nombre: string, patch: Partial<{ ganancia: number; mute: boolean }>): void {
-    const clave = clavePista(nombre)
-    const actual = mezcla[clave] ?? { ganancia: 1, mute: false }
-    const nuevo = { ...actual, ...patch }
-    const copia = { ...mezcla }
-    if (Math.abs(nuevo.ganancia - 1) < 0.001 && !nuevo.mute) delete copia[clave]
-    else copia[clave] = nuevo
-    controller.setMezclaPersonal(copia)
-  }
-
-  return (
-    <Hoja titulo="Mi mezcla" onCerrar={onCerrar}>
-      <p className="ayuda" style={{ marginTop: 0 }}>
-        Cambia solo lo que escuchás en <b>este</b> celular (por ejemplo, más click o menos pad), sobre la mezcla de la computadora. Se
-        recuerda por nombre de pista, así que vale para todas las canciones.
-      </p>
-      {proyecto.pistas.map((p) => {
-        const ajuste = mezcla[clavePista(p.nombre)] ?? { ganancia: 1, mute: false }
-        const pct = Math.round(ajuste.ganancia * 100)
-        return (
-          <div key={p.id} className="mezcla-fila">
-            <span className="mezcla-nombre">
-              <span className="punto" style={{ background: p.color }} />
-              {p.nombre}
-              <small className="num">{ajuste.mute ? 'mute' : `${pct}%`}</small>
-            </span>
-            <button
-              className={ajuste.mute ? 'btn-peligro' : ''}
-              onClick={() => set(p.nombre, { mute: !ajuste.mute })}
-              aria-pressed={ajuste.mute}
-              aria-label={`Silenciar ${p.nombre} en este celular`}
-            >
-              <VolumeX size={16} />
-            </button>
-            <input
-              className="slider"
-              type="range"
-              min={0}
-              max={200}
-              step={5}
-              value={pct}
-              style={{ '--p': `${pct / 2}%` } as React.CSSProperties}
-              onChange={(e) => set(p.nombre, { ganancia: Number(e.target.value) / 100 })}
-              onDoubleClick={() => set(p.nombre, { ganancia: 1 })}
-              aria-label={`Volumen de ${p.nombre} en este celular`}
-            />
-          </div>
-        )
-      })}
-      <button className="btn-fantasma" style={{ width: '100%', marginTop: 8 }} disabled={!hayCambios} onClick={() => controller.setMezclaPersonal({})}>
-        <RotateCcw size={15} /> Igual que la computadora
-      </button>
     </Hoja>
   )
 }

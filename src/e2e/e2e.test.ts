@@ -129,6 +129,30 @@ async function enSync(celulares: Page[], contexto: string, convergerMs = 25000):
   }
 }
 
+/** Cuantas secciones ve un celular (se abre y se cierra la hoja de secciones de la barra flotante). */
+async function seccionesEnCelular(cel: Page): Promise<{ cantidad: number; deshabilitadas: boolean }> {
+  await cel.getByRole('button', { name: 'Secciones', exact: true }).click()
+  await cel.waitForSelector('.hoja')
+  const cantidad = await cel.locator('.hoja .m-marcador').count()
+  const deshabilitadas = cantidad > 0 && (await cel.locator('.hoja .m-marcador').first().isDisabled())
+  await cel.getByRole('button', { name: 'Cerrar' }).click()
+  await cel.waitForSelector('.hoja', { state: 'detached' })
+  return { cantidad, deshabilitadas }
+}
+
+/** Deslizar el dedo (eventos tactiles reales de Chromium: el navegador decide si scrollea). */
+async function deslizar(cel: Page, desde: { x: number; y: number }, dx: number, dy: number): Promise<void> {
+  const cdp = await cel.context().newCDPSession(cel)
+  const punto = (x: number, y: number) => [{ x: Math.round(x), y: Math.round(y), id: 1 }]
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: punto(desde.x, desde.y) })
+  for (let i = 1; i <= 10; i++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: punto(desde.x + (dx * i) / 10, desde.y + (dy * i) / 10) })
+    await esperar(16)
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await cdp.detach()
+}
+
 test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-e2e-'))
   process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
@@ -235,7 +259,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await fila.getByRole('button', { name: /Borrar/ }).click()
     await compu.getByRole('button', { name: 'Deshacer' }).click()
     await compu.waitForFunction(() => document.querySelectorAll('.seccion-fila').length === 3)
-    await celulares[0].waitForFunction(() => document.querySelectorAll('.m-marcador').length === 3)
+    assert.equal((await seccionesEnCelular(celulares[0])).cantidad, 3)
   })
 
   await t.test('saltos y repetir sección: los celulares entran en sync sin cortes', async () => {
@@ -246,8 +270,9 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     server.transporte.reprogramarTimers()
     server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
     await esperar(2500) // los celulares precargan el comienzo de cada seccion
+    // con Shift el salto es inmediato (sin esperar el final de la seccion)
     for (const tecla of ['2', '1']) {
-      await compu.keyboard.press(tecla)
+      await compu.keyboard.press(`Shift+${tecla}`)
       await esperar(3500)
       await enSync(celulares, `tras saltar a la sección ${tecla}`)
     }
@@ -262,12 +287,74 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await compu.keyboard.press('l')
   })
 
+  await t.test('elegir una sección sonando: la actual termina y sigue la elegida, sin cortes, en todos', async () => {
+    await esperar(1600) // que el "repetir" apagado se asiente
+    await compu.keyboard.press('3')
+    // queda pendiente: se ve en la compu y en los celulares
+    await compu.waitForSelector('.salto-pendiente')
+    assert.match((await compu.locator('.salto-pendiente').textContent()) ?? '', /Sección 3/)
+    for (const cel of celulares) await cel.waitForSelector('.m-barra-salto')
+    const salto = server.state.saltoPendiente!
+    assert.equal(salto.destinoMs, 24000)
+    const secciones = server.state.getActiveTab()!.proyecto.marcadores.map((m) => m.tiempoMs)
+    assert.ok(secciones.includes(salto.limiteMs), `salta en el final de una sección (${salto.limiteMs})`)
+    // hasta el limite sigue sonando la seccion actual
+    await esperar(Math.max(0, salto.tSalto - Date.now() - 400))
+    assert.match((await compu.locator('.seccion-pill').textContent()) ?? '', /Sección 1|Sección 2/)
+    await esperar(1500)
+    assert.match((await compu.locator('.seccion-pill').textContent()) ?? '', /Sección 3/)
+    assert.equal(await compu.locator('.salto-pendiente').count(), 0)
+    for (const cel of celulares) {
+      assert.ok((await vivas(cel)) > 0, 'sin cortes: el celular siguió sonando')
+      const esperando = await cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): { esperando: boolean } } } } }).__mt.engineRef.current.diagnostico().esperando)
+      assert.equal(esperando, false, 'el celular tenía listo el comienzo de la sección')
+    }
+    await enSync(celulares, 'después del salto en el límite')
+
+    // Esc cancela un salto pendiente
+    await compu.keyboard.press('1')
+    await compu.waitForSelector('.salto-pendiente')
+    await compu.keyboard.press('Escape')
+    await compu.waitForSelector('.salto-pendiente', { state: 'detached' })
+    assert.equal(server.state.saltoPendiente, null)
+  })
+
+  await t.test('celular: la mezcla está a la vista; deslizar para scrollear no mueve los faders', async () => {
+    const cel = celulares[0]
+    const fader = cel.locator('.m-canal').nth(1).locator('.fader-tactil') // [0] es el volumen general
+    await fader.scrollIntoViewIfNeeded()
+    const valor = async (): Promise<number> => Number(await fader.getAttribute('aria-valuenow'))
+    assert.equal(await valor(), 100)
+    const caja = (await fader.boundingBox())!
+    const centro = { x: caja.x + caja.width / 2, y: caja.y + caja.height / 2 }
+    // dedo que arranca sobre el fader y va para arriba: scrollea, el volumen no cambia
+    await deslizar(cel, centro, 4, -160)
+    await esperar(300)
+    assert.equal(await valor(), 100, 'scrollear sobre el fader no tiene que cambiar el volumen')
+    // de costado: si
+    const caja2 = (await fader.boundingBox())!
+    await deslizar(cel, { x: caja2.x + caja2.width / 2, y: caja2.y + caja2.height / 2 }, caja2.width * 0.25, 3)
+    await esperar(300)
+    assert.ok((await valor()) > 120, `deslizar de costado sube el volumen (quedó en ${await valor()})`)
+    // un toque suelto no cambia nada; doble toque vuelve a "igual que la compu"
+    const caja3 = (await fader.boundingBox())!
+    const punto = { x: caja3.x + caja3.width * 0.1, y: caja3.y + caja3.height / 2 }
+    await cel.touchscreen.tap(punto.x, punto.y)
+    await esperar(500)
+    assert.ok((await valor()) > 120, 'un toque suelto no mueve el fader')
+    await cel.touchscreen.tap(punto.x, punto.y)
+    await esperar(80)
+    await cel.touchscreen.tap(punto.x, punto.y)
+    await esperar(300)
+    assert.equal(await valor(), 100, 'doble toque vuelve a 100%')
+  })
+
   await t.test('bloqueo: los celulares no pueden controlar', async () => {
     await compu.getByRole('switch', { name: /Celulares/ }).click()
-    await celulares[0].waitForSelector('.m-bloqueado')
-    assert.ok(await celulares[0].locator('.m-marcador').first().isDisabled())
+    await celulares[0].waitForSelector('.m-barra-bloqueado')
+    assert.ok((await seccionesEnCelular(celulares[0])).deshabilitadas)
     await compu.getByRole('switch', { name: /Celulares/ }).click()
-    await celulares[0].waitForSelector('.m-transporte')
+    await celulares[0].waitForSelector('.m-barra .m-play')
   })
 
   await t.test('celular que pierde la conexión mientras se pausa: al volver se alinea', async () => {
@@ -342,7 +429,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     santo.marcadores.forEach((m, i) =>
       assert.ok(Math.abs(m.tiempoMs - inicioCompas(ANUNCIOS[i][2]) * 1000) <= 8, `${m.nombre} en ${m.tiempoMs} ms: fuera del compás`)
     )
-    for (const cel of celulares) await cel.waitForFunction(() => document.querySelectorAll('.m-marcador').length === 6)
+    for (const cel of celulares) assert.equal((await seccionesEnCelular(cel)).cantidad, 6)
 
     // arrastrar una seccion en la linea de tiempo: cae en el "1" del compas mas cercano; con Alt, queda libre
     const compases = santo.tempo!.compasesMs

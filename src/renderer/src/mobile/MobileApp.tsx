@@ -1,37 +1,49 @@
 import { useMemo, useState } from 'react'
 import {
   AlertTriangle,
+  ArrowRight,
   Headphones,
+  ListMusic,
   Lock,
   Pause,
   Play,
   Repeat,
+  RotateCcw,
+  Rows3,
   Settings,
   SkipBack,
   SkipForward,
-  SlidersHorizontal,
-  Volume1,
   Volume2,
-  WifiOff
+  VolumeX,
+  WifiOff,
+  X
 } from 'lucide-react'
+import type { Proyecto, SaltoPendiente } from '@shared/types'
 import { seccionEn } from '@shared/playback'
 import type { AppController } from '../app/useAppController'
 import { usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
 import { leerPref } from '../app/preferencias'
+import { clavePista } from '../audio/PlaybackEngine'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
 import { Avisos } from '../ui/Avisos'
+import { FaderTactil } from '../ui/FaderTactil'
+import { useConfirmar } from '../ui/Confirmar'
 import { useWakeLock } from './useWakeLock'
-import { HojaAjustes, HojaMezcla } from './Hojas'
+import { Hoja, HojaAjustes } from './Hojas'
 
+type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones'
+
+/**
+ * Celular: lo que el musico toca es SU mezcla, asi que es la pantalla
+ * principal. La cancion, la seccion y el transporte van en una barra
+ * flotante abajo (con las secciones y las canciones a un toque).
+ */
 export function MobileApp({ controller }: { controller: AppController }) {
-  const { estado, conectado, secciones } = controller
-  const [hoja, setHoja] = useState<null | 'ajustes' | 'mezcla'>(null)
+  const { estado, conectado } = controller
+  const [hoja, setHoja] = useState<HojaAbierta>(null)
   const wake = useWakeLock()
   const proyecto = estado?.proyectoActivo ?? null
-  const locked = estado?.locked ?? false
-  const loop = estado?.loop ?? false
-  const estadoTransporte = estado?.playbackActivo?.estado ?? 'stopped'
 
   const miEtiqueta = useMemo(() => {
     const id = `celular:${leerPref<string>('device-id', '')}`
@@ -44,15 +56,12 @@ export function MobileApp({ controller }: { controller: AppController }) {
   }
 
   return (
-    <div className="mobile">
+    <div className={`mobile ${proyecto ? 'con-barra' : ''}`}>
       <div className="m-top">
         <span className="m-conexion">
           <span className={`punto ${conectado ? 'verde' : 'rojo'}`} />
           <strong>{miEtiqueta}</strong>
         </span>
-        <button onClick={() => setHoja('mezcla')} disabled={!proyecto} aria-label="Mi mezcla">
-          <SlidersHorizontal size={18} /> Mi mezcla
-        </button>
         <button onClick={() => setHoja('ajustes')} aria-label="Ajustes">
           <Settings size={18} />
         </button>
@@ -78,66 +87,19 @@ export function MobileApp({ controller }: { controller: AppController }) {
       )}
 
       {proyecto ? (
-        <>
-          <TarjetaCancion controller={controller} />
-
-          {locked ? (
-            <div className="m-bloqueado">
-              <Lock size={15} /> El control lo tiene la computadora
-            </div>
-          ) : (
-            <div className="m-transporte" style={{ gridTemplateColumns: '1fr 1.5fr 1fr 1fr' }}>
-              <button onClick={() => controller.saltarSeccion(-1)} aria-label="Sección anterior">
-                <SkipBack size={20} />
-              </button>
-              <button
-                className={`m-play ${estadoTransporte === 'playing' ? 'sonando' : ''}`}
-                onClick={controller.togglePlay}
-                aria-label={estadoTransporte === 'playing' ? 'Pausa' : 'Reproducir'}
-              >
-                {estadoTransporte === 'playing' ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
-              </button>
-              <button onClick={() => controller.saltarSeccion(1)} aria-label="Sección siguiente">
-                <SkipForward size={20} />
-              </button>
-              <button className={`m-loop ${loop ? 'activo' : ''}`} onClick={() => controller.setLoop(!loop)} aria-pressed={loop} aria-label="Repetir sección">
-                <Repeat size={19} />
-              </button>
-            </div>
-          )}
-
-          <BotonesSecciones controller={controller} deshabilitado={locked} />
-
-          {controller.siguienteProyecto && (
-            <div className="m-siguiente-cancion">
-              Después: <b>{controller.siguienteProyecto.nombre}</b>
-            </div>
-          )}
-        </>
+        <Mezcla controller={controller} proyecto={proyecto} />
       ) : (
-        <div className="m-esperando">
-          <Headphones size={40} color="var(--text-3)" />
-          <strong>Esperando canción…</strong>
-          <span>Cuando la computadora elija una canción aparece acá.</span>
-        </div>
+        <>
+          <div className="m-esperando">
+            <Headphones size={40} color="var(--text-3)" />
+            <strong>Esperando canción…</strong>
+            <span>Cuando la computadora elija una canción aparece acá.</span>
+          </div>
+          <CanalGeneral controller={controller} />
+        </>
       )}
 
-      <div className="m-footer">
-        <div className="m-volumen">
-          <Volume1 size={20} />
-          <input
-            className="slider"
-            type="range"
-            min={0}
-            max={100}
-            value={controller.volumenGeneral}
-            style={{ '--p': `${controller.volumenGeneral}%` } as React.CSSProperties}
-            onChange={(e) => controller.setVolumenGeneral(Number(e.target.value))}
-            aria-label="Volumen de este celular"
-          />
-          <Volume2 size={20} />
-        </div>
-      </div>
+      {proyecto && <BarraFlotante controller={controller} onHoja={setHoja} />}
 
       {!controller.audioActivo && (
         <div className="activar">
@@ -154,52 +116,177 @@ export function MobileApp({ controller }: { controller: AppController }) {
       )}
 
       {hoja === 'ajustes' && <HojaAjustes controller={controller} etiqueta={miEtiqueta} pantallaEncendida={wake.activo} onCerrar={() => setHoja(null)} />}
-      {hoja === 'mezcla' && proyecto && <HojaMezcla controller={controller} proyecto={proyecto} onCerrar={() => setHoja(null)} />}
+      {hoja === 'secciones' && proyecto && <HojaSecciones controller={controller} onCerrar={() => setHoja(null)} />}
+      {hoja === 'canciones' && <HojaCanciones controller={controller} onCerrar={() => setHoja(null)} />}
 
       <Avisos avisos={controller.avisos} onCerrar={controller.cerrarAviso} />
     </div>
   )
 }
 
-function TarjetaCancion({ controller }: { controller: AppController }) {
+// ---------- Mi mezcla (pantalla principal) ----------
+
+function textoGanancia(pct: number): string {
+  return pct === 100 ? 'igual' : `${pct}%`
+}
+
+function CanalGeneral({ controller }: { controller: AppController }) {
+  const v = controller.volumenGeneral
+  return (
+    <div className="m-canal m-canal-general">
+      <div className="m-canal-cabeza">
+        <Volume2 size={17} />
+        <span className="m-canal-nombre">Volumen de este celular</span>
+        <small className="num">{v}%</small>
+      </div>
+      <FaderTactil valor={v} min={0} max={100} etiqueta="Volumen de este celular" onCambio={controller.setVolumenGeneral} />
+    </div>
+  )
+}
+
+function Mezcla({ controller, proyecto }: { controller: AppController; proyecto: Proyecto }) {
+  const mezcla = controller.mezclaPersonal
+  const hayCambios = Object.keys(mezcla).length > 0
+  const haySolo = proyecto.pistas.some((p) => p.solo)
+
+  function set(nombre: string, patch: Partial<{ ganancia: number; mute: boolean }>): void {
+    const clave = clavePista(nombre)
+    const actual = mezcla[clave] ?? { ganancia: 1, mute: false }
+    const nuevo = { ...actual, ...patch }
+    const copia = { ...mezcla }
+    if (Math.abs(nuevo.ganancia - 1) < 0.001 && !nuevo.mute) delete copia[clave]
+    else copia[clave] = nuevo
+    controller.setMezclaPersonal(copia)
+  }
+
+  return (
+    <section className="m-mezcla" aria-label="Mi mezcla">
+      <div className="m-mezcla-cabecera">
+        <div>
+          <h2>Mi mezcla</h2>
+          <span>Solo cambia lo que escuchás vos</span>
+        </div>
+        <button disabled={!hayCambios} onClick={() => controller.setMezclaPersonal({})} title="Volver a la mezcla de la computadora">
+          <RotateCcw size={15} /> Igual que la compu
+        </button>
+      </div>
+      <CanalGeneral controller={controller} />
+      {proyecto.pistas.map((p) => {
+        const ajuste = mezcla[clavePista(p.nombre)] ?? { ganancia: 1, mute: false }
+        const pct = Math.round(ajuste.ganancia * 100)
+        const apagadaEnCompu = p.mute || (haySolo && !p.solo)
+        return (
+          <div key={p.id} className={`m-canal ${ajuste.mute ? 'muteado' : ''}`}>
+            <div className="m-canal-cabeza">
+              <span className="punto" style={{ background: p.color }} />
+              <span className="m-canal-nombre">{p.nombre}</span>
+              {apagadaEnCompu && <span className="m-canal-aviso">apagada en la compu</span>}
+              <small className="num">{ajuste.mute ? 'muda' : textoGanancia(pct)}</small>
+            </div>
+            <div className="m-canal-control">
+              <FaderTactil
+                valor={pct}
+                min={0}
+                max={200}
+                neutro={100}
+                paso={5}
+                color={p.color}
+                deshabilitado={ajuste.mute}
+                etiqueta={`Volumen de ${p.nombre} en este celular`}
+                onCambio={(v) => set(p.nombre, { ganancia: v / 100 })}
+              />
+              <button
+                className={`m-mute ${ajuste.mute ? 'activo' : ''}`}
+                onClick={() => set(p.nombre, { mute: !ajuste.mute })}
+                aria-pressed={ajuste.mute}
+                aria-label={`${ajuste.mute ? 'Volver a escuchar' : 'Silenciar'} ${p.nombre} en este celular`}
+              >
+                {ajuste.mute ? <VolumeX size={19} /> : <Volume2 size={19} />}
+              </button>
+            </div>
+          </div>
+        )
+      })}
+      <p className="m-mezcla-pie">
+        Deslizá los faders de costado (para arriba o abajo, la pantalla se mueve sin tocar nada). Doble toque: vuelve a “igual”. Se
+        recuerda por nombre de pista, para todas las canciones.
+      </p>
+    </section>
+  )
+}
+
+// ---------- barra flotante: cancion, seccion y transporte ----------
+
+function faltaPara(salto: SaltoPendiente, pos: number): string {
+  const s = Math.max(0, Math.ceil((salto.limiteMs - pos) / 1000))
+  return s <= 0 ? 'ya' : `en ${s} s`
+}
+
+function BarraFlotante({ controller, onHoja }: { controller: AppController; onHoja: (h: HojaAbierta) => void }) {
   const { estado, secciones } = controller
   const proyecto = estado!.proyectoActivo!
   const pos = usePlayheadPaso(200)
   const actual = seccionEn(secciones, pos)
   const siguiente = actual ? secciones[actual.indice + 1] : null
+  const locked = estado?.locked ?? false
   const loop = estado?.loop ?? false
-  const e = estado?.playbackActivo?.estado ?? 'stopped'
+  const sonando = estado?.playbackActivo?.estado === 'playing'
+  const salto = estado?.saltoPendiente ?? null
+  const cantidadCanciones = estado?.tabs.length ?? 0
 
   return (
-    <div className="m-cancion">
-      <div className="m-cancion-fila">
-        <h1>{proyecto.nombre}</h1>
-        <span className={`m-estado ${e === 'playing' ? 'sonando' : e === 'paused' ? 'pausa' : 'detenido'}`}>
-          {e === 'playing' ? 'Sonando' : e === 'paused' ? 'Pausa' : 'Detenido'}
+    <div className="m-barra" role="region" aria-label="Canción y transporte">
+      <button className="m-barra-info" onClick={() => onHoja('secciones')} aria-label="Ver secciones">
+        <span className="m-barra-fila">
+          <span className="m-barra-cancion">{proyecto.nombre}</span>
+          <span className="m-barra-tiempo num">
+            {formatMmSs(pos)} / {formatMmSs(proyecto.duracionTotalMs)}
+          </span>
         </span>
-      </div>
-      <div className="m-seccion">
-        <span className="m-seccion-actual" style={{ color: actual ? colorClaro(colorDeSeccion(actual)) : undefined }}>
-          {actual?.nombre ?? '—'}
+        <span className="m-barra-fila">
+          <span className="m-barra-seccion" style={{ color: actual ? colorClaro(colorDeSeccion(actual)) : undefined }}>
+            {loop && <Repeat size={15} />}
+            {actual?.nombre ?? '—'}
+          </span>
+          {salto ? (
+            <span className="m-barra-salto">
+              <ArrowRight size={14} /> {salto.nombre} <span className="num">{faltaPara(salto, pos)}</span>
+            </span>
+          ) : (
+            <span className="m-barra-sigue">{loop ? 'repitiendo' : siguiente ? `sigue ${siguiente.nombre}` : 'última sección'}</span>
+          )}
         </span>
-        <span className="m-tiempo num">
-          {formatMmSs(pos)} / {formatMmSs(proyecto.duracionTotalMs)}
-        </span>
-      </div>
-      <div className="m-sigue">
-        {loop ? (
-          <>
-            <Repeat size={13} /> Repitiendo <b>{actual?.nombre}</b>
-          </>
-        ) : siguiente ? (
-          <>
-            Sigue: <b>{siguiente.nombre}</b>
-          </>
+        <MiniTimeline controller={controller} />
+      </button>
+      <div className="m-barra-botones">
+        {locked ? (
+          <span className="m-barra-bloqueado">
+            <Lock size={15} /> Control en la compu
+          </span>
         ) : (
-          'Última sección'
+          <>
+            <button onClick={() => controller.saltarSeccion(-1)} aria-label="Sección anterior">
+              <SkipBack size={20} />
+            </button>
+            <button className={`m-play ${sonando ? 'sonando' : ''}`} onClick={controller.togglePlay} aria-label={sonando ? 'Pausa' : 'Reproducir'}>
+              {sonando ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+            </button>
+            <button onClick={() => controller.saltarSeccion(1)} aria-label="Sección siguiente">
+              <SkipForward size={20} />
+            </button>
+            <button className={`m-loop ${loop ? 'activo' : ''}`} onClick={() => controller.setLoop(!loop)} aria-pressed={loop} aria-label="Repetir sección">
+              <Repeat size={19} />
+            </button>
+          </>
         )}
+        <button onClick={() => onHoja('secciones')} aria-label="Secciones">
+          <Rows3 size={19} />
+        </button>
+        <button onClick={() => onHoja('canciones')} aria-label="Canciones del setlist">
+          <ListMusic size={19} />
+          {cantidadCanciones > 1 && <span className="m-barra-cuenta num">{cantidadCanciones}</span>}
+        </button>
       </div>
-      <MiniTimeline controller={controller} />
     </div>
   )
 }
@@ -209,45 +296,131 @@ function MiniTimeline({ controller }: { controller: AppController }) {
   const dur = Math.max(estado?.proyectoActivo?.duracionTotalMs ?? 1, 1)
   const pos = usePlayheadMs()
   const actual = seccionEn(secciones, pos)
+  const salto = estado?.saltoPendiente ?? null
   return (
-    <div className="m-timeline" aria-hidden>
+    <span className="m-timeline" aria-hidden>
       {secciones.map((s) => (
-        <div
+        <span
           key={s.marcador?.id ?? 'inicio'}
-          className={actual?.indice === s.indice ? 'actual' : ''}
+          className={`${actual?.indice === s.indice ? 'actual' : ''} ${salto?.destinoMs === s.inicioMs ? 'destino' : ''}`}
           style={{ width: `${((s.finMs - s.inicioMs) / dur) * 100}%`, background: colorDeSeccion(s) }}
         />
       ))}
-      <div className="m-playhead" style={{ left: `${Math.min(100, (pos / dur) * 100)}%` }} />
-    </div>
+      {salto && <span className="m-salto-limite" style={{ left: `${Math.min(100, (salto.limiteMs / dur) * 100)}%` }} />}
+      <span className="m-playhead" style={{ left: `${Math.min(100, (pos / dur) * 100)}%` }} />
+    </span>
   )
 }
 
-function BotonesSecciones({ controller, deshabilitado }: { controller: AppController; deshabilitado: boolean }) {
+// ---------- hojas: secciones y canciones ----------
+
+function HojaSecciones({ controller, onCerrar }: { controller: AppController; onCerrar: () => void }) {
   const pos = usePlayheadPaso(200)
+  const { estado } = controller
+  const locked = estado?.locked ?? false
+  const salto = estado?.saltoPendiente ?? null
+  const sonando = estado?.playbackActivo?.estado === 'playing'
+  const modo = estado?.modoSalto ?? 'seccion'
   const conMarcador = controller.secciones.filter((s) => s.marcador)
   const actual = seccionEn(controller.secciones, pos)
-  if (conMarcador.length === 0) {
-    return <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>
-  }
+  const explicacion =
+    modo === 'inmediato'
+      ? 'Tocá una sección para ir ahí.'
+      : modo === 'compas'
+        ? 'Sonando, el salto se hace en el próximo compás.'
+        : 'Sonando, la sección actual termina y sigue la que elijas, sin cortes.'
+
   return (
-    <div className="m-marcadores">
-      {conMarcador.map((s) => (
-        <button
-          key={s.marcador!.id}
-          className={`m-marcador ${actual?.indice === s.indice ? 'actual' : ''}`}
-          style={{ '--color-seccion': colorDeSeccion(s) } as React.CSSProperties}
-          disabled={deshabilitado}
-          onClick={() => controller.jumpToMarker(s.marcador!.id)}
-        >
-          <span>{s.nombre}</span>
-        </button>
-      ))}
-    </div>
+    <Hoja titulo="Secciones" onCerrar={onCerrar}>
+      {locked && (
+        <p className="ayuda">
+          <Lock size={14} /> El control lo tiene la computadora.
+        </p>
+      )}
+      {!locked && sonando && <p className="ayuda" style={{ marginTop: 0 }}>{explicacion}</p>}
+      {salto && (
+        <div className="m-salto-aviso">
+          <ArrowRight size={16} />
+          <span>
+            Sigue <b>{salto.nombre}</b> <span className="num">{faltaPara(salto, pos)}</span>
+          </span>
+          {!locked && (
+            <button onClick={controller.cancelarSalto}>
+              <X size={15} /> Cancelar
+            </button>
+          )}
+        </div>
+      )}
+      {conMarcador.length === 0 ? (
+        <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>
+      ) : (
+        <div className="m-marcadores">
+          {conMarcador.map((s) => (
+            <button
+              key={s.marcador!.id}
+              className={`m-marcador ${actual?.indice === s.indice ? 'actual' : ''} ${salto?.destinoMs === s.inicioMs ? 'pendiente' : ''}`}
+              style={{ '--color-seccion': colorDeSeccion(s) } as React.CSSProperties}
+              disabled={locked}
+              onClick={() => controller.jumpToMarker(s.marcador!.id)}
+            >
+              <span>{s.nombre}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </Hoja>
   )
 }
 
-/** Version mas clara de un color de seccion, para texto grande sobre fondo oscuro. */
+function HojaCanciones({ controller, onCerrar }: { controller: AppController; onCerrar: () => void }) {
+  const confirmar = useConfirmar()
+  const { estado } = controller
+  const locked = estado?.locked ?? false
+  const tabs = estado?.tabs ?? []
+  const iActiva = tabs.findIndex((t) => t.tabId === estado?.activeTabId)
+
+  async function pasarA(tabId: string, nombre: string): Promise<void> {
+    if (tabId === estado?.activeTabId) return onCerrar()
+    if (estado?.playbackActivo?.estado === 'playing') {
+      const ok = await confirmar({
+        titulo: 'La canción está sonando',
+        mensaje: (
+          <>
+            Si pasás a <b>{nombre}</b>, se corta el audio en todos los celulares.
+          </>
+        ),
+        confirmar: `Pasar a ${nombre}`,
+        peligro: true
+      })
+      if (!ok) return
+    }
+    controller.switchTab(tabId)
+    onCerrar()
+  }
+
+  return (
+    <Hoja titulo="Canciones" onCerrar={onCerrar}>
+      {locked && (
+        <p className="ayuda">
+          <Lock size={14} /> El control lo tiene la computadora.
+        </p>
+      )}
+      <ol className="m-canciones">
+        {tabs.map((t, i) => (
+          <li key={t.tabId}>
+            <button className={i === iActiva ? 'activa' : ''} disabled={locked && i !== iActiva} onClick={() => void pasarA(t.tabId, t.nombre)}>
+              <span className="num">{i + 1}</span>
+              <span className="m-canciones-nombre">{t.nombre}</span>
+              {i === iActiva ? <small>ahora</small> : i === iActiva + 1 ? <small>sigue</small> : null}
+            </button>
+          </li>
+        ))}
+      </ol>
+    </Hoja>
+  )
+}
+
+/** Version mas clara de un color de seccion, para texto sobre fondo oscuro. */
 function colorClaro(hex: string): string {
   const n = parseInt(hex.slice(1), 16)
   const mezclar = (c: number): number => Math.round(c + (255 - c) * 0.45)

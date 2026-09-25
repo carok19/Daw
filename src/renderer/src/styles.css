@@ -2079,15 +2079,19 @@ input[type='range'].slider::-moz-range-thumb {
 }
 .modo-salto {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 5px;
   font-size: 12px;
   color: var(--text-3);
 }
+.modo-salto .segmentado {
+  display: flex;
+}
 .modo-salto .segmentado-chico button {
-  padding: 4px 8px;
+  flex: 1;
+  padding: 5px 6px;
   font-size: 12px;
+  white-space: nowrap;
 }
 .modo-salto .segmentado-chico button:disabled {
   opacity: 0.4;
@@ -2116,4 +2120,381 @@ input[type='range'].slider::-moz-range-thumb {
   50% {
     opacity: 0.35;
   }
+}
+
+/* ==========================================================================
+   CELULAR: mezcla como pantalla principal + barra flotante
+   ========================================================================== */
+.mobile.con-barra {
+  padding-bottom: calc(190px + env(safe-area-inset-bottom));
+}
+.m-mezcla {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.m-mezcla-cabecera {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 2px 4px;
+}
+.m-mezcla-cabecera h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.m-mezcla-cabecera span {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.m-mezcla-cabecera button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.m-mezcla-pie {
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+.m-canal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 6px 8px 4px 12px;
+}
+.m-canal-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.m-canal-control .fader-tactil {
+  flex: 1;
+}
+.m-canal-general {
+  background: var(--panel-2);
+}
+.m-canal.muteado {
+  opacity: 0.6;
+}
+.m-canal-cabeza {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding-right: 4px;
+}
+.m-canal-nombre {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-canal-cabeza small {
+  color: var(--text-2);
+  font-size: 13px;
+  min-width: 42px;
+  text-align: right;
+}
+.m-canal-aviso {
+  font-size: 11px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: 999px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.m-mute {
+  width: 46px;
+  height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.m-mute.activo {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: #ff8a8a;
+}
+
+/* fader tactil: solo se mueve deslizando de costado; vertical = scroll */
+.fader-tactil {
+  position: relative;
+  height: 46px;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: grab;
+  outline: none;
+}
+.fader-tactil:focus-visible .fader-tactil-pista {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.fader-tactil.arrastrando {
+  cursor: grabbing;
+}
+.fader-tactil.deshabilitado {
+  cursor: default;
+  opacity: 0.5;
+}
+.fader-tactil-pista {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 4px;
+  background: var(--panel-4);
+}
+.fader-tactil-relleno {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--p);
+  border-radius: 4px;
+  background: var(--color-fader);
+}
+.fader-tactil-neutro {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 1px;
+}
+.fader-tactil-perilla {
+  position: absolute;
+  top: 50%;
+  left: calc(14px + (100% - 28px) * var(--p) / 100%);
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  background: #eef1f7;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  transition: transform 0.1s;
+}
+.fader-tactil.arrastrando .fader-tactil-perilla {
+  transform: scale(1.18);
+}
+
+/* barra flotante */
+.m-barra {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  z-index: 30;
+  background: rgba(23, 27, 36, 0.97);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line-2);
+  border-radius: 18px;
+  box-shadow: 0 -6px 30px rgba(0, 0, 0, 0.55);
+  padding: 10px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.m-barra-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  text-align: left;
+  color: var(--text);
+  width: 100%;
+}
+.m-barra-fila {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+.m-barra-cancion {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-barra-tiempo {
+  font-size: 13px;
+  color: var(--text-3);
+}
+.m-barra-seccion {
+  font-size: 22px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-barra-sigue {
+  flex: 1;
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-barra-salto {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+  animation: latido 1.2s ease-in-out infinite;
+}
+.m-barra-botones {
+  display: flex;
+  gap: 6px;
+}
+.m-barra-botones > button {
+  flex: 1;
+  height: 50px;
+  padding: 0;
+  border-radius: 12px;
+  position: relative;
+}
+.m-barra-botones .m-play {
+  flex: 1.5;
+  background: var(--play);
+  border-color: var(--play);
+  color: #05230f;
+}
+.m-barra-botones .m-play.sonando {
+  background: var(--panel-4);
+  border-color: var(--line-2);
+  color: var(--text);
+}
+.m-barra-bloqueado {
+  flex: 4;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-3);
+  padding-left: 6px;
+}
+.m-barra-cuenta {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 10px;
+  color: var(--text-3);
+}
+.m-timeline > span {
+  height: 100%;
+  opacity: 0.5;
+  border-right: 1px solid rgba(0, 0, 0, 0.6);
+}
+.m-timeline > span.actual {
+  opacity: 1;
+}
+.m-timeline > span.destino {
+  opacity: 1;
+  animation: latido-linea 1.2s ease-in-out infinite;
+}
+.m-timeline {
+  width: 100%;
+}
+.m-timeline .m-salto-limite {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px dashed #fff;
+  opacity: 1;
+}
+.m-salto-aviso {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 8px 8px 8px 12px;
+  margin-bottom: 10px;
+  font-size: 15px;
+}
+.m-salto-aviso span {
+  flex: 1;
+}
+.m-salto-aviso button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+}
+.m-marcador.pendiente {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  animation: latido 1.2s ease-in-out infinite;
+}
+.m-canciones {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.m-canciones button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px;
+  border-radius: 12px;
+  font-size: 16px;
+  text-align: left;
+}
+.m-canciones button.activa {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.m-canciones .num {
+  color: var(--text-3);
+  width: 18px;
+}
+.m-canciones-nombre {
+  flex: 1;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-canciones small {
+  color: var(--text-2);
+  font-size: 12px;
 }

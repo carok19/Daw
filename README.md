@@ -95,8 +95,18 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
 7. La pantalla de los celulares queda encendida sola (conviene bajar el
    brillo). Si alguien usa **auriculares Bluetooth** y lo escucha atrasado:
    ⚙ → *Ajuste fino* → sumar milisegundos hasta que coincida.
-8. Cada músico puede armar **Mi mezcla** (más click, menos pad…) sin cambiar
-   lo que escuchan los demás.
+8. En el celular, la pantalla principal es **Mi mezcla**: cada músico sube o
+   baja cada pista (más click, menos pad…) sin cambiar lo que escuchan los
+   demás. Los faders se mueven **deslizando de costado**; deslizando para
+   arriba o abajo la pantalla scrollea sin tocar ningún volumen, y un toque
+   suelto no cambia nada (doble toque: vuelve a “igual”). La canción, la
+   sección y el transporte van en una **barra flotante** abajo, con las
+   secciones y las canciones del setlist a un toque.
+9. **Elegir una sección con la canción sonando** no corta: la sección
+   actual termina y la música sigue directo en la elegida (se ve “→ Coro en
+   5 s” en la compu y en los celulares). Se puede cambiar por otra, o
+   cancelar con ✕ / Esc. En el panel de secciones se elige si salta *al
+   terminar* la sección, *en el compás* o *ya*.
 
 **Ancho de banda:** cada celular recibe ~0,7 Mbps por pista mono y ~1,4 Mbps
 por pista estéreo (WAV sin comprimir, para que los saltos y el loop sean
@@ -110,8 +120,10 @@ lo avisa (en el celular y en la compu) y se pone al día sola cuando mejora.
 |---|---|
 | Espacio | Reproducir / pausa |
 | Enter | Stop (vuelve al inicio) |
-| ← / → | Sección anterior / siguiente |
-| 1 … 9 | Ir a la sección 1 a 9 |
+| ← / → | Sección anterior / siguiente (sonando: en el límite; dos veces → saltea una) |
+| 1 … 9 | Ir a la sección 1 a 9 (sonando: al terminar la sección actual) |
+| Shift + 1…9 / ← → | Lo mismo, pero ya |
+| Esc | Cancelar el salto elegido |
 | M | Marcar una sección en la posición actual |
 | L | Repetir la sección actual |
 | Alt + arrastrar | Mover una sección sin ajustarla al compás |
@@ -303,9 +315,14 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
    se puede deshacer.
 6. **Fin de canción y repetir sección los maneja el servidor**, así
    funcionan aunque la ventana de la compu esté ocupada.
-7. **Los celulares pueden controlar** (play/pausa/saltar/repetir) salvo que
-   la compu los bloquee. Editar (secciones, mezcla, setlist) es solo de la
-   compu.
+7. **Los celulares pueden controlar** (play/pausa/secciones/repetir y pasar
+   de canción, con confirmación si algo suena) salvo que la compu los
+   bloquee. Editar (secciones, mezcla, setlist) es solo de la compu.
+7b. **Saltos de sección en el límite:** los decide el servidor (igual desde
+   la compu o un celular). El salto queda pendiente y se manda a los
+   celulares con el margen de sync antes del límite; en ese instante cada
+   uno corta el tramo actual y arranca el elegido, con el comienzo de cada
+   sección ya precargado: sin silencio ni corrimiento.
 8. **Cada dispositivo tiene un id estable** (localStorage): al reconectar
    vuelve a su misma fila con su nombre, sin "fantasmas". Los desconectados
    quedan visibles (para notar si alguien se cayó) hasta que se limpian. Al

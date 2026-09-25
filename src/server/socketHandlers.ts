@@ -403,8 +403,9 @@ export function registerSocketHandlers(
 
     // ---- Pestanas / setlist ----
 
+    // cambiar de cancion es control de transporte: los celulares pueden, salvo que la compu los bloquee
     socket.on('tabs:switch', (payload: TabsSwitchPayload) => {
-      if (!edicion('Solo la computadora puede cambiar de canción')) return
+      if (!permitido()) return
       if (typeof payload?.tabId !== 'string' || !state.getTab(payload.tabId)) return
       cambiarPestana(payload.tabId)
       emitirEstado()

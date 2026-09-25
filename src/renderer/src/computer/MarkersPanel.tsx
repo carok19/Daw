@@ -57,7 +57,7 @@ export function MarkersPanel(p: Props) {
           </button>
         </h3>
         <div className="modo-salto" role="radiogroup" aria-label="Cuándo salta al elegir una sección sonando">
-          <span>Al elegir, saltar:</span>
+          <span>Al elegir una sección sonando, saltar:</span>
           <div className="segmentado segmentado-chico">
             <button
               role="radio"
@@ -205,8 +205,8 @@ function FilaSeccion({
         </span>
       )}
       {pendiente && !editando && (
-        <span className="seccion-pendiente">
-          <ArrowRight size={13} /> sigue
+        <span className="seccion-pendiente" title="Sigue esta sección">
+          <ArrowRight size={14} />
           <button
             title="Cancelar el salto (Esc)"
             aria-label="Cancelar el salto"
