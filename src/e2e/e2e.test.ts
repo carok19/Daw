@@ -228,9 +228,29 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await celulares[0].waitForSelector('.m-transporte')
   })
 
-  await t.test('canción MP3: suena en los celulares sin errores', async () => {
+  await t.test('celular que pierde la conexión mientras se pausa: al volver se alinea', async () => {
+    const cel = celulares[1]
+    await cel.evaluate(() => (globalThis as unknown as { __mt: { socketRef: { current: { socket: { disconnect(): void } } } } }).__mt.socketRef.current.socket.disconnect())
+    await compu.keyboard.press('Space') // pausa mientras el celular no esta
+    await esperar(2500)
+    assert.ok((await vivas(cel)) > 0, 'el celular desconectado sigue sonando (todavia no se entero)')
+    await cel.evaluate(() => (globalThis as unknown as { __mt: { socketRef: { current: { socket: { connect(): void } } } } }).__mt.socketRef.current.socket.connect())
+    await esperar(2500)
+    assert.equal(await vivas(cel), 0, 'al reconectar tenia que quedar en pausa como los demas')
+  })
+
+  await t.test('cambiar de canción con otra sonando pide confirmación', async () => {
+    await compu.keyboard.press('Space')
+    await esperar(2000)
     await compu.keyboard.press('PageDown')
+    await compu.getByRole('button', { name: 'Cancelar' }).click()
+    assert.equal(await compu.locator('.cancion-titulo').textContent(), 'Cuan Grande Es El')
+    await compu.keyboard.press('PageDown')
+    await compu.getByRole('button', { name: /Pasar a Rey de Reyes/ }).click()
     await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Rey de Reyes')
+  })
+
+  await t.test('canción MP3: suena en los celulares sin errores', async () => {
     await esperar(800)
     await compu.keyboard.press('Space')
     await esperar(5000)

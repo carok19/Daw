@@ -109,8 +109,14 @@ export function useAppController() {
     setTimeout(() => setAvisos((prev) => prev.filter((a) => a.id !== id)), ms)
   }, [])
 
-  /** Deja al motor en linea con el estado: cancion activa, mezcla, cues y (si suena) entra en sync. */
-  const sincronizarMotor = useCallback((nuevo: EstadoCompleto | null, margenReingreso: number) => {
+  /**
+   * Deja al motor en linea con el estado: cancion activa, mezcla, cues y (si
+   * suena) entra en sync. Con `reconciliar` (reconexion, reinicio del
+   * servidor) ademas se alinea el transporte aunque sea la misma cancion: si
+   * mientras estaba desconectado se pauso o se salto, el audio local quedo
+   * desactualizado y no se puede esperar a un proximo comando.
+   */
+  const sincronizarMotor = useCallback((nuevo: EstadoCompleto | null, margenReingreso: number, reconciliar = false) => {
     const engine = engineRef.current
     const socket = socketRef.current
     if (!engine || !socket || !nuevo) return
@@ -128,6 +134,23 @@ export function useAppController() {
     } else {
       engine.aplicarMezcla(proyecto.pistas)
       engine.setCues(proyecto.marcadores.map((m) => m.tiempoMs))
+      if (reconciliar) {
+        const pb = nuevo.playbackActivo
+        if (pb && estaSonando(pb, now)) {
+          reingresarEnSync(engine, socket, pb, nuevo.activeTabId ?? '', margenReingreso)
+        } else {
+          engine.ejecutar(
+            {
+              tabId: nuevo.activeTabId ?? '',
+              accion: 'pause',
+              positionMs: pb ? posicionActualMs(pb, now) : 0,
+              executeAtServerTime: now,
+              playback: pb ?? { estado: 'stopped', positionMs: 0, referenceServerTime: now }
+            },
+            socket.clockOffsetMs
+          )
+        }
+      }
     }
   }, [])
 
@@ -169,7 +192,7 @@ export function useAppController() {
     function aplicarEstado(nuevo: EstadoCompleto, esReconexion = false): void {
       setEstado(nuevo)
       estadoRef.current = nuevo
-      sincronizarMotor(nuevo, esReconexion ? 600 : 300)
+      sincronizarMotor(nuevo, esReconexion ? 600 : 300, esReconexion)
     }
 
     const offs = [
@@ -491,7 +514,7 @@ export function useAppController() {
       },
 
       // ---- canciones y setlists guardados ----
-      async loadZip(): Promise<{ ok: boolean; error?: string }> {
+      async loadZip(): Promise<{ ok: boolean; error?: string; activada?: boolean }> {
         if (!window.electronAPI) return { ok: false, error: 'Solo disponible en la computadora' }
         const filePath = await window.electronAPI.pickZipFile()
         if (!filePath) return { ok: false }
@@ -507,7 +530,7 @@ export function useAppController() {
       async listSavedProjects(): Promise<ProyectoResumen[]> {
         return socket.emitAck('projects:list', {})
       },
-      async openSavedProject(id: string, activar = true): Promise<{ ok: boolean; error?: string }> {
+      async openSavedProject(id: string, activar = true): Promise<{ ok: boolean; error?: string; activada?: boolean }> {
         return socket.emitAck('projects:open', { id, activar }, 5 * 60 * 1000)
       },
       async deleteSavedProject(id: string): Promise<{ ok: boolean }> {

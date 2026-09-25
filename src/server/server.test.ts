@@ -394,6 +394,24 @@ test('fin de cancion y repetir seccion los maneja el servidor', async (t) => {
   await env.cerrar()
 })
 
+test('agregar una canción mientras otra suena no la interrumpe', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const estado = await cargarZip(compu, crearZip('Sonando', { 'click.wav': a.wav4s }))
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  const detenidos: ComandoProgramado[] = []
+  compu.on('playback:scheduled', (c: ComandoProgramado) => detenidos.push(c))
+  const r = await emitAck<{ ok: boolean; activada?: boolean }>(compu, 'project:load-from-zip', { filePath: crearZip('Nueva', { 'click.wav': a.wav2s }) }, 60000)
+  assert.equal(r.ok, true)
+  assert.equal(r.activada, false)
+  const despues = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.equal(despues.activeTabId, estado.activeTabId, 'la que suena sigue activa')
+  assert.equal(despues.playbackActivo?.estado, 'playing')
+  assert.deepEqual(despues.tabs.map((x) => x.nombre), ['Sonando', 'Nueva'])
+  assert.equal(detenidos.length, 0, 'no se emitió ningún stop')
+})
+
 test('cerrar la pestaña que suena (o borrar su cancion) corta el audio en todos', async (t) => {
   const a = audiosDePrueba()
   const env = await entorno(t)

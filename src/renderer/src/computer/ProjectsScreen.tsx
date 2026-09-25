@@ -50,8 +50,10 @@ export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerra
     setOcupado('importar')
     const r = await controller.loadZip()
     setOcupado(null)
-    if (r.ok) onCerrar()
-    else if (r.error) setError(r.error)
+    if (r.ok) {
+      avisarSiNoSeActivo(r.activada)
+      onCerrar()
+    } else if (r.error) setError(r.error)
   }
 
   async function abrir(id: string): Promise<void> {
@@ -59,8 +61,16 @@ export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerra
     setOcupado(id)
     const r = await controller.openSavedProject(id)
     setOcupado(null)
-    if (r.ok) onCerrar()
-    else setError(r.error ?? 'No se pudo abrir la canción')
+    if (r.ok) {
+      avisarSiNoSeActivo(r.activada)
+      onCerrar()
+    } else setError(r.error ?? 'No se pudo abrir la canción')
+  }
+
+  function avisarSiNoSeActivo(activada: boolean | undefined): void {
+    if (activada === false) {
+      controller.avisar({ tipo: 'info', texto: 'Se agregó al final del setlist sin cortar la canción que está sonando.' })
+    }
   }
 
   async function borrar(p: ProyectoResumen): Promise<void> {

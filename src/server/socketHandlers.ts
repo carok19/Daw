@@ -89,17 +89,27 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
     io.emit('dispositivos:actualizado', devices.listar())
   }
 
-  /** Abre (o activa si ya esta abierto) un proyecto guardado, migrandolo al formato actual si hace falta. */
-  async function abrirProyectoGuardado(id: string, activar: boolean): Promise<void> {
+  /** true si hay una cancion sonando (o por sonar) en la pestana activa. */
+  function algoSuena(): boolean {
+    return state.getActiveTab()?.playback.estado === 'playing'
+  }
+
+  /**
+   * Abre (o activa si ya esta abierto) un proyecto guardado, migrandolo al
+   * formato actual si hace falta. Una cancion NUEVA en el setlist nunca
+   * interrumpe la que esta sonando: se agrega al final sin activarla.
+   * Devuelve si quedo activa.
+   */
+  async function abrirProyectoGuardado(id: string, activar: boolean): Promise<boolean> {
     const existente = state.tabDeProyecto(id)
     if (existente) {
       if (activar) cambiarPestana(existente.tabId)
-      return
+      return activar
     }
     const proyecto = await migrarProyecto(loadProyecto(id))
-    const activa = state.getActiveTab()
-    if (activar && activa) transporte.detenerInmediato(activa)
-    state.abrirProyecto(proyecto, activar)
+    const activarla = activar && !algoSuena()
+    state.abrirProyecto(proyecto, activarla)
+    return activarla
   }
 
   function cambiarPestana(tabId: string): void {
@@ -290,7 +300,7 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
 
     // ---- Canciones guardadas ----
 
-    socket.on('project:load-from-zip', async (payload: { filePath?: string }, ack?: Ack<{ ok: boolean; error?: string }>) => {
+    socket.on('project:load-from-zip', async (payload: { filePath?: string }, ack?: Ack<{ ok: boolean; error?: string; activada?: boolean }>) => {
       if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede cargar canciones' })
       const filePath = payload?.filePath
       if (
@@ -303,12 +313,12 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
       }
       try {
         const proyecto = await crearProyectoDesdeZip(filePath, (p: ImportProgreso) => socket.emit('import:progreso', p))
-        const activa = state.getActiveTab()
-        if (activa) transporte.detenerInmediato(activa)
-        state.abrirProyecto(proyecto)
+        // importar mientras suena una cancion no la corta: la nueva queda al final del setlist
+        const activar = !algoSuena()
+        state.abrirProyecto(proyecto, activar)
         transporte.reprogramarTimers()
         emitirEstado()
-        ack?.({ ok: true })
+        ack?.({ ok: true, activada: activar })
       } catch (err) {
         const mensaje =
           err instanceof ZipSinPistasError || err instanceof ImportError
@@ -323,14 +333,14 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
       ack?.(listProyectos())
     })
 
-    socket.on('projects:open', async (payload: { id?: string; activar?: boolean }, ack?: Ack<{ ok: boolean; error?: string }>) => {
+    socket.on('projects:open', async (payload: { id?: string; activar?: boolean }, ack?: Ack<{ ok: boolean; error?: string; activada?: boolean }>) => {
       if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede abrir canciones' })
       if (!esIdValido(payload?.id) || !proyectoExiste(payload.id)) return ack?.({ ok: false, error: 'La canción ya no existe' })
       try {
-        await abrirProyectoGuardado(payload.id, payload.activar !== false)
+        const activada = await abrirProyectoGuardado(payload.id, payload.activar !== false)
         transporte.reprogramarTimers()
         emitirEstado()
-        ack?.({ ok: true })
+        ack?.({ ok: true, activada })
       } catch (err) {
         console.error('[projects:open]', err)
         ack?.({ ok: false, error: 'No se pudo abrir la canción guardada' })

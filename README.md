@@ -206,9 +206,10 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
 
 1. **El audio sale de los celulares.** La compu no suena por defecto
    (interruptor *Sonido en la compu* para ensayar o probar).
-2. **Una sola canción suena a la vez.** Cambiar de canción detiene la
-   anterior; cerrar la canción que suena (o borrarla) corta el audio en
-   todos (con confirmación).
+2. **Una sola canción suena a la vez, y nada la corta por accidente.**
+   Pasar a otra canción o quitar la que suena pide confirmación (corta el
+   audio en todos). Importar o agregar canciones al setlist mientras algo
+   suena no lo interrumpe: la nueva queda al final.
 3. **La mezcla del director llega a todos** en tiempo real (mensajes
    livianos por pista, guardado a disco con debounce). Cada celular suma su
    volumen general y su *Mi mezcla* (recordada por nombre de pista, vale
@@ -226,7 +227,9 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
    compu.
 8. **Cada dispositivo tiene un id estable** (localStorage): al reconectar
    vuelve a su misma fila con su nombre, sin "fantasmas". Los desconectados
-   quedan visibles (para notar si alguien se cayó) hasta que se limpian.
+   quedan visibles (para notar si alguien se cayó) hasta que se limpian. Al
+   reconectarse, un celular se alinea con lo que está pasando (si mientras
+   no estaba se pausó o se saltó, lo aplica en el momento).
 9. **Puerto fijo:** 4848, y si está ocupado 4849, 4850… (misma dirección y
    mismo QR de un día al otro).
 10. **Sin base de datos externa:** todo en archivos JSON locales con

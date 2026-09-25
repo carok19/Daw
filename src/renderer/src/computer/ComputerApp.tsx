@@ -34,6 +34,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
   // Los atajos se registran una sola vez y leen siempre lo mas nuevo por ref.
   const ctx = useRef({ controller, ventana, proyecto })
   ctx.current = { controller, ventana, proyecto }
+  const cancionRelativaRef = useRef<(delta: number) => void>(() => {})
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent): void {
@@ -59,9 +60,9 @@ export function ComputerApp({ controller }: { controller: AppController }) {
           case 'ArrowRight':
             return () => c.saltarSeccion(1)
           case 'PageDown':
-            return () => c.cancionRelativa(1)
+            return () => cancionRelativaRef.current(1)
           case 'PageUp':
-            return () => c.cancionRelativa(-1)
+            return () => cancionRelativaRef.current(-1)
           case 'KeyM':
             return () => c.createMarker(getPlayheadMs())
           case 'KeyL':
@@ -81,6 +82,38 @@ export function ComputerApp({ controller }: { controller: AppController }) {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  /** Cambiar de cancion con otra sonando corta el audio de todos: se confirma (un click de mas en vivo es un desastre). */
+  async function cambiarCancion(tabId: string | undefined): Promise<void> {
+    const actual = ctx.current.controller.estado
+    const destino = actual?.tabs.find((t) => t.tabId === tabId)
+    if (!actual || !destino || destino.tabId === actual.activeTabId) return
+    if (actual.playbackActivo?.estado === 'playing') {
+      const ok = await confirmar({
+        titulo: 'La canción está sonando',
+        mensaje: (
+          <>
+            Si pasás a <b>{destino.nombre}</b>, se corta el audio en todos los celulares.
+          </>
+        ),
+        confirmar: `Pasar a ${destino.nombre}`,
+        peligro: true
+      })
+      if (!ok) return
+    }
+    ctx.current.controller.switchTab(destino.tabId)
+  }
+  const cambiarRef = useRef(cambiarCancion)
+  cambiarRef.current = cambiarCancion
+
+  function cancionRelativa(delta: number): void {
+    const e = ctx.current.controller.estado
+    if (!e) return
+    const i = e.tabs.findIndex((t) => t.tabId === e.activeTabId)
+    void cambiarRef.current(e.tabs[i + delta]?.tabId)
+  }
+
+  cancionRelativaRef.current = cancionRelativa
 
   async function cerrarCancion(tabId: string): Promise<void> {
     const tab = estado?.tabs.find((t) => t.tabId === tabId)
@@ -108,7 +141,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         tabs={estado?.tabs ?? []}
         activeTabId={estado?.activeTabId ?? null}
         sonando={sonando}
-        onSwitch={controller.switchTab}
+        onSwitch={(tabId) => void cambiarCancion(tabId)}
         onClose={cerrarCancion}
         onReorder={controller.reorderTabs}
         onNueva={() => setVentana({ tipo: 'canciones' })}
@@ -143,7 +176,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             onSeek={controller.seek}
             onSeccion={controller.saltarSeccion}
             onLoop={controller.setLoop}
-            onSiguienteCancion={() => controller.cancionRelativa(1)}
+            onSiguienteCancion={() => cancionRelativa(1)}
             onRenombrar={(n) => controller.renameProject(proyecto.id, n)}
             onMoverMarcador={(id, ms) => controller.updateMarker(id, { tiempoMs: ms })}
           />
