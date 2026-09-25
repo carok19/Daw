@@ -1,0 +1,48 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Numero de version: el de la corrida de GitHub Actions (cada instalador nuevo actualiza la app sin desinstalar).
+def corrida = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
+
+android {
+    namespace 'com.multitrack.alabanza'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.multitrack.alabanza'
+        minSdk 24
+        targetSdk 35
+        versionCode corrida
+        versionName "1.0.${corrida}"
+    }
+
+    // Firma: con los secretos ANDROID_KEYSTORE_* de GitHub si estan; si no, la firma comunitaria de android/firma.
+    // Tiene que ser siempre la misma: si cambia, Android no deja actualizar (hay que desinstalar).
+    signingConfigs {
+        release {
+            storeFile file(System.getenv('ANDROID_KEYSTORE_FILE') ?: '../firma/alabanza.p12')
+            storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: 'alabanza'
+            keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'alabanza'
+            keyPassword System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: 'alabanza'
+            storeType 'pkcs12'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}

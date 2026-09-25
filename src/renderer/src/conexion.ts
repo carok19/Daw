@@ -14,6 +14,8 @@ export interface PuenteAndroid {
   cambiarCompu(): void
   /** abre el "Compartir" de Android (WhatsApp, Telegram, SMS...) */
   compartir?(texto: string): void
+  /** avisa si hay conexion con la compu: sin conexion un rato, la app la busca por si cambio de IP */
+  conexion?(conectado: boolean): void
 }
 
 export function puenteAndroid(): PuenteAndroid | null {

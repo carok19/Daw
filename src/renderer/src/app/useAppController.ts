@@ -29,7 +29,7 @@ import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_S
 import { setPlayheadMs, getPlayheadMs } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
 import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
-import { codigoDesdeDireccion } from '../conexion'
+import { codigoDesdeDireccion, puenteAndroid } from '../conexion'
 
 /** Compas mas cercano (si esta a menos de medio compas): "ajustar al compas". */
 export function ajustarACompas(compasesMs: number[] | undefined, ms: number): number {
@@ -306,6 +306,11 @@ export function useAppController() {
       socket.onCodigo((motivo) => setPedidoCodigo((prev) => ({ motivo, n: (prev?.n ?? 0) + 1 }))),
       socket.onConexionCambia(async (c) => {
         setConectado(c)
+        try {
+          puenteAndroid()?.conexion?.(c)
+        } catch {
+          // la app no respondio
+        }
         if (c) {
           setPedidoCodigo(null)
           // el codigo funciono: queda guardado para la proxima

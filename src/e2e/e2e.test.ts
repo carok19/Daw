@@ -594,6 +594,64 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await ctxTarde.close()
   })
 
+  await t.test('dentro de la app Android (puente simulado): arranca solo y guarda todo en la app', async () => {
+    const ctxApp = await browser.newContext({ ...devices['Pixel 7'] })
+    ctxApp.setDefaultTimeout(15000)
+    await ctxApp.addInitScript(espiaAudio)
+    // lo que expone WebActivity.java como window.AlabanzaApp (las prefs en un objeto que sobrevive a recargas)
+    await ctxApp.addInitScript(() => {
+      const g = globalThis as unknown as { AlabanzaApp: unknown; __app: { prefs: Record<string, string>; llamadas: string[] }; sessionStorage: Storage }
+      const guardadas = g.sessionStorage.getItem('app-prefs')
+      g.__app = { prefs: guardadas ? JSON.parse(guardadas) : {}, llamadas: [] }
+      const persistir = (): void => g.sessionStorage.setItem('app-prefs', JSON.stringify(g.__app.prefs))
+      g.AlabanzaApp = {
+        leerPref: (clave: string) => g.__app.prefs[clave] ?? null,
+        guardarPref: (clave: string, valor: string) => {
+          g.__app.prefs[clave] = valor
+          persistir()
+        },
+        cambiarCompu: () => g.__app.llamadas.push('cambiarCompu'),
+        compartir: (texto: string) => g.__app.llamadas.push(`compartir:${texto}`),
+        conexion: (c: boolean) => g.__app.llamadas.push(`conexion:${c}`)
+      }
+    })
+    const app = await ctxApp.newPage()
+    await app.goto(base)
+    type App = { prefs: Record<string, string>; llamadas: string[] }
+    const estadoApp = (): Promise<App> => app.evaluate(() => (globalThis as unknown as { __app: App }).__app)
+    // sin "Tocá para empezar": el audio arranca solo (la app lo permite) y la compu lo ve listo
+    await app.waitForFunction(() => (globalThis as unknown as { __app: App }).__app.llamadas.includes('conexion:true'))
+    await esperar(2000)
+    assert.equal(await app.locator('.activar').count(), 0, 'en la app no hace falta tocar para empezar')
+    // las preferencias quedan en la app (sobreviven a que la compu cambie de IP)
+    await app.getByRole('button', { name: 'Ajustes' }).click()
+    await app.locator('.hoja-fila input').first().fill('Batería')
+    await app.getByRole('button', { name: 'Guardar' }).click()
+    const prefs = (await estadoApp()).prefs
+    assert.equal(JSON.parse(prefs['nombre']), 'Batería')
+    assert.match(JSON.parse(prefs['device-id']), /^[0-9a-f]{24}$/)
+    // "elegir otra computadora" le pide a la app volver a la busqueda
+    await app.getByRole('button', { name: 'Elegir otra computadora' }).click()
+    assert.ok((await estadoApp()).llamadas.includes('cambiarCompu'))
+    await app.getByRole('button', { name: 'Cerrar' }).click()
+    // invitar usa el "Compartir" de Android
+    await app.getByRole('button', { name: 'Invitar a alguien' }).click()
+    await app.getByRole('button', { name: 'Compartir' }).click()
+    assert.ok((await estadoApp()).llamadas.some((l) => l.startsWith('compartir:Para escuchar la pista')))
+    await app.getByRole('button', { name: 'Cerrar' }).click()
+    // con el localStorage borrado (otra IP = otro origen) sigue siendo el mismo celular, con su nombre
+    const id = prefs['device-id']
+    await app.evaluate(() => localStorage.clear())
+    await app.reload()
+    await app.waitForFunction(() => (globalThis as unknown as { __app: App }).__app.llamadas.includes('conexion:true'))
+    assert.equal((await estadoApp()).prefs['device-id'], id)
+    assert.equal(await app.locator('.m-conexion strong').textContent(), 'Batería')
+    await compu.locator('.chip-dispositivos').click()
+    await compu.waitForFunction(() => /Batería/.test(document.querySelector('.modal .lista')?.textContent ?? ''))
+    await compu.keyboard.press('Escape')
+    await ctxApp.close()
+  })
+
   await t.test('sin errores de JavaScript en la compu', () => {
     assert.deepEqual(errores, [])
   })

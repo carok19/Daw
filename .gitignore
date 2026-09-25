@@ -6,3 +6,9 @@ dist-electron/
 .DS_Store
 modelos/*
 !modelos/LEEME.txt
+
+# app Android (la arma GitHub Actions)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
