@@ -9,7 +9,8 @@ import {
   MAX_FETCHES_GLOBAL,
   MAX_FETCHES_POR_PISTA,
   SEGMENT_DURATION_SEC,
-  SEGMENTOS_POR_CUE
+  SEGMENTOS_POR_CUE,
+  SEGMENTOS_PRECARGA_SIGUIENTE
 } from './streamConfig'
 
 interface FuenteActiva {
@@ -46,6 +47,25 @@ interface PistaStream {
   error: string | null
   fallosSeguidos: number
   /** Date.now() hasta el que no se reintenta (backoff ante errores de red) */
+  esperarHasta: number
+}
+
+/** Principio ya bajado de una pista de la proxima cancion. */
+interface PistaPrecargada {
+  archivo: string
+  wavInfo: WavInfo | null
+  segmentos: Map<number, AudioBuffer>
+  finEnIndice: number | null
+  error: boolean
+}
+
+interface Precarga {
+  proyectoId: string
+  revision: number
+  pistas: Map<string, PistaPrecargada>
+  /** "pistaId:indice" -> pedido en vuelo */
+  enVuelo: Map<string, AbortController>
+  fallosSeguidos: number
   esperarHasta: number
 }
 
@@ -86,7 +106,9 @@ export class StreamingEngine implements PlaybackEngine {
   private mezclaPersonal: MezclaPersonal = {}
 
   proyectoIdCargado: string | null = null
+  revisionCargada = 0
   private proyectoId: string | null = null
+  private precarga: Precarga | null = null
   private ajusteManualMs = 0
 
   private reproduciendo = false
@@ -143,7 +165,8 @@ export class StreamingEngine implements PlaybackEngine {
   }
 
   activarProyecto(proyecto: Proyecto, posicionMs: number): void {
-    if (this.proyectoId !== proyecto.id) {
+    const revision = proyecto.revision ?? 0
+    if (this.proyectoId !== proyecto.id || this.revisionCargada !== revision) {
       this.detener()
       for (const p of this.pistas.values()) {
         for (const c of p.enVuelo.values()) c.abort()
@@ -152,26 +175,34 @@ export class StreamingEngine implements PlaybackEngine {
       this.pistas.clear()
       this.proyectoId = proyecto.id
       this.proyectoIdCargado = proyecto.id
+      this.revisionCargada = revision
+
+      // si era la cancion que se venia precargando, se aprovecha lo que ya bajo
+      const pre = this.precarga?.proyectoId === proyecto.id && this.precarga.revision === revision ? this.precarga : null
+      this.cancelarPrecarga()
 
       for (const pista of proyecto.pistas) {
         const gainNode = this.ctx.createGain()
         const pannerNode = this.ctx.createStereoPanner()
         gainNode.connect(pannerNode)
         pannerNode.connect(this.masterGain)
+        const previa = pre?.pistas.get(pista.id)
+        const aprovechable = previa && previa.archivo === pista.archivo && !previa.error ? previa : null
         this.pistas.set(pista.id, {
           pistaId: pista.id,
           nombre: pista.nombre,
           archivo: pista.archivo,
           gainNode,
           pannerNode,
-          wavInfo: null,
+          wavInfo: aprovechable?.wavInfo ?? null,
           wavInfoPromise: null,
           segmentos: new Map(),
-          cueSegmentos: new Map(),
+          // el principio de la cancion siempre es un cue: queda guardado ahi y entra a la ventana en prepararEn
+          cueSegmentos: new Map(aprovechable?.segmentos ?? []),
           enVuelo: new Map(),
           fuentesActivas: [],
           cursorCtxTime: null,
-          finEnIndice: null,
+          finEnIndice: aprovechable?.finEnIndice ?? null,
           error: null,
           fallosSeguidos: 0,
           esperarHasta: 0
@@ -181,6 +212,32 @@ export class StreamingEngine implements PlaybackEngine {
     this.aplicarMezcla(proyecto.pistas)
     this.setCues(proyecto.marcadores.map((m) => m.tiempoMs))
     if (!this.reproduciendo) this.prepararEn(posicionMs)
+  }
+
+  precargar(proyecto: Proyecto | null): void {
+    const revision = proyecto?.revision ?? 0
+    if (!proyecto || proyecto.id === this.proyectoId) {
+      this.cancelarPrecarga()
+      return
+    }
+    if (this.precarga?.proyectoId === proyecto.id && this.precarga.revision === revision) return
+    this.cancelarPrecarga()
+    this.precarga = {
+      proyectoId: proyecto.id,
+      revision,
+      pistas: new Map(
+        proyecto.pistas.map((p) => [p.id, { archivo: p.archivo, wavInfo: null, segmentos: new Map(), finEnIndice: null, error: false }])
+      ),
+      enVuelo: new Map(),
+      fallosSeguidos: 0,
+      esperarHasta: 0
+    }
+  }
+
+  private cancelarPrecarga(): void {
+    if (!this.precarga) return
+    for (const c of this.precarga.enVuelo.values()) c.abort()
+    this.precarga = null
   }
 
   aplicarMezcla(pistasProyecto: Pista[]): void {
@@ -350,6 +407,7 @@ export class StreamingEngine implements PlaybackEngine {
 
   dispose(): void {
     clearInterval(this.intervalo)
+    this.cancelarPrecarga()
     this.detener()
     for (const p of this.pistas.values()) for (const c of p.enVuelo.values()) c.abort()
     this.pistas.clear()
@@ -512,6 +570,57 @@ export class StreamingEngine implements PlaybackEngine {
         if (++enVueloTotal >= this.pistas.size) return
       }
     }
+    // lo ultimo: el principio de la proxima cancion (con la actual y sus cues ya asegurados)
+    if (enVueloTotal === 0) this.lanzarPrecarga()
+  }
+
+  /** Baja el principio de la proxima cancion, pocos pedidos a la vez (menos todavia si algo suena). */
+  private lanzarPrecarga(): void {
+    const pre = this.precarga
+    if (!pre || Date.now() < pre.esperarHasta) return
+    const maxEnVuelo = this.reproduciendo ? 1 : 3
+    for (let indice = 0; indice < SEGMENTOS_PRECARGA_SIGUIENTE; indice++) {
+      for (const [pistaId, p] of pre.pistas) {
+        if (pre.enVuelo.size >= maxEnVuelo) return
+        if (p.error || p.segmentos.has(indice) || (p.finEnIndice !== null && indice >= p.finEnIndice)) continue
+        const clave = `${pistaId}:${indice}`
+        if (pre.enVuelo.has(clave)) continue
+        // hasta tener el encabezado, un solo pedido por pista
+        if (!p.wavInfo && [...pre.enVuelo.keys()].some((k) => k.startsWith(`${pistaId}:`))) continue
+        this.pedirPrecarga(pre, p, indice, clave)
+      }
+    }
+  }
+
+  private pedirPrecarga(pre: Precarga, p: PistaPrecargada, indice: number, clave: string): void {
+    const ctrl = new AbortController()
+    pre.enVuelo.set(clave, ctrl)
+    const url = `/media/${pre.proyectoId}/${p.archivo}?v=${pre.revision}`
+    void (async () => {
+      if (!p.wavInfo) {
+        const bytes = await this.fetchRango(url, 0, WAV_HEADER_FETCH_BYTES - 1, ctrl.signal)
+        const info = parseWavHeader(bytes)
+        if (![8, 16, 24, 32].includes(info.bitsPerSample)) throw new ErrorFatal('formato de audio no soportado')
+        p.wavInfo = info
+      }
+      const r = await this.bajarSegmento(url, p.wavInfo, indice, ctrl.signal)
+      if (r.buffer) p.segmentos.set(indice, r.buffer)
+      if (r.finEnIndice !== null) p.finEnIndice = p.finEnIndice === null ? r.finEnIndice : Math.min(p.finEnIndice, r.finEnIndice)
+    })()
+      .then(() => {
+        pre.fallosSeguidos = 0
+      })
+      .catch((err: unknown) => {
+        if (ctrl.signal.aborted) return
+        if (err instanceof ErrorFatal || err instanceof WavHeaderError) p.error = true
+        else {
+          pre.fallosSeguidos++
+          pre.esperarHasta = Date.now() + Math.min(8000, 500 * 2 ** (pre.fallosSeguidos - 1))
+        }
+      })
+      .finally(() => {
+        if (pre.enVuelo.get(clave) === ctrl) pre.enVuelo.delete(clave)
+      })
   }
 
   private pedirSegmento(pista: PistaStream, indice: number): void {
@@ -553,28 +662,36 @@ export class StreamingEngine implements PlaybackEngine {
   /** Baja y decodifica un segmento. null = no hay audio en ese indice (fin de la pista). */
   private async fetchSegmento(pista: PistaStream, indice: number, signal: AbortSignal): Promise<AudioBuffer | null> {
     const info = await this.obtenerWavInfo(pista)
+    const r = await this.bajarSegmento(this.urlDe(pista), info, indice, signal)
+    if (r.finEnIndice !== null) this.marcarFin(pista, r.finEnIndice)
+    return r.buffer
+  }
+
+  /**
+   * Pide por HTTP Range el segmento `indice` de un WAV y lo decodifica.
+   * `finEnIndice`: primer indice sin audio, si con este se llego al final.
+   */
+  private async bajarSegmento(
+    url: string,
+    info: WavInfo,
+    indice: number,
+    signal: AbortSignal
+  ): Promise<{ buffer: AudioBuffer | null; finEnIndice: number | null }> {
     const bpf = bytesPorFrame(info)
     const framesTotales = totalFrames(info)
     const frameOffset = Math.round(indice * SEGMENT_DURATION_SEC * info.sampleRate)
-    if (frameOffset >= framesTotales) {
-      this.marcarFin(pista, indice)
-      return null
-    }
+    if (frameOffset >= framesTotales) return { buffer: null, finEnIndice: indice }
     const frameCountPedido = Math.min(Math.round(SEGMENT_DURATION_SEC * info.sampleRate), framesTotales - frameOffset)
     const byteStart = info.dataOffset + frameOffset * bpf
     const byteEnd = byteStart + frameCountPedido * bpf - 1
 
-    const bytes = await this.fetchRango(this.urlDe(pista), byteStart, byteEnd, signal)
+    const bytes = await this.fetchRango(url, byteStart, byteEnd, signal)
     const frameCountReal = Math.floor(bytes.byteLength / bpf)
-    if (frameCountReal <= 0) {
-      this.marcarFin(pista, indice)
-      return null
-    }
+    if (frameCountReal <= 0) return { buffer: null, finEnIndice: indice }
     const canales = decodePcmSegment(info, bytes)
     const buffer = this.ctx.createBuffer(info.numChannels, frameCountReal, info.sampleRate)
     for (let ch = 0; ch < info.numChannels; ch++) buffer.copyToChannel(canales[ch], ch)
-    if (frameOffset + frameCountReal >= framesTotales) this.marcarFin(pista, indice + 1)
-    return buffer
+    return { buffer, finEnIndice: frameOffset + frameCountReal >= framesTotales ? indice + 1 : null }
   }
 
   private marcarFin(pista: PistaStream, indice: number): void {
@@ -611,8 +728,9 @@ export class StreamingEngine implements PlaybackEngine {
     throw new Error(`HTTP ${resp.status}`)
   }
 
+  /** `?v=`: si el zip se actualizo, el archivo cambia con el mismo nombre (que no sirva el cache viejo). */
   private urlDe(pista: PistaStream): string {
-    return `/media/${this.proyectoId}/${pista.archivo}`
+    return `/media/${this.proyectoId}/${pista.archivo}?v=${this.revisionCargada}`
   }
 
   private detenerFuentes(atTime: number): void {

@@ -158,7 +158,7 @@ export function useAppController() {
       return
     }
     const now = socket.serverNow()
-    if (engine.proyectoIdCargado !== proyecto.id) {
+    if (engine.proyectoIdCargado !== proyecto.id || engine.revisionCargada !== (proyecto.revision ?? 0)) {
       engine.activarProyecto(proyecto, nuevo.playbackActivo ? posicionActualMs(nuevo.playbackActivo, now) : 0)
       if (nuevo.playbackActivo && estaSonando(nuevo.playbackActivo, now)) {
         reingresarEnSync(engine, socket, nuevo.playbackActivo, nuevo.activeTabId ?? '', margenReingreso)
@@ -184,6 +184,10 @@ export function useAppController() {
         }
       }
     }
+    // la siguiente del setlist se va bajando de a poco: al pasar, arranca sin esperar la red.
+    // (despues de activar: si la activada ES la que se venia precargando, primero se aprovecha)
+    const iActiva = nuevo.tabs.findIndex((t) => t.tabId === nuevo.activeTabId)
+    engine.precargar(iActiva === -1 ? null : (nuevo.proyectos[iActiva + 1] ?? null))
   }, [])
 
   const crearEngine = useCallback((): PlaybackEngine => {

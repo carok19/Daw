@@ -135,6 +135,27 @@ export function ComputerApp({ controller }: { controller: AppController }) {
 
   const secciones = controller.secciones
 
+  /** "Detectar": vuelve a analizar la cancion y reemplaza las secciones (si hay, se confirma). */
+  async function detectarSecciones(): Promise<void> {
+    if (!proyecto) return
+    const cuantas = proyecto.marcadores.length
+    if (cuantas > 0) {
+      const ok = await confirmar({
+        titulo: 'Detectar secciones',
+        mensaje: (
+          <>
+            Se va a escuchar la voz guía de <b>{proyecto.nombre}</b> y, si se reconocen secciones, reemplazan a las{' '}
+            {cuantas === 1 ? 'que ya está marcada' : `${cuantas} que ya están marcadas`}.
+          </>
+        ),
+        confirmar: 'Detectar y reemplazar'
+      })
+      if (!ok) return
+    }
+    controller.detectarSecciones(proyecto.id)
+    if (sonando) controller.avisar({ tipo: 'info', texto: 'El análisis arranca cuando pare la música (no le saca potencia al vivo).' })
+  }
+
   return (
     <div className="compu">
       <TopBar
@@ -186,10 +207,16 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             <Mixer proyecto={proyecto} onUpdate={controller.updateMixer} onReorder={controller.reorderPistas} />
             <MarkersPanel
               secciones={secciones}
+              analisis={proyecto.analisis ?? null}
+              progreso={controller.progresoAnalisis[proyecto.id] ?? null}
+              modeloVoz={controller.modeloVoz}
+              sonando={sonando}
               onJump={controller.jumpToMarker}
               onCreate={controller.createMarker}
               onRename={(id, nombre) => controller.updateMarker(id, { nombre })}
               onDelete={controller.deleteMarker}
+              onDetectar={() => void detectarSecciones()}
+              onDescargarModelo={controller.descargarModeloVoz}
             />
           </main>
         </>

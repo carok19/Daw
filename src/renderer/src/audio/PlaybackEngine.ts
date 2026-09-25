@@ -22,6 +22,8 @@ export function clavePista(nombre: string): string {
 /** Superficie del motor de audio que usa `useAppController`. */
 export interface PlaybackEngine {
   proyectoIdCargado: string | null
+  /** `revision` del proyecto cargado: si cambia (zip actualizado), hay que volver a activarlo */
+  revisionCargada: number
 
   resumeSiHaceFalta(): Promise<void>
   setVolumenGeneral(volumen0a100: number): void
@@ -29,6 +31,8 @@ export interface PlaybackEngine {
   setMezclaPersonal(mezcla: MezclaPersonal): void
 
   activarProyecto(proyecto: Proyecto, posicionMs: number): void
+  /** baja de a poco el principio de la proxima cancion del setlist (null = ninguna) */
+  precargar(proyecto: Proyecto | null): void
   aplicarMezcla(pistas: Pista[]): void
   /** tiempos (ms) cuyo arranque conviene tener precargado (marcadores) */
   setCues(tiemposMs: number[]): void

@@ -79,7 +79,8 @@ export class ReconocimientoGuia {
         for (const cue of pedido.cues) {
           await this.esperarSilencio()
           try {
-            const resp = await fetch(`/media/${pedido.proyectoId}/${cue.archivo}`)
+            // sin cache: un "Detectar" nuevo reescribe los mismos nombres de archivo
+            const resp = await fetch(`/media/${pedido.proyectoId}/${cue.archivo}`, { cache: 'no-store' })
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
             const audio = new Float32Array(await resp.arrayBuffer())
             const texto = falso

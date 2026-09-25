@@ -29,3 +29,10 @@ export const MAX_CUES = 16
 
 /** Segmentos precargados por cada marcador (2 x 2s cubren el minimo de arranque). */
 export const SEGMENTOS_POR_CUE = 2
+
+/**
+ * Segmentos del principio de la SIGUIENTE cancion del setlist que se bajan de
+ * antemano (con la actual ya asegurada y de a poco): al pasar de cancion, el
+ * celular arranca sin esperar la red.
+ */
+export const SEGMENTOS_PRECARGA_SIGUIENTE = 2

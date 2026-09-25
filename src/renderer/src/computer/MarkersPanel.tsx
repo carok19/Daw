@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Flag, Pencil, Trash2 } from 'lucide-react'
-import type { Marcador } from '@shared/types'
+import { CircleAlert, Download, FileAudio, Flag, LoaderCircle, Mic, Pencil, Trash2, WandSparkles } from 'lucide-react'
+import type { AnalisisProyecto, InfoModeloVoz, Marcador } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadPaso } from '../app/playheadStore'
@@ -9,13 +9,22 @@ import { colorDeSeccion } from '../secciones'
 
 interface Props {
   secciones: Seccion[]
+  analisis: AnalisisProyecto | null
+  progreso: { hechos: number; total: number } | null
+  modeloVoz: InfoModeloVoz
+  sonando: boolean
   onJump: (marcadorId: string) => void
   onCreate: (tiempoMs: number, nombre?: string) => void
   onRename: (marcadorId: string, nombre: string) => void
   onDelete: (marcador: Marcador) => void
+  onDetectar: () => void
+  onDescargarModelo: () => void
 }
 
-export function MarkersPanel({ secciones, onJump, onCreate, onRename, onDelete }: Props) {
+const EN_CURSO = ['analizando', 'esperando-voz', 'reconociendo']
+
+export function MarkersPanel(p: Props) {
+  const { secciones, onJump, onCreate, onRename, onDelete } = p
   const [nombreNuevo, setNombreNuevo] = useState('')
   const pos = usePlayheadPaso(100)
   const actual = seccionEn(secciones, pos)
@@ -30,8 +39,26 @@ export function MarkersPanel({ secciones, onJump, onCreate, onRename, onDelete }
     <aside className="secciones">
       <div className="secciones-cabecera">
         <h3>
-          Secciones <span className="num">{conMarcador.length}</span>
+          <span>
+            Secciones <span className="num">{conMarcador.length}</span>
+          </span>
+          <button
+            className="btn-detectar"
+            onClick={p.onDetectar}
+            disabled={EN_CURSO.includes(p.analisis?.estado ?? '')}
+            title="Detectar las secciones automáticamente por la voz guía (Verso, Coro, Puente…), ajustadas al compás del click"
+          >
+            <WandSparkles size={14} /> Detectar
+          </button>
         </h3>
+        <EstadoAnalisisVista
+          analisis={p.analisis}
+          progreso={p.progreso}
+          modeloVoz={p.modeloVoz}
+          sonando={p.sonando}
+          onDescargarModelo={p.onDescargarModelo}
+          onReintentar={p.onDetectar}
+        />
         <div className="secciones-nueva">
           <input
             placeholder="Nombre (Intro, Coro…)"
@@ -52,7 +79,8 @@ export function MarkersPanel({ secciones, onJump, onCreate, onRename, onDelete }
           <li className="vacio">
             Todavía no hay secciones.
             <br />
-            Con la canción sonando, presioná <kbd>M</kbd> en cada parte.
+            Con la canción sonando, presioná <kbd>M</kbd> en cada parte
+            {p.analisis?.estado !== 'sin-guia' ? ', o dejá que se detecten por la voz guía.' : '.'}
           </li>
         )}
         {conMarcador.map((s, i) => (
@@ -108,6 +136,7 @@ function FilaSeccion({
       <span className="seccion-numero num">{numero <= 9 ? numero : ''}</span>
       <span className="seccion-color" style={{ background: colorDeSeccion(seccion) }} />
       <span className="seccion-tiempo num">{formatMmSs(seccion.inicioMs)}</span>
+      <OrigenSeccion marcador={seccion.marcador} />
       {editando ? (
         <input
           className="seccion-nombre-input"
@@ -153,4 +182,131 @@ function FilaSeccion({
       )}
     </li>
   )
+}
+
+function OrigenSeccion({ marcador }: { marcador?: Marcador | null }) {
+  if (marcador?.origen === 'guia')
+    return (
+      <span className="seccion-origen" title="Detectada por la voz guía">
+        <Mic size={12} />
+      </span>
+    )
+  if (marcador?.origen === 'archivo')
+    return (
+      <span className="seccion-origen" title="Tomada de los archivos de la canción">
+        <FileAudio size={12} />
+      </span>
+    )
+  return null
+}
+
+/** Una linea (o una tarjeta, si hay que hacer algo) con el estado del analisis automatico. */
+function EstadoAnalisisVista({
+  analisis,
+  progreso,
+  modeloVoz,
+  sonando,
+  onDescargarModelo,
+  onReintentar
+}: {
+  analisis: AnalisisProyecto | null
+  progreso: { hechos: number; total: number } | null
+  modeloVoz: InfoModeloVoz
+  sonando: boolean
+  onDescargarModelo: () => void
+  onReintentar: () => void
+}) {
+  if (!analisis) return null
+  const girando = <LoaderCircle size={13} className="girando" />
+  switch (analisis.estado) {
+    case 'analizando':
+      return (
+        <div className="analisis-linea" role="status">
+          {girando} Analizando click y voz guía…
+        </div>
+      )
+    case 'esperando-voz':
+      return (
+        <div className="analisis-linea" role="status">
+          {girando} {sonando ? 'La guía se lee cuando pare la música' : 'Preparando la lectura de la guía…'}
+        </div>
+      )
+    case 'reconociendo': {
+      const pct = progreso && progreso.total ? Math.round((progreso.hechos / progreso.total) * 100) : 0
+      return (
+        <div className="analisis-linea" role="status">
+          {girando}
+          <span className="analisis-texto">
+            {sonando ? 'En pausa mientras suena la música' : 'Escuchando la voz guía'}
+            {progreso && progreso.total > 0 && (
+              <span className="num"> · {progreso.hechos}/{progreso.total}</span>
+            )}
+          </span>
+          <span className="analisis-barra">
+            <span style={{ width: `${pct}%` }} />
+          </span>
+        </div>
+      )
+    }
+    case 'falta-modelo':
+      return (
+        <div className="analisis-tarjeta">
+          <p>
+            Para leer la voz guía (“Verso”, “Coro”…) hace falta el <b>reconocedor de voz</b>. Se descarga una sola vez
+            (~80&nbsp;MB) y después funciona sin internet.
+          </p>
+          {modeloVoz.estado === 'descargando' ? (
+            <div className="analisis-linea">
+              {girando}
+              <span className="analisis-texto num">Descargando… {Math.round((modeloVoz.progreso ?? 0) * 100)}%</span>
+              <span className="analisis-barra">
+                <span style={{ width: `${Math.round((modeloVoz.progreso ?? 0) * 100)}%` }} />
+              </span>
+            </div>
+          ) : (
+            <>
+              {modeloVoz.estado === 'error' && <p className="analisis-error">{modeloVoz.mensaje ?? 'No se pudo descargar.'}</p>}
+              <button className="btn-primario" onClick={onDescargarModelo}>
+                <Download size={14} /> {modeloVoz.estado === 'error' ? 'Reintentar descarga' : 'Descargar reconocedor'}
+              </button>
+            </>
+          )}
+        </div>
+      )
+    case 'error':
+      return (
+        <div className="analisis-linea analisis-error" role="status">
+          <CircleAlert size={13} />
+          <span className="analisis-texto" title={analisis.mensaje}>
+            {analisis.mensaje ?? 'No se pudo analizar la canción'}
+          </span>
+          <button className="btn-mini" onClick={onReintentar}>
+            Reintentar
+          </button>
+        </div>
+      )
+    case 'sin-guia':
+      return null
+    case 'listo':
+      if (analisis.mensaje)
+        return (
+          <div className="analisis-linea" role="status">
+            <CircleAlert size={13} />
+            <span className="analisis-texto">{analisis.mensaje}</span>
+          </div>
+        )
+      if (analisis.fuente === 'guia')
+        return (
+          <div className="analisis-linea" role="status">
+            <Mic size={13} /> Secciones detectadas por la voz guía
+          </div>
+        )
+      if (analisis.fuente === 'archivo')
+        return (
+          <div className="analisis-linea" role="status">
+            <FileAudio size={13} /> Secciones tomadas de los archivos
+          </div>
+        )
+      return null
+  }
 }
