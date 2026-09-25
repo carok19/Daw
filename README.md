@@ -1,352 +1,243 @@
 # Multitrack Alabanza
 
-App de escritorio (Electron) para reproducir pistas multitrack sincronizadas
-con celulares conectados por WiFi local. Ver `prompt` original del proyecto
-para la especificación completa; este README documenta cómo correrla y las
-decisiones de diseño tomadas donde la especificación dejaba algo abierto.
+App de escritorio (Electron) para reproducir pistas multitrack en vivo donde
+**el audio sale de los celulares de los músicos**, todos sincronizados. La
+computadora es el director: arma el setlist, maneja la mezcla y el
+transporte, y sirve el audio por la WiFi local. Cada celular abre una página
+web (sin instalar nada), recibe el audio por streaming y lo reproduce en el
+mismo instante que los demás.
 
-## Cómo correr
+No necesita internet ni ninguna base de datos en la nube: todo vive en la
+computadora (`~/MultitrackApp`), para que nada dependa de una conexión externa
+durante un culto.
+
+---
+
+## Instalar y correr
 
 ```bash
 npm install
-npm start        # build (renderer + main) y abre la app de Electron
+npm start              # compila y abre la app
 ```
 
-Durante una presentación en vivo, dejá la compu y los celulares en la misma
-red WiFi. Desde "Conectar celulares" en la compu vas a ver un QR con la URL
-local (`http://<ip-lan>:<puerto>`); el puerto por defecto es `4848` (si está
-ocupado, el sistema operativo asigna uno libre automáticamente).
+Instaladores (se generan en `dist/`; hay que correr cada uno en su sistema
+operativo, o en un CI con Windows/macOS):
 
-Los proyectos guardados quedan en `~/MultitrackApp/proyectos/`.
+```bash
+npm run dist:win       # instalador .exe (NSIS)
+npm run dist:mac       # .dmg
+npm run dist:linux     # AppImage
+```
+
+Datos guardados: `~/MultitrackApp/` → `proyectos/` (una carpeta por canción
+con sus pistas en WAV y `proyecto.json`), `setlists/` y `sesion.json` (las
+canciones abiertas, para recuperarlas si la app se cierra a mitad de un
+culto). `MULTITRACK_APP_DIR` cambia esa carpeta (lo usan los tests).
 
 ### Desarrollo
 
-- `npm run dev:renderer` — Vite dev server del renderer solo (para iterar UI rápido en un navegador de escritorio; no reemplaza probar dentro de Electron).
-- `npm run typecheck` — chequeo de tipos de main/preload/server y renderer.
-- `npm run test:server` — test de integración del servidor (Express + Socket.IO), sin necesidad de Electron ni un display: arma un zip de prueba, simula un cliente "compu" y uno "celular" reales por socket, y verifica carga de zip, filtrado de audio, mixer, marcadores, bloqueo de control y el mecanismo de sincronización (`playback:scheduled`).
+- `npm run typecheck` — tipos de main/preload/server y del renderer.
+- `npm run test:server` — tests de integración del servidor (Express +
+  Socket.IO + ffmpeg reales, clientes "compu" y "celular" por socket): import
+  de WAV/MP3, seguridad, sincronización, loop, fin de canción, dispositivos,
+  sesión, setlists, migración de canciones viejas.
+- `npm run dev:renderer` — solo la interfaz en un navegador (sin servidor).
+- Con `?debug` en la URL del celular se expone `window.__mt` (motor, socket y
+  estado) para diagnosticar en pruebas de campo.
+
+---
+
+## Checklist para el día del culto
+
+1. **Misma WiFi para todos.** Ideal: un router propio para el equipo de
+   alabanza (5 GHz, cerca del escenario). No necesita internet.
+2. **Windows:** la primera vez que se abre la app, el firewall pregunta si
+   permite conexiones: marcá **redes privadas** y aceptá (si no, los
+   celulares no pueden conectarse).
+3. Abrí la app: si se había cerrado, **el setlist vuelve solo**. Si no, armalo
+   con **+ Canción** (importar `.zip` o abrir una guardada) o abrí un setlist
+   guardado.
+4. **Celulares:** botón **Celulares** (arriba a la derecha) → escanear el QR →
+   **“Tocá para empezar”** → conectar auriculares. En ⚙ cada músico puede
+   ponerle nombre a su celular (“Batería”, “Bajo”…).
+5. Mirá el chip de celulares: **verde** = todos listos y sincronizados;
+   **amarillo** = alguien no activó el audio, tiene WiFi lento o está
+   desfasado; **rojo** = alguien se desconectó o tiene un error de audio. El
+   detalle está en la ventana de Celulares.
+6. Si no querés que nadie toque el transporte desde su celular, activá
+   **Celulares bloqueados**.
+7. La pantalla de los celulares queda encendida sola (conviene bajar el
+   brillo). Si alguien usa **auriculares Bluetooth** y lo escucha atrasado:
+   ⚙ → *Ajuste fino* → sumar milisegundos hasta que coincida.
+8. Cada músico puede armar **Mi mezcla** (más click, menos pad…) sin cambiar
+   lo que escuchan los demás.
+
+**Ancho de banda:** cada celular recibe ~0,7 Mbps por pista mono y ~1,4 Mbps
+por pista estéreo (WAV sin comprimir, para que los saltos y el loop sean
+exactos). Una canción de 10 pistas ≈ 7–14 Mbps por celular. Un router
+decente en 5 GHz aguanta varios celulares; si alguno se queda corto, la app
+lo avisa (en el celular y en la compu) y se pone al día sola cuando mejora.
+
+### Atajos de teclado (compu)
+
+| Tecla | Acción |
+|---|---|
+| Espacio | Reproducir / pausa |
+| Enter | Stop (vuelve al inicio) |
+| ← / → | Sección anterior / siguiente |
+| 1 … 9 | Ir a la sección 1 a 9 |
+| M | Marcar una sección en la posición actual |
+| L | Repetir la sección actual |
+| Re Pág / Av Pág | Canción anterior / siguiente |
+| ? | Ayuda de atajos |
+
+---
 
 ## Arquitectura
 
-- `src/server` — Express + Socket.IO embebido (corre dentro del proceso principal de Electron). Fuente de verdad de todo el estado (pestañas/proyectos abiertos, mezcla, marcadores, reproducción). Sirve el build del renderer y los archivos de audio (`/media/<proyectoId>/...`) tanto a la ventana de Electron como a los celulares.
-- `src/main` / `src/preload` — shell de Electron. El proceso principal arranca el servidor embebido y abre la ventana apuntando a `http://localhost:<puerto>`. El preload expone `window.electronAPI` (diálogo nativo para elegir el .zip, info de conexión) — su sola presencia es lo que distingue a la ventana de Electron de un navegador de celular.
-- `src/renderer` — React + TypeScript. Un solo bundle servido tanto a la compu como a los celulares; `App.tsx` elige `ComputerApp` o `MobileApp` según si `window.electronAPI` existe.
-- `src/shared` — tipos y la fórmula de posición de reproducción (`posicionActualMs`), compartidos entre server y renderer.
+- `src/server` — Express + Socket.IO embebido en el proceso principal de
+  Electron. Fuente de verdad de todo: setlist, mezcla, secciones,
+  reproducción, dispositivos.
+  - `socketHandlers.ts` — protocolo y permisos. `transport.ts` — play/pausa/
+    stop/saltos y los eventos que dependen del tiempo (fin de canción,
+    repetir sección). `state.ts` — setlist en memoria. `devices.ts` —
+    celulares conectados. `projects.ts` — disco, setlists, sesión,
+    migración. `zip.ts` + `audio.ts` — importación con ffmpeg.
+- `src/main` / `src/preload` — Electron: arranca el servidor, abre la
+  ventana y le pasa (por IPC, nunca por la red) el token que la identifica
+  como "la compu".
+- `src/renderer` — React. Un solo bundle para la compu y los celulares
+  (`App.tsx` elige según exista `window.electronAPI`).
+  - `app/useAppController.ts` — conexión, motor de audio, sincronía,
+    acciones. `app/playheadStore.ts` — posición de reproducción como store
+    externo (solo re-renderiza lo que la muestra, no el mixer).
+  - `audio/StreamingEngine.ts` — motor de audio (compu y celulares).
+  - `computer/*`, `mobile/*`, `ui/*` — interfaz.
+- `src/shared` — tipos, cálculo de posición/secciones y parser de WAV,
+  compartidos por servidor y navegador.
 
-## Decisiones de diseño (donde la especificación no era explícita)
+### Importación de canciones
 
-El documento original pide explícitamente preguntar antes de asumir. Se optó
-por avanzar con una decisión razonable en cada punto (documentada acá) en
-vez de bloquear la implementación; **cualquiera de estos puntos se puede
-ajustar si no es lo que se esperaba**:
+Un `.zip` con una pista por archivo (WAV, MP3, M4A/AAC, AIFF, FLAC u OGG).
+Cada pista se normaliza con **ffmpeg** (incluido en la app, `ffmpeg-static`)
+a **WAV PCM 16-bit**, el único formato que se puede cortar en cualquier
+muestra y pedir por partes sin clicks. Si una pista estéreo es en realidad
+*dual mono* (L = R, típico de click, guía, bajo, bombo) se guarda en mono: la
+mitad de datos por WiFi sin diferencia audible. La duración la calcula el
+servidor. Los nombres pierden el prefijo de orden (`01_Click` → `Click`) y
+cada pista recibe un color distinto por orden (editable). Las canciones
+guardadas con versiones anteriores (por ejemplo con MP3 que no sonaban en los
+celulares) se migran solas al abrirlas.
 
-1. **Una sola pestaña suena a la vez.** Al cambiar de pestaña, si la que se
-   deja estaba reproduciendo, se pausa automáticamente (conserva su
-   posición). Evita mezclar el audio de dos canciones a la vez, que no
-   parece un caso de uso real para un culto en vivo.
-2. **Cómo llega la mezcla estéreo a los celulares.** En vez de transmitir un
-   stream de audio ya mezclado desde el servidor (que requeriría
-   codificación/streaming en tiempo real, no descrito en la especificación),
-   cada dispositivo — compu y cada celular — descarga los mismos archivos de
-   audio de cada pista y arma el mismo grafo Web Audio
-   (`GainNode` + `StereoPannerNode` por pista) que la compu. Los valores de
-   volumen/pan/mute/solo se retransmiten a todos los clientes en tiempo real,
-   así el balance estéreo que se escucha en cada celular es siempre idéntico
-   al de la compu. El único control propio del celular es el fader de
-   volumen general (una ganancia maestra aplicada después de la mezcla).
-3. **Detección Modo Computadora vs Modo Celular.** Se resuelve en el cliente
-   por la presencia de `window.electronAPI` (solo existe dentro de la
-   ventana de Electron, inyectada por el `preload`), no por user-agent en el
-   servidor.
-4. **Duración total de la canción.** Se detecta recién cuando el motor de
-   audio decodifica los buffers (la compu la reporta al servidor la primera
-   vez que carga cada proyecto); no se usa ninguna librería de metadata de
-   audio en el backend.
-5. **Curva de volumen del fader.** Mapeo lineal 0–100 → ganancia 0–1, tal
-   como indica la especificación ("mapeado a ganancia lineal").
-6. **Mecanismo de ping/pong para el offset de reloj.** Implementado con
-   acks de Socket.IO (correlación automática pedido/respuesta) en lugar de
-   dos eventos separados; el resultado es equivalente (5 muestras, se toma
-   el offset de la muestra con menor RTT).
-7. **Seek y salto de marcador** se resuelven como un "play" reprogramado
-   (si la canción estaba sonando, con el margen de ~1.5s) o como una
-   actualización inmediata de posición sin agenda (si estaba pausada o
-   detenida, ya que no hay audio en curso que sincronizar).
-8. **Celular que se desconecta y reconecta a mitad de canción.** Al
-   reconectar, vuelve a sincronizar su reloj, pide el estado completo
-   actual y, si la canción sigue sonando, se auto-programa para unirse
-   ~300–600ms en el futuro (no espera al próximo comando del director).
-9. **Fin de la canción.** Cuando la posición alcanza la duración total
-   mientras se reproduce, la compu emite automáticamente un `stop` — no
-   estaba detallado explícitamente en la especificación.
-10. **Políticas de autoplay del navegador.** Se agregó una pantalla
-    "Activar audio" en el Modo Celular: sin una interacción explícita del
-    usuario, iOS/Android bloquean el `AudioContext` y ningún comando
-    programado por el servidor podría sonar. Es un requisito técnico, no
-    una funcionalidad pedida por la especificación.
-11. **Stop** siempre vuelve la posición a 0 (a diferencia de Pause).
-12. **Ubicación de proyectos guardados:** `~/MultitrackApp/proyectos/<id>/`
-    (`MULTITRACK_APP_DIR` permite sobreescribir la base, usado por los
-    tests del servidor).
+### Streaming de audio (celulares y compu)
 
-## Sincronización continua (drift) — Fase 2
+Nadie descarga ni decodifica la canción entera. Cada pista se pide por
+**HTTP Range** en segmentos de 2 s y se mantiene una ventana de ~8 s por
+delante de lo que suena; cada segmento se libera apenas termina. Los
+segmentos se encadenan por aritmética de muestras (sin huecos) sobre
+`GainNode` + `StereoPannerNode` persistentes por pista.
 
-Programar el `start()` con el mismo horario en todos los dispositivos alinea
-el *arranque*, pero no evita que se separen con el correr de los minutos: el
-reloj de audio de cada dispositivo (`AudioContext.currentTime`, gobernado por
-el cristal del hardware de audio) y el reloj de pared (`Date.now()`, el que
-sincronizamos con el servidor) son dos relojes distintos dentro del mismo
-dispositivo, y no tienen garantizado avanzar exactamente a la misma
-velocidad. Mientras se está reproduciendo, cada dispositivo (compu y cada
-celular) corre su propio monitor cada `INTERVALO_MONITOREO_MS` (4s,
-`src/renderer/src/sync/driftConfig.ts`):
+- **Orden de urgencia:** primero el próximo segmento de *todas* las pistas,
+  después el siguiente (el navegador baja ~6 cosas a la vez por servidor).
+- **Arranque instantáneo:** en pausa se deja listo el comienzo desde la
+  posición actual, y se mantienen en memoria los primeros segundos de cada
+  sección ("cues"): saltar de sección o repetir una sección entra en sync sin
+  esperar la red.
+- **Nunca suena algo incorrecto:** si un segmento no llega a tiempo, el motor
+  espera (sin silencio sintético) y, cuando junta 3 s, se reincorpora en el
+  punto exacto. El estado del buffer se muestra en el celular y en la compu.
+- **Errores:** una pista con un problema irrecuperable (archivo que falta,
+  formato ilegible) queda muda sin frenar a las demás y se informa; los
+  errores de red se reintentan con espera creciente.
 
-1. Calcula `drift = posición real (según el reloj de audio) − posición
-   esperada (según el modelo del servidor)`.
-2. `< UMBRAL_SUAVE_MS` (15ms): no hace nada.
-3. `< UMBRAL_DURO_MS` (150ms): corrección suave — ajusta `playbackRate` de
-   todas las pistas y vuelve a 1×. **Velocidad fija, ventana variable**: la
-   desviación de velocidad queda siempre acotada a `MAX_RATE_DEV` (0.4%,
-   dentro de `AudioEngine.corregirDriftSuave()`), imperceptible al oído; lo
-   que varía es cuánto tarda en terminar — 15ms tarda ~3.75s, 50ms ~12.5s,
-   149ms ~37.25s, siempre a la misma velocidad. Es la misma técnica
-   ("vari-speed drift compensation") que usan sistemas profesionales de
-   sincronización de audio.
-4. `≥ UMBRAL_DURO_MS`: resincronización dura — para y vuelve a programar el
-   audio de ESE dispositivo en la posición correcta, reusando el mismo
-   mecanismo de `executeAtServerTime` (margen corto, ~400ms) que cualquier
-   otro comando de transporte.
-
-Es una corrección **puramente local**: cada dispositivo se corrige a sí
-mismo contra el modelo de tiempo del servidor (que ya tiene, no hace falta
-ningún mensaje de red nuevo para medir), así que quedan sincronizados entre
-sí por transitividad sin necesidad de compararse par a par. Cada salto de
-marcador (o Play) ya reprograma el audio desde cero, así que también actúa
-como punto de resincronización "gratis".
-
-El indicador 🟢/🟡/🔴 (en el transporte de la compu, y por celular en el
-panel "Conectar celulares") muestra exactamente ese mismo `drift` — no es
-un valor decorativo aparte.
-
-### Pantalla bloqueada / app en segundo plano
-
-El motivo real detrás de "un rato está bien y después se desincroniza" sin
-Bluetooth de por medio: los navegadores móviles frenan los temporizadores de
-JS cuando la pantalla se bloquea o la pestaña pasa a segundo plano (para
-ahorrar batería) — el audio sigue sonando, pero el monitor de drift de
-arriba deja de correr, así que cualquier deriva que aparezca mientras tanto
-queda sin corregir. Dos mitigaciones (`src/renderer/src/mobile/useWakeLock.ts`
-y el efecto de `visibilitychange` en `useAppController`):
-
-1. **Wake Lock**: al tocar "Activar audio" se pide `navigator.wakeLock`
-   para que la pantalla no se apague sola mientras el celular está en uso
-   (se vuelve a pedir automáticamente si el sistema lo libera).
-2. **Resync inmediato al volver**: si aun así la pantalla se bloqueó (por
-   ejemplo el usuario apagó la pantalla a mano, o pasó a otra app), en
-   cuanto la pestaña vuelve a primer plano se resincroniza el reloj y se
-   reprograma el audio de inmediato — no se espera al próximo chequeo
-   periódico.
-3. **Media Session** (`navigator.mediaSession`, metadata + estado de
-   reproducción, sin controles remotos de play/pausa a propósito): es la
-   señal estándar que usan los navegadores para saber que una pestaña está
-   reproduciendo audio real y no debería congelarse/matarse en segundo
-   plano. El Wake Lock (punto 1) solo evita el apagado automático por
-   inactividad — **no** evita que el usuario apague la pantalla a mano con
-   el botón de encendido, que es un caso válido ("quiero apagar la
-   pantalla pero que siga sonando y conectado"); Media Session es lo que
-   ayuda en ese caso.
-
-   Honestidad técnica: en Android/Chrome esto debería funcionar de forma
-   confiable (Chrome exime de la congelación agresiva a las pestañas que
-   están reproduciendo audio activamente). En iOS/Safari el comportamiento
-   de audio en segundo plano con Web Audio API puro (sin una etiqueta
-   `<audio>`) ha sido históricamente menos consistente entre versiones —
-   no hay forma de garantizarlo al 100% desde JavaScript. Por eso los
-   puntos 1 y 2 siguen siendo la red de seguridad: si el audio o el socket
-   se llegan a cortar con la pantalla apagada, apenas el celular vuelve a
-   primer plano se resincroniza solo, sin intervención manual.
-
-## Dispositivos conectados
-
-El servidor mantiene un roster (`src/server/devices.ts`) con etiqueta
-("Computadora", "Celular 1", "Celular 2"...), estado conectado/desconectado
-y último drift reportado. Un dispositivo que se desconecta **no desaparece**
-de la lista — queda marcado en rojo, para que el operador note si alguien
-se cayó a mitad de un culto. Se ve en el panel "Conectar celulares".
-
-## Precarga y cache de audio
-
-> Esta sección describe **la compu** (`AudioEngine`), que sigue funcionando
-> exactamente así. El celular pasó a un modelo distinto — streaming
-> progresivo por buffer deslizante — descrito en la sección siguiente; ya NO
-> descarga ni cachea canciones completas.
-
-**El problema que resuelve**: antes, cada vez que la compu cambiaba de
-canción (incluso volviendo a una que ya había sonado antes en el mismo
-culto), cada celular volvía a descargar y decodificar TODAS las pistas
-desde cero — `AudioEngine` no retenía nada entre canciones. Sesión de
-reproducción continua ahora significa: Socket.IO nunca se toca al cambiar
-de canción (ya no se tocaba antes tampoco), el clock offset tampoco se
-recalcula (idem), y los `AudioBuffer` decodificados sí se retienen.
-
-**Cache** (`src/renderer/src/audio/AudioEngine.ts`): `this.tracks` es
-únicamente el set de pistas *activo ahora mismo*; un `Map` aparte
-(`this.cache`, por `proyectoId`) retiene además los buffers ya
-decodificados de otras canciones del setlist. `activarProyecto()` primero
-consulta el cache — si está, activación instantánea (solo reconecta nodos
-ya existentes, cero descarga, cero decodificación); si no, precarga y
-activa. `A → B → A` no vuelve a descargar `A`.
-
-**Presupuesto de memoria**: un `AudioBuffer` decodificado pesa
-`duración × sampleRate × canales × 4 bytes` (PCM float32 sin comprimir,
-sin importar el formato original). Una canción típica (9 pistas, ~5min)
-decodificada entera ronda **500–700MB** — cachear un setlist completo sin
-límite son varios GB, inviable en un celular. Por eso el cache tiene un
-presupuesto (`CACHE_MAX_BYTES`, 800MB por defecto) con desalojo LRU
-(se descarta primero lo usado hace más tiempo); **la canción activa y la
-siguiente del setlist nunca se desalojan**, sin importar el presupuesto —
-solo gobierna cuántas canciones "extra" quedan dando vueltas.
-
-**Precarga en segundo plano** (`useAppController`): mientras suena la
-canción activa, se precargan de a una por vez las demás canciones del
-setlist que no estén cacheadas, por prioridad — siguiente primero, después
-por cercanía hacia adelante, lo de atrás ("ya sonado") al final — sin
-competir por ancho de banda entre sí, y sin interrumpir la que está
-sonando (la precarga nunca toca `this.tracks`).
-
-**Reporte de estado** (`preparacion:reportar` → `DeviceRegistry` →
-`estado:actualizado`): cada dispositivo informa `sin-preparar` /
-`descargando` (con %) / `preparando` (decodificando) / `listo` / `error`
-por proyecto — distinguiendo explícitamente "tengo los bytes" de "el audio
-ya está realmente utilizable". Se ve en el panel "Conectar celulares",
-bajo el nombre de la próxima canción.
-
-**Decisión explícita: NO bloquea `transport:play`.** Es solo informativo —
-el Play sigue funcionando exactamente igual que siempre, sin esperar a que
-nadie termine de preparar nada. Si un celular cambia de canción antes de
-terminar su propia precarga, el comando de audio que le llegue mientras
-tanto queda en espera (mecanismo ya existente de `comandoPendiente`) y se
-aplica solo apenas termine — no se pierde, pero tampoco bloquea a los
-demás dispositivos ni al operador.
-
-## Streaming progresivo (buffer deslizante) — Fase 1, solo WAV
-
-**El problema que resuelve**: la precarga de arriba mejora las repeticiones,
-pero el celular seguía descargando y decodificando la canción **entera** la
-primera vez (500–700MB de RAM por canción). El objetivo de esta fase es que
-el receptor — especialmente la futura APK Android — nunca necesite tener la
-canción completa: el Host retiene todo el audio (como hasta ahora); el
-celular solo mantiene en memoria una **ventana móvil** de unos segundos
-alrededor del playhead.
-
-**Alcance explícito de la Fase 1**: solo WAV. Nada de MP3/M4A, Opus, WebRTC,
-UDP, QUIC ni APK Android — eso queda para más adelante. Transporte: HTTP
-para los segmentos de audio, Socket.IO se sigue usando exclusivamente para
-control/sincronización (CLOCK SYNC, TRANSPORT SYNC, play/pause/seek/marker,
-DRIFT SYNC, estado de preparación, estado de dispositivos).
-
-**Por qué WAV y por qué HTTP Range sin tocar el servidor**: `decodeAudioData`
-no es incremental — no se puede decodificar un archivo comprimido a medida
-que crece. MP3 tiene estado entre frames ("bit reservoir") y M4A/AAC tiene
-delay de encoder: cortarlos en pedazos arbitrarios y decodificar cada uno
-por separado puede sonar con clicks en los bordes. WAV/PCM no tiene ese
-problema — es seguro cortarlo en cualquier sample. Mejor todavía: como WAV
-es PCM crudo con un header simple, **no hace falta decodificar nada en el
-servidor**: `express.static` (que ya servía `/media`) responde `206 Partial
-Content` ante un header `Range` de fábrica — verificado con una prueba
-directa antes de escribir código. El celular pide exactamente los bytes de
-cada segmento por offset de sample, sin descargar el resto del archivo, y
-los decodifica él mismo con un parser manual de WAV
-(`src/renderer/src/audio/wav.ts`) — nada de servidor nuevo.
-
-**Dos motores, mismo protocolo de transporte** (`src/renderer/src/audio/PlaybackEngine.ts`
-define la interfaz común que usa `useAppController`):
-- **Compu** → sigue siendo `AudioEngine`, sin ningún cambio: cache completo,
-  como en la sección anterior.
-- **Celular** → `StreamingEngine` (nuevo, `src/renderer/src/audio/StreamingEngine.ts`):
-  buffer deslizante por segmentos.
-
-**Ventana deslizante, no un `AudioBuffer` del tamaño de la canción**: cada
-pista mantiene un `Map<índiceDeSegmento, AudioBuffer>` donde cada segmento
-dura `SEGMENT_DURATION_SEC`. Nunca hay más de
-`~BUFFER_TARGET_SEC / SEGMENT_DURATION_SEC` segmentos cacheados por pista a
-la vez (con los valores por defecto, ~5 segmentos ≈ 10s). Apenas un segmento
-termina de sonar (`source.onended`), se borra del `Map` — queda libre para
-el recolector de basura. Verificado explícitamente antes del primer commit:
-en todo `StreamingEngine.ts` hay un solo `ctx.createBuffer(...)`, siempre
-dimensionado a un segmento (`frameCountReal`, acotado a
-`SEGMENT_DURATION_SEC` de audio), y cero llamadas a `decodeAudioData`.
-
-**Umbrales configurables** (`src/renderer/src/audio/streamConfig.ts`, mismo
-patrón que `driftConfig.ts` — nada hardcodeado dentro de `StreamingEngine`,
-para poder probar otros valores sin tocar la lógica):
-
-| Constante | Valor por defecto | Significado |
+| Constante (`audio/streamConfig.ts`) | Valor | Significado |
 |---|---|---|
-| `SEGMENT_DURATION_SEC` | 2 | Duración de cada segmento pedido por HTTP Range |
-| `BUFFER_TARGET_SEC` | 8 | Por encima: 🟢 normal |
-| `BUFFER_CRITICAL_SEC` | 3 | Entre crítico y objetivo: 🟡 rellenando. Por debajo: 🔴 crítico |
-| `BUFFER_MIN_START_SEC` | 3 | Mínimo antes de programar un arranque/reingreso a sync |
+| `SEGMENT_DURATION_SEC` | 2 | Duración de cada segmento |
+| `BUFFER_TARGET_SEC` | 8 | Audio encadenado por delante |
+| `BUFFER_CRITICAL_SEC` | 3 | Por debajo: aviso de conexión lenta |
+| `BUFFER_MIN_START_SEC` | 3 | Mínimo para (re)arrancar |
+| `MAX_CUES` / `SEGMENTOS_POR_CUE` | 16 / 2 | Arranques de sección precargados |
 
-`StreamingEngine.estadoBuffer()`/`bufferSegundosDisponibles()` ya calculan
-esto (min entre pistas); no está cableado a una UI todavía — queda listo
-para cuando haga falta mostrarlo.
+### Sincronización
 
-**Encadenado gapless**: cada segmento es un `AudioBufferSourceNode` de un
-solo uso. En vez de temporizadores, el próximo segmento de cada pista se
-programa con `source.start(cursor, offset)` donde `cursor` es
-`cursorAnterior + duraciónExactaDelSegmentoAnterior` (aritmética de
-muestras, no de reloj) — el empalme entre segmentos consecutivos no tiene
-huecos ni superposición. Los `GainNode`/`StereoPannerNode` por pista son
-persistentes (se crean una vez en `activarProyecto`, igual que en
-`AudioEngine`): cada segmento nuevo se conecta a los mismos nodos, así el
-mixer (fader/pan/mute/solo) sigue aplicando sin ningún cambio.
+1. **Reloj:** cada dispositivo mide su diferencia con el reloj del servidor
+   (7 ping/pong, se queda con el de menor ida y vuelta; se repite cada 2 min y
+   al volver a primer plano).
+2. **Comandos programados:** play, pausa, stop y saltos se programan
+   ~1,5 s a futuro (30 ms si no hay celulares) y cada dispositivo los ejecuta
+   con Web Audio en ese instante exacto.
+3. **Tramo previo:** entre que se emite un comando y su horario sigue
+   sonando lo anterior; el estado lo describe (`previo`, una cadena corta si
+   hay dos comandos seguidos), así la interfaz, el monitor de drift y un
+   celular que se une en ese momento ven lo que realmente suena.
+4. **Latencia de salida:** cada dispositivo adelanta su arranque según la
+   latencia que informa su sistema (`outputLatency`) más el ajuste fino
+   manual. El drift se mide sobre lo que *se escucha*, descontando esa
+   compensación (si no, el monitor la "corregiría" y la desharía).
+5. **Drift continuo** (cada 4 s): < 15 ms nada; 15–150 ms corrección suave
+   cambiando la velocidad 0,4 % (inaudible) el tiempo justo; ≥ 150 ms
+   resincronización dura de ese dispositivo.
+6. **Pantalla bloqueada / segundo plano:** la pantalla se mantiene encendida
+   (NoSleep.js: Wake Lock si está disponible, si no un video mudo; la app se
+   sirve por `http://` y ahí el Wake Lock nativo no existe), Media Session
+   marca la página como reproducción de audio, y al volver a primer plano se
+   resincroniza al instante.
 
-**Garantía dura: nunca se programa sobre una región no disponible.** El
-`tick()` (cada 300ms) solo llama `source.start()` para el próximo índice si
-ya está decodificado en TODAS las pistas. Si al segmento que hace falta le
-queda menos de medio segundo de margen y todavía no llegó, el motor entra
-en estado "esperando": deja de encadenar (nunca inyecta silencio sintético,
-nunca reproduce datos incorrectos — lo que ya estaba sonando simplemente
-termina) y sigue pidiendo agresivamente lo que falta. Apenas se junta de
-nuevo `BUFFER_MIN_START_SEC`, el motor llama a `onRequiereResync()` — un
-enganche hacia `reingresarEnSync()`, el mecanismo de reingreso a sync **ya
-existente** (el mismo que usan la reconexión y el resync duro de drift) —
-en vez de que `StreamingEngine` invente su propio scheduling. Este
-dispositivo se pone al día solo, con el mecanismo de siempre; no fuerza a
-pausar a los demás.
+### Seguridad
 
-**Seek / salto de marcador**: el servidor programa cualquier salto (incluso
-un `marker:jump`) como un `play` nuevo con `positionMs` + `executeAtServerTime`
-(mecanismo ya existente, sin tocar). `StreamingEngine.ejecutar()` interpreta
-todo `play` como "arrancar en esta posición", nunca como "seguir bajando
-desde donde estaba": descarta los segmentos anteriores a la nueva posición
-y pide directamente la ventana alrededor del nuevo índice — nunca descarga
-el tramo intermedio (p.ej. saltar de 00:30 a 02:15 no baja nada de
-00:30–02:15). Si el buffer ya tenía algo cacheado cerca de la nueva
-posición (resyncs chicos), lo reutiliza en vez de re-pedirlo.
+- La compu se identifica con un **token secreto** que genera el proceso
+  principal y solo conoce la ventana de Electron. Un celular que diga "soy la
+  compu" sigue siendo un celular: no puede importar, borrar, editar la mezcla
+  ni saltarse el bloqueo.
+- Todos los ids que llegan por la red se validan como UUID antes de tocar el
+  disco (no se puede pedir `../../algo`); la ruta del zip se valida.
+- Límites contra zips maliciosos (tamaño y cantidad de pistas).
+- `/media` es solo lectura; `index.html` no se cachea (los celulares siempre
+  toman la versión nueva de la app).
 
-**Integración con DRIFT SYNC (fórmula y umbrales sin tocar)**: la corrección
-suave (`corregirDriftSuave`) usa exactamente la misma fórmula que
-`AudioEngine` (0.4% de desviación de velocidad, ventana variable) — lo único
-que cambia es dónde se aplica: en vez de una única fuente por pista, se
-aplica a todas las fuentes activas de todas las pistas, y la rampa en curso
-se re-aplica a cualquier segmento que se encadene mientras dura (para que no
-haya un salto de velocidad audible justo en el borde entre dos segmentos).
+---
 
-**Qué NO se tocó**: `AudioEngine.ts` (motor de la compu, cero cambios),
-`socketHandlers.ts`/`state.ts`/`devices.ts` (CLOCK/TRANSPORT/DRIFT SYNC y
-marker resync del lado servidor), el mixer, y el servidor de medios
-(`/media` sigue siendo `express.static` puro — el soporte de `Range` ya
-venía de fábrica).
+## Decisiones de diseño
 
-## Qué falta / próximos pasos posibles
+1. **El audio sale de los celulares.** La compu no suena por defecto
+   (interruptor *Sonido en la compu* para ensayar o probar).
+2. **Una sola canción suena a la vez.** Cambiar de canción detiene la
+   anterior; cerrar la canción que suena (o borrarla) corta el audio en
+   todos (con confirmación).
+3. **La mezcla del director llega a todos** en tiempo real (mensajes
+   livianos por pista, guardado a disco con debounce). Cada celular suma su
+   volumen general y su *Mi mezcla* (recordada por nombre de pista, vale
+   para todas las canciones).
+4. **Curva de fader de audio** (cuadrática, se muestra en dB; doble click =
+   −3,9 dB, el valor de importación). Faders y paneo con arrastre relativo:
+   un click suelto no cambia el volumen.
+5. **Secciones = marcadores.** La línea de tiempo muestra la canción por
+   secciones; los triángulos se arrastran para moverlas. Borrar una sección
+   se puede deshacer.
+6. **Fin de canción y repetir sección los maneja el servidor**, así
+   funcionan aunque la ventana de la compu esté ocupada.
+7. **Los celulares pueden controlar** (play/pausa/saltar/repetir) salvo que
+   la compu los bloquee. Editar (secciones, mezcla, setlist) es solo de la
+   compu.
+8. **Cada dispositivo tiene un id estable** (localStorage): al reconectar
+   vuelve a su misma fila con su nombre, sin "fantasmas". Los desconectados
+   quedan visibles (para notar si alguien se cayó) hasta que se limpian.
+9. **Puerto fijo:** 4848, y si está ocupado 4849, 4850… (misma dirección y
+   mismo QR de un día al otro).
+10. **Sin base de datos externa:** todo en archivos JSON locales con
+    escritura atómica. Funciona sin internet.
 
-- No se armó un instalador (electron-builder está como dependencia pero sin
-  configurar); `npm start` corre la app localmente, que es lo necesario para
-  usarla en un culto.
-- No se probó en dispositivos reales (celulares/red WiFi física) dentro de
-  este entorno de desarrollo — la lógica de sincronización se validó con un
-  test de integración de servidor (`npm run test:server`) que simula
-  clientes reales por Socket.IO, pero no hay forma de levantar una ventana
-  de Electron ni una red WiFi real en este entorno para una prueba end to
-  end con hardware.
+## Limitaciones conocidas / próximos pasos
+
+- **Falta la prueba de campo con celulares reales.** Todo se validó con
+  navegadores automatizados (compu + varios celulares, WiFi lento simulado,
+  reinicio del servidor, app de Electron real), pero el sonido real, la
+  latencia de cada modelo y el Bluetooth solo se pueden medir con hardware.
+  Prueba sugerida: 2–3 celulares juntos reproduciendo solo el click; si se
+  oye "eco", usar el ajuste fino en el que suena atrasado.
+- **iPhone:** Safari puede frenar el audio si se bloquea la pantalla; la app
+  mantiene la pantalla encendida, pero conviene no bloquearla a mano.
+- Los instaladores no están firmados: Windows (SmartScreen) y macOS
+  (Gatekeeper) muestran un aviso la primera vez.
+- Una APK nativa de Android daría mejor control de la latencia y del
+  segundo plano.

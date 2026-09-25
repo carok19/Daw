@@ -30,6 +30,7 @@ async function crearVentana(url: string): Promise<void> {
     minHeight: 640,
     backgroundColor: '#0e1016',
     title: 'Multitrack Alabanza',
+    icon: path.join(__dirname, '../renderer/apple-touch-icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

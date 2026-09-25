@@ -17,6 +17,9 @@ export const BUFFER_MIN_START_SEC = 3
 /** Pedidos HTTP simultaneos por pista. */
 export const MAX_FETCHES_POR_PISTA = 3
 
+/** Pedidos HTTP simultaneos en total (como minimo uno por pista): el navegador baja ~6 a la vez por servidor. */
+export const MAX_FETCHES_GLOBAL = 8
+
 /**
  * Cuantos marcadores (secciones) se mantienen "precargados": los primeros
  * segundos de cada seccion quedan en memoria para que un salto de marcador o

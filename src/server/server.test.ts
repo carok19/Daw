@@ -10,6 +10,7 @@ import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
 import { createServer, type AppServer } from './index'
 import { rutaFfmpeg, leerInfoWav } from './audio'
 import { nombrePistaDesdeArchivo } from './zip'
+import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
   ClockSyncAck,
   ComandoProgramado,
@@ -149,6 +150,38 @@ test('nombres de pista: se quita el prefijo numerico de orden', () => {
   assert.equal(nombrePistaDesdeArchivo('10.Bajo_DI'), 'Bajo DI')
   assert.equal(nombrePistaDesdeArchivo('Teclado_Pad'), 'Teclado Pad')
   assert.equal(nombrePistaDesdeArchivo('808'), '808')
+})
+
+test('tramos encadenados: comandos seguidos dentro del margen (loop de secciones cortas)', () => {
+  let pb = nuevoPlayback(null, { estado: 'playing', positionMs: 0, referenceServerTime: 1000 }, 1000)
+  // salto 1: emitido en t=2000, efectivo en t=3000 -> vuelve a 500
+  pb = nuevoPlayback(pb, { estado: 'playing', positionMs: 500, referenceServerTime: 3000 }, 2000)
+  // salto 2: emitido en t=2900, ANTES de que el 1 sea efectivo; efectivo en t=4400
+  pb = nuevoPlayback(pb, { estado: 'playing', positionMs: 500, referenceServerTime: 4400 }, 2900)
+  assert.equal(posicionActualMs(pb, 2950), 1950, 'hasta t=3000 sigue el tramo original')
+  assert.equal(posicionActualMs(pb, 3500), 1000, 'entre 3000 y 4400 suena el salto 1')
+  assert.equal(posicionActualMs(pb, 4500), 600, 'despues, el salto 2')
+  // una pausa programada mientras suena: la posicion sigue avanzando hasta que se ejecuta
+  const pausa = nuevoPlayback(pb, { estado: 'paused', positionMs: 1100, referenceServerTime: 6000 }, 5000)
+  assert.equal(posicionActualMs(pausa, 5500), 1600)
+  assert.equal(posicionActualMs(pausa, 7000), 1100)
+  // arrancar desde parado no tiene tramo previo
+  const desdeParado = nuevoPlayback({ estado: 'stopped', positionMs: 0, referenceServerTime: 0 }, { estado: 'playing', positionMs: 0, referenceServerTime: 9000 }, 8000)
+  assert.equal(desdeParado.previo, undefined)
+})
+
+test('secciones a partir de marcadores', () => {
+  const s = calcularSecciones(
+    [
+      { id: 'b', nombre: 'Coro', tiempoMs: 20000 },
+      { id: 'a', nombre: 'Verso', tiempoMs: 5000 }
+    ],
+    60000
+  )
+  assert.deepEqual(s.map((x) => [x.nombre, x.inicioMs, x.finMs]), [['Inicio', 0, 5000], ['Verso', 5000, 20000], ['Coro', 20000, 60000]])
+  assert.equal(seccionEn(s, 4990)?.nombre, 'Inicio')
+  assert.equal(seccionEn(s, 5000)?.nombre, 'Verso')
+  assert.equal(seccionEn(s, 59999)?.nombre, 'Coro')
 })
 
 test('flujo completo: importar (con MP3), mixer liviano, marcadores y sync de reproduccion', async (t) => {

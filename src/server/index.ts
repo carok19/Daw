@@ -65,17 +65,22 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     })
   }
 
+  /**
+   * Escucha en el puerto preferido o, si esta ocupado, en los siguientes
+   * (4849, 4850...): asi la direccion (y el QR que ya tienen los celulares, y
+   * las preferencias guardadas por origen) es la misma de un dia al otro. Solo
+   * si estan todos ocupados se pide uno cualquiera al sistema operativo.
+   */
   async function start(preferredPort: number): Promise<number> {
-    try {
-      return await listenOn(preferredPort)
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code
-      if (code === 'EADDRINUSE') {
-        // el puerto preferido esta ocupado: se pide uno libre al sistema operativo
-        return listenOn(0)
+    const candidatos = preferredPort === 0 ? [0] : [...Array.from({ length: 10 }, (_, i) => preferredPort + i), 0]
+    for (const puerto of candidatos) {
+      try {
+        return await listenOn(puerto)
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE' || puerto === 0) throw err
       }
-      throw err
     }
+    throw new Error('sin puerto disponible')
   }
 
   async function close(): Promise<void> {

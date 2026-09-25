@@ -12,19 +12,17 @@
     "build": "npm run build:renderer && npm run build:main",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p src/renderer/tsconfig.json",
-    "test:server": "npm run build:main && node --test out/main/server.test.cjs"
+    "test:server": "npm run build:main && node --test out/main/server.test.cjs",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",
     "express": "^4.21.2",
     "ffmpeg-static": "^5.3.0",
-    "lucide-react": "^1.48.0",
-    "nosleep.js": "^0.12.0",
-    "qrcode": "^1.5.4",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1"
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
@@ -37,7 +35,47 @@
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
+    "lucide-react": "^1.48.0",
+    "nosleep.js": "^0.12.0",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io-client": "^4.8.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
+  },
+  "productName": "Multitrack Alabanza",
+  "author": "Multitrack Alabanza",
+  "build": {
+    "appId": "com.multitrack.alabanza",
+    "productName": "Multitrack Alabanza",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/main/index.cjs",
+      "out/main/preload.cjs",
+      "out/renderer/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Multitrack Alabanza"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.music"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Audio"
+    }
   }
 }

@@ -6,6 +6,7 @@ import {
   BUFFER_MIN_START_SEC,
   BUFFER_TARGET_SEC,
   MAX_CUES,
+  MAX_FETCHES_GLOBAL,
   MAX_FETCHES_POR_PISTA,
   SEGMENT_DURATION_SEC,
   SEGMENTOS_POR_CUE
@@ -99,6 +100,13 @@ export class StreamingEngine implements PlaybackEngine {
 
   private audioAnchorCtxTime: number | null = null
   private audioAnchorOffsetSec = 0
+  /**
+   * Cuanto se adelanto el arranque en esta corrida (latencia de salida + ajuste
+   * fino). El nodo de audio va ESE tiempo por delante de lo que se escucha: hay
+   * que descontarlo al medir el drift, o el monitor "corrige" la compensacion y
+   * la deshace (con Bluetooth, resincronizaria cada pocos segundos).
+   */
+  private compensacionSec = 0
   private correccionActivaHastaCtxTime = 0
   private correccionActual: CorreccionActiva | null = null
 
@@ -228,8 +236,8 @@ export class StreamingEngine implements PlaybackEngine {
     let offsetMs = cmd.positionMs
 
     // compensa la latencia de salida propia de este dispositivo + el ajuste fino manual
-    delaySec -= this.latenciaDeSalidaSec()
-    delaySec -= this.ajusteManualMs / 1000
+    const compensacionSec = this.latenciaDeSalidaSec() + this.ajusteManualMs / 1000
+    delaySec -= compensacionSec
     if (delaySec < 0) {
       // llego tarde: arranca ya, saltando lo que se perdio
       offsetMs += -delaySec * 1000
@@ -257,6 +265,7 @@ export class StreamingEngine implements PlaybackEngine {
 
     this.posicionBaseSeg = nuevaPosicionSeg
     this.targetCtxTimeInicio = targetTime
+    this.compensacionSec = compensacionSec
     this.indiceBase = nuevoIndiceBase
     this.indiceSiguienteAEncadenar = nuevoIndiceBase
     this.reproduciendo = true
@@ -273,10 +282,11 @@ export class StreamingEngine implements PlaybackEngine {
     this.correccionActual = null
   }
 
+  /** Posicion que se ESCUCHA ahora (la del nodo menos la compensacion de latencia/ajuste con la que se programo). */
   posicionRealMs(): number | null {
     if (this.audioAnchorCtxTime === null) return null
-    if (this.ctx.currentTime < this.audioAnchorCtxTime) return null
-    return (this.audioAnchorOffsetSec + (this.ctx.currentTime - this.audioAnchorCtxTime)) * 1000
+    if (this.ctx.currentTime < this.audioAnchorCtxTime + this.compensacionSec) return null
+    return (this.audioAnchorOffsetSec + (this.ctx.currentTime - this.audioAnchorCtxTime) - this.compensacionSec) * 1000
   }
 
   enCorreccionSuave(): boolean {
@@ -315,6 +325,22 @@ export class StreamingEngine implements PlaybackEngine {
     if (porDelante >= BUFFER_TARGET_SEC * 0.6) return 'normal'
     if (porDelante >= BUFFER_CRITICAL_SEC) return 'rellenando'
     return 'critico'
+  }
+
+  /** Estado interno para diagnostico (window.__mt con ?debug). */
+  diagnostico(): Record<string, unknown> {
+    return {
+      reproduciendo: this.reproduciendo,
+      esperando: this.esperando,
+      buffer: this.estadoBuffer(),
+      encadenadoPorDelante: this.segundosYaEncadenadosPorDelante(),
+      disponibles: this.segundosDisponiblesDesde(this.indiceSiguienteAEncadenar),
+      indice: this.indiceSiguienteAEncadenar,
+      posicionRealMs: this.posicionRealMs(),
+      outputLatency: this.ctx.outputLatency,
+      baseLatency: this.ctx.baseLatency,
+      pistas: [...this.pistas.values()].map((p) => ({ n: p.nombre, seg: [...p.segmentos.keys()], cues: p.cueSegmentos.size, vuelo: p.enVuelo.size, err: p.error }))
+    }
   }
 
   errorAudio(): string | null {
@@ -437,28 +463,44 @@ export class StreamingEngine implements PlaybackEngine {
     }
   }
 
-  /** Pide lo que falta: primero la ventana actual (o la de reposo), despues los cues. */
+  /**
+   * Pide lo que falta, en orden de urgencia: primero el PROXIMO segmento de
+   * todas las pistas, despues el siguiente de todas, etc. (el navegador solo
+   * baja ~6 cosas a la vez por servidor: si se pidiera "3 de la pista 1, 3 de
+   * la pista 2...", el proximo segundo de las ultimas pistas quedaria en cola
+   * detras de audio que todavia no hace falta). Los cues van al final.
+   */
   private lanzarFetchsPendientes(): void {
     if (this.pistas.size === 0) return
     const ahora = Date.now()
     const cantidad = this.reproduciendo
       ? this.cantidadIndicesVentana()
       : Math.ceil(BUFFER_MIN_START_SEC / SEGMENT_DURATION_SEC) + 1
-    for (const pista of this.pistas.values()) {
-      if (pista.error || ahora < pista.esperarHasta) continue
-      let ventanaCompleta = true
-      for (let i = 0; i < cantidad; i++) {
-        const indice = this.indiceSiguienteAEncadenar + i
-        if (pista.finEnIndice !== null && indice >= pista.finEnIndice) break
+    const pistas = [...this.pistas.values()].filter((p) => !p.error && ahora >= p.esperarHasta)
+    const maxGlobal = Math.max(MAX_FETCHES_GLOBAL, this.pistas.size)
+    let enVueloTotal = 0
+    for (const p of this.pistas.values()) enVueloTotal += p.enVuelo.size
+
+    let ventanaCompleta = true
+    for (let i = 0; i < cantidad; i++) {
+      const indice = this.indiceSiguienteAEncadenar + i
+      for (const pista of pistas) {
+        if (pista.finEnIndice !== null && indice >= pista.finEnIndice) continue
         if (pista.segmentos.has(indice)) continue
         ventanaCompleta = false
         if (pista.enVuelo.has(indice)) continue
-        if (pista.enVuelo.size >= MAX_FETCHES_POR_PISTA) break
+        // hasta tener el encabezado del WAV, un solo pedido por pista (los demas dependen de el)
+        if (!pista.wavInfo && pista.enVuelo.size > 0) continue
+        if (pista.enVuelo.size >= MAX_FETCHES_POR_PISTA || enVueloTotal >= maxGlobal) continue
         this.pedirSegmento(pista, indice)
+        enVueloTotal++
       }
-      // cues: solo con la ventana ya cubierta, de a uno, para no competir con lo que esta por sonar
-      if (!ventanaCompleta || pista.enVuelo.size > 0) continue
-      for (const indice of this.cueIndices) {
+    }
+
+    // cues: solo con la ventana cubierta y sin nada en vuelo, de a uno, para no competir con lo que esta por sonar
+    if (!ventanaCompleta || enVueloTotal > 0) return
+    for (const indice of [...this.cueIndices].sort((a, b) => a - b)) {
+      for (const pista of pistas) {
         if (pista.finEnIndice !== null && indice >= pista.finEnIndice) continue
         if (pista.cueSegmentos.has(indice) || pista.enVuelo.has(indice)) continue
         const enVentana = pista.segmentos.get(indice)
@@ -467,7 +509,7 @@ export class StreamingEngine implements PlaybackEngine {
           continue
         }
         this.pedirSegmento(pista, indice)
-        break
+        if (++enVueloTotal >= this.pistas.size) return
       }
     }
   }
@@ -486,9 +528,9 @@ export class StreamingEngine implements PlaybackEngine {
       .catch((err: unknown) => {
         if (ctrl.signal.aborted || proyectoId !== this.proyectoId) return
         if (err instanceof ErrorFatal) {
+          if (!pista.error) console.warn('[StreamingEngine] pista con error', pista.nombre, err.message)
           pista.error = err.message
           pista.finEnIndice = 0 // la pista queda muda; las demas siguen sonando
-          console.warn('[StreamingEngine] pista con error', pista.nombre, err.message)
           this.tick()
         } else {
           // error de red: reintento con espera creciente (0.3s, 0.6s, ... hasta 4s)

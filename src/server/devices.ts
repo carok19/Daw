@@ -30,7 +30,9 @@ export class DeviceRegistry {
   private siguienteNumeroCelular = 1
 
   conectar(socketId: string, origen: OrigenCliente, deviceId: unknown, nombre: unknown): DispositivoInfo {
-    const id = typeof deviceId === 'string' && ID_DISPOSITIVO_RE.test(deviceId) ? `${origen}:${deviceId}` : socketId
+    // la compu es una sola (la que tiene el token): siempre la misma fila
+    const id =
+      origen === 'compu' ? 'compu' : typeof deviceId === 'string' && ID_DISPOSITIVO_RE.test(deviceId) ? `celular:${deviceId}` : socketId
     let info = this.dispositivos.get(id)
     if (!info) {
       info = {

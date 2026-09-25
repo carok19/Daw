@@ -78,7 +78,8 @@ export interface TramoReproduccion {
  * no la futura (ver `posicionActualMs`).
  */
 export interface PlaybackState extends TramoReproduccion {
-  previo?: TramoReproduccion
+  /** lo que suena hasta `referenceServerTime` (puede a su vez tener un comando pendiente: cadena corta) */
+  previo?: PlaybackState
 }
 
 export interface TabResumen {

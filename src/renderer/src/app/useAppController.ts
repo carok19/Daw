@@ -96,6 +96,13 @@ export function useAppController() {
   const prefsRef = useRef({ volumenGeneral, ajusteManualMs, mezclaPersonal })
   prefsRef.current = { volumenGeneral, ajusteManualMs, mezclaPersonal }
 
+  // diagnostico: con ?debug en la URL se exponen el motor y el estado en window.__mt (pruebas de campo)
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('debug')) {
+      ;(window as unknown as { __mt: unknown }).__mt = { engineRef, socketRef, estadoRef }
+    }
+  }, [])
+
   const avisar = useCallback((aviso: Omit<Aviso, 'id'>, ms = 5000) => {
     const id = Date.now() + Math.random()
     setAvisos((prev) => [...prev.slice(-3), { ...aviso, id }])
@@ -257,6 +264,26 @@ export function useAppController() {
     }, INTERVALO_MONITOREO_MS)
     return () => clearInterval(id)
   }, [origen])
+
+  // estado del buffer/errores: se revisa cada segundo (no cada 4s como el drift) para que el aviso
+  // de "WiFi lento" aparezca enseguida en el celular y en la compu
+  useEffect(() => {
+    let anterior = ''
+    const id = setInterval(() => {
+      const engine = engineRef.current
+      const socket = socketRef.current
+      if (!engine || !socket) return
+      const buffer = engine.estadoBuffer()
+      const error = engine.errorAudio()
+      const clave = `${buffer}|${error}`
+      if (clave === anterior) return
+      anterior = clave
+      setBufferEstado(buffer)
+      setErrorAudio(error)
+      socket.emit('sync:report', { driftMs: null, buffer, error, audio: true })
+    }, 1000)
+    return () => clearInterval(id)
+  }, [])
 
   // al volver a primer plano (pantalla desbloqueada, cambio de app): reloj + resync inmediato
   useEffect(() => {

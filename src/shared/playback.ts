@@ -8,13 +8,15 @@ function posicionDeTramo(tramo: TramoReproduccion, nowMs: number): number {
 }
 
 /**
- * Tramo que esta vigente en `nowMs`: si hay un comando programado que todavia
- * no llego a su horario y antes se estaba reproduciendo, lo que suena es el
- * tramo `previo` (ver PlaybackState).
+ * Tramo que esta vigente en `nowMs`: mientras un comando programado no llego a
+ * su horario, lo que suena es el `previo` (que a su vez puede tener otro
+ * comando pendiente, si se emitieron dos seguidos dentro del margen, p.ej.
+ * "repetir seccion" con secciones cortas).
  */
 export function tramoVigente(playback: PlaybackState, nowMs: number): TramoReproduccion {
-  if (playback.previo && nowMs < playback.referenceServerTime) return playback.previo
-  return playback
+  let pb: PlaybackState = playback
+  while (pb.previo && nowMs < pb.referenceServerTime) pb = pb.previo
+  return pb
 }
 
 /**
@@ -26,27 +28,39 @@ export function posicionActualMs(playback: PlaybackState, nowMs: number): number
   return posicionDeTramo(tramoVigente(playback, nowMs), nowMs)
 }
 
-/** true si en `nowMs` esta sonando (considerando el tramo previo). */
+/** true si en `nowMs` esta sonando (considerando los tramos previos). */
 export function estaSonando(playback: PlaybackState | null | undefined, nowMs: number): boolean {
   if (!playback) return false
   return tramoVigente(playback, nowMs).estado === 'playing'
 }
 
 /**
+ * Lo que va a sonar desde `nowMs` segun la cadena `pb` (sin lo que ya paso).
+ * undefined si no suena nada en todo ese tramo.
+ */
+function podar(pb: PlaybackState | undefined, nowMs: number): PlaybackState | undefined {
+  if (!pb) return undefined
+  const tramo: PlaybackState = { estado: pb.estado, positionMs: pb.positionMs, referenceServerTime: pb.referenceServerTime }
+  if (nowMs >= pb.referenceServerTime) return pb.estado === 'playing' ? tramo : undefined
+  const anterior = podar(pb.previo, nowMs)
+  if (!anterior && pb.estado !== 'playing') return undefined
+  return anterior ? { ...tramo, previo: anterior } : tramo
+}
+
+/**
  * Nuevo estado de reproduccion a partir de `anterior`, conservando como
- * `previo` el tramo que suena en `nowMs` (si estaba sonando), para que la
- * transicion hacia el comando programado a futuro no "salte" antes de tiempo.
+ * `previo` lo que suena desde `nowMs` hasta que el nuevo comando llega a su
+ * horario, para que la transicion no "salte" antes de tiempo.
  */
 export function nuevoPlayback(
   anterior: PlaybackState | null | undefined,
   nuevo: TramoReproduccion,
   nowMs: number
 ): PlaybackState {
-  const vigente = anterior ? tramoVigente(anterior, nowMs) : null
-  if (vigente && vigente.estado === 'playing' && nuevo.referenceServerTime > nowMs) {
-    return { ...nuevo, previo: { ...vigente } }
-  }
-  return { ...nuevo }
+  const limpio: PlaybackState = { estado: nuevo.estado, positionMs: nuevo.positionMs, referenceServerTime: nuevo.referenceServerTime }
+  if (nuevo.referenceServerTime <= nowMs) return limpio
+  const previo = podar(anterior ?? undefined, nowMs)
+  return previo ? { ...limpio, previo } : limpio
 }
 
 export interface Seccion {

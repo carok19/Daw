@@ -383,8 +383,9 @@ kbd {
   border: 1px solid var(--line);
   cursor: pointer;
   white-space: nowrap;
-  max-width: 240px;
-  flex-shrink: 0;
+  max-width: 220px;
+  min-width: 104px;
+  flex-shrink: 1;
   transition: background 0.12s, border-color 0.12s;
 }
 .setlist-tab:hover {
@@ -420,6 +421,8 @@ kbd {
 .setlist-nombre {
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
 }
 .setlist-sonando {
   color: var(--play);
