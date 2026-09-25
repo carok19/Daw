@@ -200,6 +200,7 @@ export class AppState {
       origen: 'manual'
     }
     tab.proyecto.marcadores.push(marcador)
+    tab.proyecto.seccionesEditadas = true
     this.ordenarMarcadores(tab)
     this.guardarYa(tab.proyecto)
     return marcador
@@ -216,6 +217,7 @@ export class AppState {
       tiempoMs: this.limitarTiempo(tab, marcador.tiempoMs),
       origen: marcador.origen === 'guia' || marcador.origen === 'archivo' ? marcador.origen : 'manual'
     })
+    tab.proyecto.seccionesEditadas = true
     this.ordenarMarcadores(tab)
     this.guardarYa(tab.proyecto)
     return true
@@ -230,9 +232,13 @@ export class AppState {
     const marcador = tab?.proyecto.marcadores.find((m) => m.id === marcadorId)
     if (!tab || !marcador || !patch) return false
     const nombre = limpiarNombre(patch.nombre)
+    const antes = `${marcador.nombre}|${marcador.tiempoMs}`
     if (nombre) marcador.nombre = nombre
     if (numeroFinito(patch.tiempoMs)) marcador.tiempoMs = this.limitarTiempo(tab, patch.tiempoMs)
     if (typeof patch.color === 'string' && /^#[0-9a-f]{6}$/i.test(patch.color)) marcador.color = patch.color
+    // una seccion automatica que se corrige a mano pasa a ser del usuario
+    if (`${marcador.nombre}|${marcador.tiempoMs}` !== antes) marcador.origen = 'manual'
+    tab.proyecto.seccionesEditadas = true
     this.ordenarMarcadores(tab)
     this.guardarYa(tab.proyecto)
     return true
@@ -243,6 +249,7 @@ export class AppState {
     const marcador = tab?.proyecto.marcadores.find((m) => m.id === marcadorId)
     if (!tab || !marcador) return null
     tab.proyecto.marcadores = tab.proyecto.marcadores.filter((m) => m.id !== marcadorId)
+    tab.proyecto.seccionesEditadas = true
     this.guardarYa(tab.proyecto)
     return marcador
   }

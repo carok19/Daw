@@ -89,6 +89,12 @@ export interface Proyecto {
   usadoEn?: string
   /** sube cada vez que se reemplaza el audio (zip actualizado): los dispositivos descartan lo que tenian */
   revision?: number
+  /**
+   * alguien toco las secciones a mano (agrego, movio, renombro o borro): ya son
+   * del usuario, y ni un zip actualizado ni un analisis automatico las pisan
+   * (solo "Detectar", que lo pide explicitamente)
+   */
+  seccionesEditadas?: boolean
 }
 
 /** Resumen liviano de proyecto guardado en disco, para la lista de "Canciones guardadas". */

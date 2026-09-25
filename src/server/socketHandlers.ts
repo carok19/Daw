@@ -154,7 +154,7 @@ export function registerSocketHandlers(
 
   async function importarZip(zip: string, categoria: string | undefined, reemplazarId: string | null, onProgreso?: (p: ImportProgreso) => void): Promise<Proyecto> {
     const p = await crearProyectoDesdeZip(zip, { categoria, reemplazarId: reemplazarId ?? undefined, onProgreso })
-    analizador.encolar(p.id)
+    if (p.analisis?.estado !== 'listo') analizador.encolar(p.id)
     if (state.tabDeProyecto(p.id)) emitirEstadoPronto()
     aCompus('proyectos:cambio', { proyectoId: p.id })
     return p

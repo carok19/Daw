@@ -70,11 +70,25 @@ function escribirJson(ruta: string, datos: unknown): void {
  * guardar).
  */
 const enMemoria = new Map<string, Proyecto>()
+const oyentesGuardado = new Set<(p: Proyecto) => void>()
+
+/** Avisa cada vez que se guarda una cancion (la biblioteca actualiza su ficha). */
+export function alGuardarProyecto(cb: (p: Proyecto) => void): () => void {
+  oyentesGuardado.add(cb)
+  return () => oyentesGuardado.delete(cb)
+}
 
 export function saveProyecto(proyecto: Proyecto): void {
   fs.mkdirSync(projectDir(proyecto.id), { recursive: true })
   escribirJson(projectJsonPath(proyecto.id), proyecto)
   enMemoria.set(proyecto.id, proyecto)
+  for (const cb of oyentesGuardado) {
+    try {
+      cb(proyecto)
+    } catch {
+      // una ficha que no se pudo escribir no frena el guardado
+    }
+  }
 }
 
 export function loadProyecto(id: string): Proyecto {

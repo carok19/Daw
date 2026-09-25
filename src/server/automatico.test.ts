@@ -196,13 +196,106 @@ test('biblioteca con .rar: uno en partes se importa una sola vez, y al importar 
   partes.forEach((b, i) => fs.writeFileSync(path.join(afuera, `Cuan Grande.part${i + 1}.rar`), b))
   const r = await ack<{ ok: boolean; error?: string }>('project:load-from-zip', { filePath: path.join(afuera, `Cuan Grande.part${partes.length}.rar`) })
   assert.equal(r.ok, true, r.error)
-  const copiadas = fs.readdirSync(bib).filter((f) => f.startsWith('Cuan Grande')).sort()
+  const copiadas = fs.readdirSync(bib).filter((f) => f.startsWith('Cuan Grande') && f.endsWith('.rar')).sort()
   assert.deepEqual(copiadas, partes.map((_, i) => `Cuan Grande.part${i + 1}.rar`))
   server.biblioteca.escanear()
   await esperar(3000)
   server.biblioteca.escanear()
   await esperar(1500)
   assert.deepEqual((await lista()).map((c) => c.nombre).sort(), ['Cuan Grande', 'Digno', 'Rey de Reyes'])
+})
+
+test('ficha de la canción: en otra compu (o reinstalando) vuelve con sus secciones, mezcla y tempo, sin analizar', { timeout: 180000 }, async (t) => {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-ficha-'))
+  t.after(() => fs.rmSync(raiz, { recursive: true, force: true }))
+  const bib = path.join(raiz, 'Carpeta de canciones')
+  fs.mkdirSync(path.join(bib, 'Adoración'), { recursive: true })
+  fs.copyFileSync(zipConGuia(raiz, 'Santo'), path.join(bib, 'Adoración', 'Santo.zip'))
+  const renderer = path.join(raiz, 'renderer')
+  fs.mkdirSync(renderer)
+  fs.writeFileSync(path.join(renderer, 'index.html'), '<html></html>')
+
+  /** Una "compu": su propia carpeta de datos de la app, la misma carpeta de canciones. */
+  async function compuNueva(nombre: string) {
+    process.env.MULTITRACK_APP_DIR = path.join(raiz, nombre)
+    const server: AppServer = createServer(renderer, { compuToken: TOKEN })
+    const port = await server.start(0)
+    const compu: ClientSocket = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu', token: TOKEN }, reconnection: false })
+    await new Promise<void>((r) => compu.once('connect', () => r()))
+    const pedidos: PedidoVoz[][] = []
+    compu.on('analisis:pedidos', (p: PedidoVoz[]) => pedidos.push(p))
+    const ack = <T>(ev: string, payload: unknown, ms = 60000): Promise<T> =>
+      new Promise((res, rej) => compu.timeout(ms).emit(ev, payload, (err: unknown, r: T) => (err ? rej(err) : res(r))))
+    server.iniciarServicios(bib)
+    const cerrar = async (): Promise<void> => {
+      compu.close()
+      await server.close()
+    }
+    return { server, compu, ack, pedidos, cerrar }
+  }
+
+  // ---- compu A: se importa, se analiza (guia) y el musico la acomoda ----
+  const a = await compuNueva('compu-A')
+  const pedido = await esperarQue(() => a.pedidos.flat().find((p) => p.nombre === 'Santo'), 60000)
+  a.compu.emit('analisis:textos', { proyectoId: pedido.proyectoId, textos: pedido.cues.map((c) => ({ n: c.n, texto: textoDeFrase(c.finMs) })) })
+  await esperarQue(async () => (await a.ack<ProyectoResumen[]>('projects:list', {})).find((p) => p.analisis === 'listo'))
+  await a.ack('projects:open', { id: pedido.proyectoId })
+  const abierta = (await a.ack<EstadoCompleto>('state:request', {})).proyectoActivo!
+  const pad = abierta.pistas.find((p) => p.nombre === 'Pad')!
+  a.compu.emit('mixer:update', { pistaId: pad.id, patch: { volumen: 33 } })
+  a.compu.emit('marker:update', { marcadorId: abierta.marcadores[0].id, patch: { nombre: 'Verso 1 (suave)' } })
+  const ficha = path.join(bib, 'Adoración', 'Santo.multitrack.json')
+  const escrita = await esperarQue(() => {
+    try {
+      const f = JSON.parse(fs.readFileSync(ficha, 'utf-8'))
+      return f.pistas.find((p: { nombre: string }) => p.nombre === 'Pad')?.volumen === 33 && f.marcadores[0]?.nombre === 'Verso 1 (suave)' ? f : null
+    } catch {
+      return null
+    }
+  }, 10000)
+  assert.equal(escrita.seccionesEditadas, true)
+  assert.equal(escrita.marcadores[0].origen, 'manual', 'la sección corregida a mano pasa a ser del usuario')
+  assert.ok(Math.abs(escrita.tempo.bpm - 90) < 0.3)
+  const enA = (await a.ack<EstadoCompleto>('state:request', {})).proyectoActivo!
+  await a.cerrar()
+
+  // ---- compu B (otra compu, o la app reinstalada): misma carpeta de canciones ----
+  const b = await compuNueva('compu-B')
+  const importada = await esperarQue(async () => (await b.ack<ProyectoResumen[]>('projects:list', {})).find((p) => p.nombre === 'Santo'), 60000)
+  assert.equal(importada.id, enA.id, 'mismo id: los setlists que la nombran siguen andando')
+  assert.equal(importada.analisis, 'listo', 'no se vuelve a analizar')
+  assert.equal(importada.categoria, 'Adoración')
+  await b.ack('projects:open', { id: importada.id })
+  const enB = (await b.ack<EstadoCompleto>('state:request', {})).proyectoActivo!
+  assert.deepEqual(
+    enB.marcadores.map((m) => [m.nombre, m.tiempoMs]),
+    enA.marcadores.map((m) => [m.nombre, m.tiempoMs])
+  )
+  assert.equal(enB.pistas.find((p) => p.nombre === 'Pad')!.volumen, 33)
+  assert.deepEqual(enB.tempo?.compasesMs, enA.tempo?.compasesMs)
+  await esperar(1500)
+  assert.equal(b.pedidos.flat().length, 0, 'no se le pidió a nadie reconocer la guía de nuevo')
+
+  // ---- el zip se actualiza: las secciones que el usuario acomodó quedan todas ----
+  const nuevo = path.join(bib, 'Adoración', 'Santo.zip')
+  fs.copyFileSync(zipConGuia(raiz, 'Santo v2', { 'nota.txt': Buffer.from('v2') }), nuevo)
+  fs.utimesSync(nuevo, new Date(), new Date(Date.now() + 5000))
+  b.server.biblioteca.escanear()
+  const actualizada = await esperarQue(async () => {
+    const e = await b.ack<EstadoCompleto>('state:request', {})
+    return (e.proyectoActivo?.revision ?? 0) >= 1 ? e.proyectoActivo : null
+  }, 60000)
+  assert.deepEqual(
+    actualizada.marcadores.map((m) => m.nombre),
+    enA.marcadores.map((m) => m.nombre)
+  )
+  await esperar(2500)
+  assert.deepEqual(
+    (await b.ack<EstadoCompleto>('state:request', {})).proyectoActivo!.marcadores.map((m) => m.nombre),
+    enA.marcadores.map((m) => m.nombre),
+    'el análisis del audio nuevo no pisa las secciones del usuario'
+  )
+  await b.cerrar()
 })
 
 test('"Detectar secciones" reemplaza las existentes y el modelo de voz se informa si falta', { timeout: 60000 }, async (t) => {

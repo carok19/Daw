@@ -4,11 +4,12 @@ import crypto from 'node:crypto'
 import os from 'node:os'
 import type { ImportProgreso, Marcador, Proyecto, Pista } from '../shared/types'
 import { FORMATO_PROYECTO_ACTUAL } from '../shared/types'
-import { colorPorIndice, deleteProyecto, loadProyecto, projectAudioDir, projectDir, proyectoExiste, saveProyecto } from './projects'
+import { colorPorIndice, deleteProyecto, esIdValido, loadProyecto, projectAudioDir, projectDir, proyectoExiste, saveProyecto } from './projects'
 import { EXTENSIONES_AUDIO, enParalelo, normalizarAWav } from './audio'
 import { EXTENSIONES_MARCADORES, marcadoresDelZip } from './analisis/archivos'
 import { clavePista } from './clavePista'
 import { baseDeComprimido, ErrorComprimido, extraerComprimido, primerVolumen } from './comprimidos'
+import { esNombreDeFicha, interpretarFicha, leerFicha, rutaFicha, type FichaCancion } from './ficha'
 
 export class ZipSinPistasError extends Error {
   constructor() {
@@ -69,8 +70,14 @@ export interface OpcionesImport {
 export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: OpcionesImport = {}): Promise<Proyecto> {
   const { onProgreso } = opciones
   const zipPath = primerVolumen(rutaArchivo)
-  const anterior = opciones.reemplazarId && proyectoExiste(opciones.reemplazarId) ? loadProyecto(opciones.reemplazarId) : null
-  const id = anterior?.id ?? crypto.randomUUID()
+  // ficha al lado del comprimido ("Santo.multitrack.json"): la cancion vuelve con todo lo que tenia
+  const fichaAlLado = leerFicha(rutaFicha(zipPath))
+  let reemplazarId = opciones.reemplazarId
+  // esa misma cancion ya esta en esta compu: se actualiza en vez de duplicarse
+  if (!reemplazarId && fichaAlLado && proyectoExiste(fichaAlLado.id)) reemplazarId = fichaAlLado.id
+  const anterior = reemplazarId && proyectoExiste(reemplazarId) ? loadProyecto(reemplazarId) : null
+  // se conserva el id de la ficha: los setlists que la nombran siguen andando
+  const id = anterior?.id ?? (fichaAlLado && esIdValido(fichaAlLado.id) ? fichaAlLado.id : crypto.randomUUID())
   const audioFinal = projectAudioDir(id)
   // al reimportar, el audio nuevo se arma aparte y recien al final reemplaza al viejo
   const audioDir = anterior ? path.join(projectDir(id), `audio.nuevo-${Date.now()}`) : audioFinal
@@ -86,7 +93,7 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
           ruta: zipPath,
           destino: tmpDir,
           extensionesAudio: [...EXTENSIONES_AUDIO],
-          extensionesExtra: [...EXTENSIONES_MARCADORES],
+          extensionesExtra: [...EXTENSIONES_MARCADORES, '.json'],
           maxPistas: MAX_PISTAS,
           maxBytesPorPista: MAX_BYTES_POR_PISTA,
           maxBytesTotal: MAX_BYTES_TOTAL
@@ -123,6 +130,15 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
     })
     const duracionTotalMs = Math.max(0, ...duraciones)
 
+    // la ficha (al lado, o adentro como "multitrack.json") solo vale para una cancion nueva en esta compu
+    let ficha: FichaCancion | null = null
+    if (!anterior) {
+      const adentro = extraidos.find((e) => esNombreDeFicha(e.nombre))
+      ficha = fichaAlLado ?? (adentro ? interpretarFicha(fs.readFileSync(adentro.ruta, 'utf-8')) : null)
+    }
+    // con el mismo audio vale todo; si el audio cambio, solo la mezcla y las secciones puestas a mano
+    const fichaVigente = !!ficha && Math.abs(ficha.duracionTotalMs - duracionTotalMs) <= 100
+
     // marcadores que ya traen los archivos (se leen de los originales, antes de convertir)
     const marcadoresArchivo = marcadoresDelZip(
       [
@@ -133,7 +149,9 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
     )
     const desdeArchivo: Marcador[] = marcadoresArchivo.map((m) => ({ id: crypto.randomUUID(), nombre: m.nombre, tiempoMs: m.tiempoMs, origen: 'archivo' }))
 
-    const mezclaAnterior = new Map((anterior?.pistas ?? []).map((p) => [clavePista(p.nombre), p]))
+    const mezclaAnterior = new Map<string, Partial<Pista> & Pick<Pista, 'nombre'>>(
+      (anterior?.pistas ?? ficha?.pistas ?? []).map((p) => [clavePista(p.nombre), p])
+    )
     const pistas: Pista[] = tareas.map((t, i) => {
       const previa = mezclaAnterior.get(clavePista(t.nombre))
       return {
@@ -150,15 +168,19 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
 
     let marcadores: Marcador[]
     if (anterior) {
-      // se conservan las secciones puestas a mano; las automaticas se recalculan
-      const manuales = anterior.marcadores.filter((m) => !m.origen || m.origen === 'manual')
+      // si el usuario ya las acomodo, quedan todas como estan; si no, se conservan
+      // las puestas a mano y las automaticas se recalculan con el audio nuevo
+      const manuales = anterior.seccionesEditadas ? anterior.marcadores : anterior.marcadores.filter((m) => !m.origen || m.origen === 'manual')
       marcadores = manuales.length ? manuales : desdeArchivo
+    } else if (ficha) {
+      const usables = fichaVigente ? ficha.marcadores : ficha.marcadores.filter((m) => m.origen === 'manual')
+      marcadores = usables.length ? usables.map((m) => ({ id: crypto.randomUUID(), ...m })) : desdeArchivo
     } else marcadores = desdeArchivo
 
     const proyecto: Proyecto = {
       ...(anterior ?? {}),
       id,
-      nombre: anterior?.nombre ?? nombreCancionDesdeZip(zipPath),
+      nombre: anterior?.nombre ?? (ficha?.nombre || nombreCancionDesdeZip(zipPath)),
       creadoEn: anterior?.creadoEn ?? new Date().toISOString(),
       pistas,
       marcadores: marcadores.filter((m) => m.tiempoMs < duracionTotalMs).sort((a, b) => a.tiempoMs - b.tiempoMs),
@@ -166,8 +188,14 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
       formato: FORMATO_PROYECTO_ACTUAL,
       categoria: opciones.categoria ?? anterior?.categoria ?? '',
       revision: (anterior?.revision ?? 0) + (anterior ? 1 : 0),
-      tempo: null,
-      analisis: desdeArchivo.length ? { estado: 'analizando', fuente: 'archivo', guiaPistaId: null } : { estado: 'analizando', fuente: null, guiaPistaId: null }
+      tempo: fichaVigente ? ficha!.tempo : null,
+      seccionesEditadas: anterior?.seccionesEditadas ?? (fichaVigente ? ficha!.seccionesEditadas : false),
+      // con la ficha vigente ya esta todo: no hace falta volver a analizar
+      analisis: fichaVigente
+        ? { estado: 'listo', fuente: ficha!.fuenteSecciones, guiaPistaId: null }
+        : desdeArchivo.length
+          ? { estado: 'analizando', fuente: 'archivo', guiaPistaId: null }
+          : { estado: 'analizando', fuente: null, guiaPistaId: null }
     }
 
     if (anterior) {

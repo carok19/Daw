@@ -434,7 +434,8 @@ function BarraBiblioteca({
       {estado ?? (
         <span className="biblioteca-estado">
           Copiá los .zip o .rar acá y se importan solos (una pista por archivo: WAV, MP3, M4A, AIFF, FLAC u OGG). Usá subcarpetas para
-          ordenarlas: <i>Adoración</i>, <i>Alabanza</i>, <i>Navidad</i>…
+          ordenarlas: <i>Adoración</i>, <i>Alabanza</i>, <i>Navidad</i>… Al lado de cada canción queda su ficha (
+          <i>.multitrack.json</i>) con las secciones, la mezcla y el tempo: copiando esta carpeta a otra compu, todo vuelve igual.
         </span>
       )}
     </div>

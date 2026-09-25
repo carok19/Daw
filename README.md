@@ -224,6 +224,23 @@ importa nada mientras suena música (espera a que pare) y avisa una sola vez
 por tanda. Sirve también una carpeta sincronizada (Drive, Dropbox…) para
 preparar las canciones desde otra computadora.
 
+**Todo queda guardado solo, para siempre.** Las secciones (detectadas o
+marcadas), la mezcla, los colores y el tempo se guardan en cuanto cambian;
+el análisis se hace una sola vez, al importar. Además, al lado de cada
+canción de la carpeta la app escribe su **ficha** (`Santo.zip` →
+`Santo.multitrack.json`, un JSON chico que se actualiza solo), como el
+archivo de proyecto de un DAW: si se copia la carpeta a otra compu, se
+reinstala la app o se pierden sus datos, las canciones se importan **ya con
+sus secciones, mezcla y tempo, sin volver a analizar** (y con el mismo id,
+así los setlists que las nombran siguen andando). También sirve metida
+adentro del zip con el nombre `multitrack.json`. Si el audio cambió (otra
+versión del zip), de la ficha se usan la mezcla y las secciones puestas a
+mano.
+
+Las secciones que se tocan a mano (agregar, mover, renombrar, borrar) pasan a
+ser del usuario: ni un zip actualizado ni un análisis automático las pisan
+(solo **Detectar**, que pide confirmación).
+
 ### Streaming de audio (celulares y compu)
 
 Nadie descarga ni decodifica la canción entera. Cada pista se pide por

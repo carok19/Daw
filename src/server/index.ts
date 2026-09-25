@@ -118,7 +118,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
   }
 
   async function close(): Promise<void> {
-    biblioteca.detener()
+    biblioteca.apagar()
     analizador.detener()
     transporte.cancelarTimers()
     state.guardarPendientes()

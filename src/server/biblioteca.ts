@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { EstadoBiblioteca, Proyecto } from '../shared/types'
-import { appBaseDir, proyectoExiste } from './projects'
+import { alGuardarProyecto, appBaseDir, loadProyecto, proyectoExiste } from './projects'
 import { baseDeComprimido, esComprimido, volumenesDe } from './comprimidos'
+import { escribirFicha, fichaDesdeProyecto, rutaFicha } from './ficha'
 
 /** Tamaño y fecha de un comprimido; si es un .rar en partes, de todas juntas (asi se nota si falta copiar alguna). */
 function firmaDe(abs: string): { size: number; mtimeMs: number } {
@@ -73,6 +74,10 @@ export class Biblioteca {
   private ultimoError: string | null = null
   private ignorar = new Set<string>()
   private detenida = false
+  /** ficha escrita por ultima vez de cada cancion (para no reescribir lo mismo) */
+  private fichasEscritas = new Map<string, string>()
+  private fichasPendientes = new Map<string, NodeJS.Timeout>()
+  private quitarOyente: () => void
 
   constructor(private readonly hooks: HooksBiblioteca) {
     try {
@@ -81,6 +86,50 @@ export class Biblioteca {
     } catch {
       // primera vez
     }
+    // cada vez que se guarda una cancion, su ficha en la carpeta se pone al dia
+    this.quitarOyente = alGuardarProyecto((p) => this.guardarFicha(p.id))
+  }
+
+  /** Al cerrar la app: deja de vigilar y escribe las fichas que estaban por escribirse. */
+  apagar(): void {
+    this.detener()
+    this.quitarOyente()
+    for (const [id, t] of this.fichasPendientes) {
+      clearTimeout(t)
+      this.escribirFichaYa(id)
+    }
+    this.fichasPendientes.clear()
+  }
+
+  /**
+   * Pone al dia la ficha (secciones, mezcla, tempo) al lado del comprimido de
+   * la cancion en la carpeta. Con `ya`, enseguida; si no, con un segundo de
+   * espera (mover un fader guarda muchas veces seguidas).
+   */
+  guardarFicha(proyectoId: string, ya = false): void {
+    if (!this.datos.ruta) return
+    const previo = this.fichasPendientes.get(proyectoId)
+    if (previo) clearTimeout(previo)
+    this.fichasPendientes.delete(proyectoId)
+    if (ya) return this.escribirFichaYa(proyectoId)
+    this.fichasPendientes.set(
+      proyectoId,
+      setTimeout(() => {
+        this.fichasPendientes.delete(proyectoId)
+        this.escribirFichaYa(proyectoId)
+      }, 1000)
+    )
+  }
+
+  private escribirFichaYa(proyectoId: string): void {
+    const raiz = this.datos.ruta
+    if (!raiz || !proyectoExiste(proyectoId)) return
+    const rel = Object.entries(this.datos.archivos).find(([, e]) => e.proyectoId === proyectoId)?.[0]
+    if (!rel || !fs.existsSync(path.join(raiz, rel))) return
+    const ficha = fichaDesdeProyecto(loadProyecto(proyectoId))
+    const texto = JSON.stringify(ficha)
+    if (this.fichasEscritas.get(proyectoId) === texto) return
+    if (escribirFicha(rutaFicha(path.join(raiz, rel)), ficha)) this.fichasEscritas.set(proyectoId, texto)
   }
 
   get ruta(): string | null {
@@ -216,6 +265,13 @@ export class Biblioteca {
         if (movido) {
           delete this.datos.archivos[movido[0]]
           this.datos.archivos[rel] = movido[1]
+          // la ficha acompaña a su cancion
+          try {
+            const vieja = rutaFicha(path.join(this.datos.ruta, movido[0]))
+            if (fs.existsSync(vieja)) fs.renameSync(vieja, rutaFicha(path.join(this.datos.ruta, rel)))
+          } catch {
+            // se reescribe en el proximo guardado
+          }
           if (movido[1].proyectoId && proyectoExiste(movido[1].proyectoId)) this.hooks.moverCategoria(movido[1].proyectoId, categoriaDe(rel))
           cambioIndice = true
           continue
@@ -264,6 +320,7 @@ export class Biblioteca {
           const p = await this.hooks.importar(abs, categoriaDe(rel), reemplazarId)
           this.datos.archivos[rel] = { proyectoId: p.id, tam: st.size, mtimeMs: Math.round(st.mtimeMs) }
           this.guardar()
+          this.guardarFicha(p.id, true)
           this.ultimoError = null
         } catch (err) {
           const mensaje = `${path.basename(rel)}: ${(err as Error).message}`
@@ -302,6 +359,7 @@ export class Biblioteca {
       const st = firmaDe(origen)
       this.datos.archivos[relOrigen] = { proyectoId, tam: st.size, mtimeMs: Math.round(st.mtimeMs) }
       this.guardar()
+      this.guardarFicha(proyectoId, true)
       return
     }
     const base = baseDeComprimido(origen)
@@ -317,6 +375,7 @@ export class Biblioteca {
       const st = firmaDe(path.join(raiz, rel))
       this.datos.archivos[rel] = { proyectoId, tam: st.size, mtimeMs: Math.round(st.mtimeMs) }
       this.guardar()
+      this.guardarFicha(proyectoId, true)
     } catch {
       // sin copia en la biblioteca: la cancion igual quedo importada
     } finally {

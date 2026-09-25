@@ -174,12 +174,13 @@ export class Analizador {
       if (corregidos) p.tempo = { ...p.tempo, compasesMs: corregidos, faseDesdeGuia: true }
     }
     const secciones = seccionesDesdeFrases(frases, p.tempo?.compasesMs ?? null, p.duracionTotalMs)
-    const hayManuales = p.marcadores.some((m) => m.origen !== 'guia')
+    const hayManuales = p.seccionesEditadas || p.marcadores.some((m) => m.origen !== 'guia')
     let aplicadas = 0
     if (secciones.length > 0 && (!hayManuales || a.reemplazar)) {
       p.marcadores = secciones.map(
         (s): Marcador => ({ id: crypto.randomUUID(), nombre: s.nombre, tiempoMs: s.tiempoMs, origen: 'guia' })
       )
+      p.seccionesEditadas = false
       aplicadas = secciones.length
     }
     p.analisis = {
