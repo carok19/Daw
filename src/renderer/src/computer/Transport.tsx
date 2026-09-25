@@ -19,7 +19,7 @@ interface Props {
   sonidoLocal: boolean
   onTogglePlay: () => void
   onStop: () => void
-  onSeek: (ms: number) => void
+  onSeek: (ms: number, inmediato: boolean) => void
   onSeccion: (delta: number) => void
   onLoop: (v: boolean) => void
   onSiguienteCancion: () => void
@@ -212,6 +212,7 @@ export function Transport(p: Props) {
         compasesMs={p.proyecto.tempo?.compasesMs ?? null}
         loop={p.loop}
         salto={p.saltoPendiente}
+        ajustar={p.ajustarCompas}
         onSeek={p.onSeek}
         onMoverMarcador={p.onMoverMarcador}
       />

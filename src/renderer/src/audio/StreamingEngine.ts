@@ -1,5 +1,6 @@
 import type { ComandoProgramado, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 import { WAV_HEADER_FETCH_BYTES, WavHeaderError, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from '@shared/wav'
+import { posicionActualMs } from '@shared/playback'
 import { clavePista, type MezclaPersonal, type PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
@@ -150,6 +151,8 @@ export class StreamingEngine implements PlaybackEngine {
   private correccionActual: CorreccionActiva | null = null
 
   private onResyncCb: (() => void) | null = null
+  /** diagnostico: en el ultimo salto sonando, cuanto se corrio el corte para empalmar parejo (null = no aplico) */
+  private ultimoEmpalmeMs: number | null = null
   private intervalo: ReturnType<typeof setInterval>
 
   constructor() {
@@ -334,20 +337,45 @@ export class StreamingEngine implements PlaybackEngine {
     }
 
     // 'play': siempre reprograma desde cero en la nueva posicion
-    this.detenerFuentes(targetTime)
+    const empalme = this.empalmeContinuo(cmd, targetTime)
+    this.ultimoEmpalmeMs = empalme === null ? null : Math.round((empalme - targetTime) * 10000) / 10
+    const inicio = empalme ?? targetTime
+    this.detenerFuentes(inicio)
     const nuevaPosicionSeg = offsetMs / 1000
     const nuevoIndiceBase = Math.floor(nuevaPosicionSeg / SEGMENT_DURATION_SEC)
     this.moverVentana(nuevoIndiceBase)
     for (const pista of this.pistas.values()) pista.cursorCtxTime = null
 
     this.posicionBaseSeg = nuevaPosicionSeg
-    this.targetCtxTimeInicio = targetTime
+    this.targetCtxTimeInicio = inicio
     this.compensacionSec = compensacionSec
     this.indiceBase = nuevoIndiceBase
     this.indiceSiguienteAEncadenar = nuevoIndiceBase
     this.reproduciendo = true
     this.esperando = !this.listoParaArrancar(nuevoIndiceBase)
     this.tick()
+  }
+
+  /**
+   * Salto con la musica sonando (fin de seccion, compas, vuelta del "repetir"):
+   * el corte se hace en la linea de tiempo del audio que ESTE celular esta
+   * tocando, en el instante exacto en que llega al punto de corte. Si el
+   * celular iba unos ms corrido (por debajo del umbral de correccion, o por un
+   * cambio en la latencia de salida), el pulso igual queda parejo en el salto;
+   * el corrimiento lo sigue corrigiendo el monitor de drift, como siempre.
+   * null = no aplica (no sonaba, esperaba buffer, o el tramo no coincide).
+   */
+  private empalmeContinuo(cmd: ComandoProgramado, targetTime: number): number | null {
+    if (!this.reproduciendo || this.esperando || this.audioAnchorCtxTime === null) return null
+    const previo = cmd.playback.previo
+    if (!previo || previo.estado !== 'playing') return null
+    const posCorteSeg = posicionActualMs(previo, cmd.executeAtServerTime) / 1000
+    const c = this.correccionActual
+    const pendienteSec = c && targetTime < this.correccionActivaHastaCtxTime ? c.driftSec * (1 - fraccionCorregida(c, targetTime - c.now)) : 0
+    // el nodo toca (ancla + tiempo transcurrido + lo que falta corregir): cuando llega al corte
+    const t = this.audioAnchorCtxTime + (posCorteSeg - this.audioAnchorOffsetSec - pendienteSec)
+    if (Math.abs(t - targetTime) > 0.06 || t < this.ctx.currentTime + 0.01) return null
+    return t
   }
 
   detener(): void {
@@ -422,6 +450,7 @@ export class StreamingEngine implements PlaybackEngine {
       disponibles: this.segundosDisponiblesDesde(this.indiceSiguienteAEncadenar),
       indice: this.indiceSiguienteAEncadenar,
       posicionRealMs: this.posicionRealMs(),
+      ultimoEmpalmeMs: this.ultimoEmpalmeMs,
       outputLatency: this.ctx.outputLatency,
       baseLatency: this.ctx.baseLatency,
       pistas: [...this.pistas.values()].map((p) => ({ n: p.nombre, seg: [...p.segmentos.keys()], cues: p.cueSegmentos.size, vuelo: p.enVuelo.size, err: p.error })),

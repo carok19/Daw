@@ -106,7 +106,11 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
    actual termina y la música sigue directo en la elegida (se ve “→ Coro en
    5 s” en la compu y en los celulares). Se puede cambiar por otra, o
    cancelar con ✕ / Esc. En el panel de secciones se elige si salta *al
-   terminar* la sección, *en el compás* o *ya*.
+   terminar* la sección, *en el compás* o *ya*. Con el tempo detectado,
+   todo salto cae en el “1”: el destino y el momento se llevan al compás
+   (aunque la marca haya quedado unos ms corrida), un click en la línea de
+   tiempo espera al próximo compás, y la vuelta de “repetir” también va de
+   compás a compás. Así, aunque se salte muy lejos, el pulso no se corta.
 
 **Ancho de banda:** cada celular recibe ~0,7 Mbps por pista mono y ~1,4 Mbps
 por pista estéreo (WAV sin comprimir, para que los saltos y el loop sean
@@ -124,6 +128,7 @@ lo avisa (en el celular y en la compu) y se pone al día sola cuando mejora.
 | 1 … 9 | Ir a la sección 1 a 9 (sonando: al terminar la sección actual) |
 | Shift + 1…9 / ← → | Lo mismo, pero ya |
 | Esc | Cancelar el salto elegido |
+| Click en la línea de tiempo | Sonando: salta en el próximo compás, al “1” más cercano (Shift: ya; Alt: sin imán) |
 | M | Marcar una sección en la posición actual |
 | L | Repetir la sección actual |
 | Alt + arrastrar | Mover una sección sin ajustarla al compás |
@@ -322,7 +327,10 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
    la compu o un celular). El salto queda pendiente y se manda a los
    celulares con el margen de sync antes del límite; en ese instante cada
    uno corta el tramo actual y arranca el elegido, con el comienzo de cada
-   sección ya precargado: sin silencio ni corrimiento.
+   sección ya precargado: sin silencio ni corrimiento. El corte se hace
+   sobre la línea de tiempo del audio que ese celular está tocando (no sobre
+   el reloj): si iba unos ms corrido, el pulso igual queda parejo en el
+   salto, y el corrimiento lo sigue corrigiendo el monitor de drift.
 8. **Cada dispositivo tiene un id estable** (localStorage): al reconectar
    vuelve a su misma fila con su nombre, sin "fantasmas". Los desconectados
    quedan visibles (para notar si alguien se cayó) hasta que se limpian. Al

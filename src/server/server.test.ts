@@ -529,6 +529,48 @@ test('saltos de sección: al terminar la sección la música sigue en la elegida
   await env.cerrar()
 })
 
+test('con tempo, todo cae en el "1": marcas corridas, click en la línea de tiempo y la vuelta del "repetir"', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  // marcas corridas unos ms del compas (como las marcadas antes de detectar el click, o las de un archivo)
+  await cargarZip(compu, crearZip('pulso', { 'click.wav': a.wav4s, 'marcas.txt': Buffer.from('0:01.04 Verso\n0:02.03 Coro\n0:02.96 Puente\n') }))
+  // 240 BPM 4/4: un compas por segundo
+  env.server.state.getActiveTab()!.proyecto.tempo = { bpm: 240, compas: 4, compasesMs: [0, 1000, 2000, 3000], clickPistaId: null, acentoClaro: true }
+  const conSalto = (): Promise<EstadoCompleto> => esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => !!e.saltoPendiente)
+
+  // seccion: el limite y el destino se llevan al compas (2000 y 3000, no 2030 y 2960)
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1100 })])
+  await esperar(50)
+  let e = (await Promise.all([conSalto(), compu.emit('seccion:saltar', { posicionMs: 2960 })]))[0]
+  assert.deepEqual([e.saltoPendiente!.limiteMs, e.saltoPendiente!.destinoMs], [2000, 3000])
+  const cmd = await esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', (c) => c.accion === 'play', 3000)
+  assert.equal(cmd.positionMs, 3000)
+  assert.ok(Math.abs(posicionActualMs(cmd.playback, cmd.executeAtServerTime - 1) - 1999) <= 1, 'corta justo en el compás')
+
+  // click en la linea de tiempo sonando: en el proximo compas, al "1" mas cercano al punto elegido
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1100 })])
+  await esperar(50)
+  e = (await Promise.all([conSalto(), compu.emit('transport:seek', { positionMs: 3350 })]))[0]
+  assert.deepEqual([e.saltoPendiente!.limiteMs, e.saltoPendiente!.destinoMs], [2000, 3000])
+  assert.match(e.saltoPendiente!.nombre, /Puente · 0:03/)
+  // con Shift (inmediato) va ya, al punto exacto
+  const t0 = Date.now()
+  const [ya] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:seek', { positionMs: 3350, inmediato: true })])
+  assert.equal(ya.positionMs, 3350)
+  assert.ok(ya.executeAtServerTime - t0 < 200)
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:pause')])
+
+  // "repetir" en una seccion corrida: la vuelta tambien va de compas a compas (2000 -> 1000)
+  await Promise.all([esperarEvento(compu, 'estado:actualizado'), compu.emit('loop:set', { activo: true })])
+  const [inicio] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1100 })])
+  const vuelta = await esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', (c) => c.accion === 'play', 3000)
+  assert.equal(vuelta.positionMs, 1000)
+  assert.ok(Math.abs(vuelta.executeAtServerTime - (inicio.executeAtServerTime + 900)) < 5)
+  compu.emit('transport:stop')
+  await env.cerrar()
+})
+
 test('saltos de sección con celulares: el salto se manda con todo el margen de sync', async (t) => {
   const a = audiosDePrueba()
   const env = await entorno(t)

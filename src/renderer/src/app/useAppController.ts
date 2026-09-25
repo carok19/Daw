@@ -497,8 +497,9 @@ export function useAppController() {
       stop(): void {
         emit('transport:stop')
       },
-      seek(positionMs: number): void {
-        emit('transport:seek', { positionMs })
+      /** Ir a un punto: sonando, a tiempo (proximo compas, al "1" mas cercano); con `inmediato`, ya. */
+      seek(positionMs: number, inmediato = false): void {
+        emit('transport:seek', { positionMs, inmediato })
       },
       /** Ir a una seccion (sonando: en el limite segun el modo de salto; `inmediato`: ya). */
       jumpToMarker(marcadorId: string, inmediato = false): void {

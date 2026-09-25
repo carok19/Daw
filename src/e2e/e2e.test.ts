@@ -305,6 +305,9 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     assert.match((await compu.locator('.seccion-pill').textContent()) ?? '', /Sección 3/)
     assert.equal(await compu.locator('.salto-pendiente').count(), 0)
     for (const cel of celulares) {
+      // el corte se hizo sobre la linea de tiempo del propio audio del celular (empalme parejo)
+      const empalme = await cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): { ultimoEmpalmeMs: number | null } } } } }).__mt.engineRef.current.diagnostico().ultimoEmpalmeMs)
+      assert.ok(empalme !== null && Math.abs(empalme) < 60, `empalme del salto: ${empalme}`)
       assert.ok((await vivas(cel)) > 0, 'sin cortes: el celular siguió sonando')
       const esperando = await cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): { esperando: boolean } } } } }).__mt.engineRef.current.diagnostico().esperando)
       assert.equal(esperando, false, 'el celular tenía listo el comienzo de la sección')

@@ -250,6 +250,8 @@ export interface TransportPlayPayload {
 }
 export interface TransportSeekPayload {
   positionMs: number
+  /** sonando: saltar ya, sin esperar el proximo compas */
+  inmediato?: boolean
 }
 
 export interface MarcadorCrearPayload {

@@ -27,6 +27,28 @@ const MIN_SECCION_LOOP_MS = 1000
  */
 const ANTICIPO_MIN_SALTO_MS = 700
 
+/** Compas mas cercano a `ms` (a menos de medio compas); sin tempo detectado, `ms` tal cual. */
+function alCompas(tab: Tab, ms: number): number {
+  const compases = tab.proyecto.tempo?.compasesMs
+  if (!compases || compases.length < 2) return ms
+  let mejor = ms
+  let dist = Infinity
+  for (const c of compases) {
+    const d = Math.abs(c - ms)
+    if (d < dist) {
+      dist = d
+      mejor = c
+    }
+  }
+  const medio = (compases[1] - compases[0]) / 2
+  return dist <= medio ? mejor : ms
+}
+
+function formatoTiempo(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
 function clampPos(ms: number, duracionTotalMs: number): number {
   const max = duracionTotalMs > 0 ? duracionTotalMs : Number.MAX_SAFE_INTEGER
   return Math.min(max, Math.max(0, Math.round(ms)))
@@ -144,12 +166,14 @@ export class Transporte {
       return
     }
 
+    // se cae en el "1" del compas (aunque la marca haya quedado unos ms corrida): el pulso sigue parejo
+    const destinoMs = alCompas(tab, destino.inicioMs)
     let limite = this.limiteDeSalto(tab, secciones, this.state.modoSalto, now)
     // "siguiente" en modo seccion: la siguiente ya viene sola al terminar esta;
     // lo que se quiere es pasar ya, a tiempo: en el proximo compas (o enseguida si no hay tempo)
-    if (relativoNatural && limite && limite.limiteMs === destino.inicioMs) {
+    if (relativoNatural && limite && limite.limiteMs === destinoMs) {
       limite = this.state.modoSalto === 'seccion' ? this.limiteDeSalto(tab, secciones, 'compas', now) : null
-      if (!limite || limite.limiteMs === destino.inicioMs) {
+      if (!limite || limite.limiteMs === destinoMs) {
         this.cancelarSalto()
         this.seek(destino.inicioMs)
         return
@@ -160,7 +184,37 @@ export class Transporte {
       this.seek(destino.inicioMs)
       return
     }
-    this.state.saltoPendiente = { tabId: tab.tabId, destinoMs: destino.inicioMs, nombre: destino.nombre, ...limite }
+    this.state.saltoPendiente = { tabId: tab.tabId, destinoMs, nombre: destino.nombre, ...limite }
+    this.reprogramarTimers()
+    this.alCambiarSalto()
+  }
+
+  /**
+   * Ir a un punto cualquiera (click en la linea de tiempo). Sonando y con el
+   * tempo detectado, se hace a tiempo: en el proximo compas, y al "1" del
+   * compas mas cercano al punto elegido, asi el pulso no se corta. Sin tempo,
+   * con el modo "ya" o con `inmediato` (Shift), va enseguida.
+   */
+  saltarAPosicion(positionMs: number, inmediato = false): void {
+    const tab = this.state.getActiveTab()
+    if (!tab || !Number.isFinite(positionMs)) return
+    const compases = tab.proyecto.tempo?.compasesMs
+    if (tab.playback.estado !== 'playing' || inmediato || this.state.modoSalto === 'inmediato' || !compases || compases.length < 2) {
+      this.cancelarSalto()
+      this.seek(positionMs)
+      return
+    }
+    const dur = tab.proyecto.duracionTotalMs
+    const destinoMs = clampPos(alCompas(tab, positionMs), dur)
+    const limite = this.limiteDeSalto(tab, calcularSecciones(tab.proyecto.marcadores, dur), 'compas', Date.now())
+    if (!limite) {
+      this.cancelarSalto()
+      this.seek(destinoMs)
+      return
+    }
+    const seccion = seccionEn(calcularSecciones(tab.proyecto.marcadores, dur), destinoMs)
+    const nombre = `${seccion?.nombre ?? 'Posición'} · ${formatoTiempo(destinoMs)}`
+    this.state.saltoPendiente = { tabId: tab.tabId, destinoMs, nombre, ...limite }
     this.reprogramarTimers()
     this.alCambiarSalto()
   }
@@ -191,7 +245,14 @@ export class Transporte {
     const compases = tab.proyecto.tempo?.compasesMs
     let limiteMs: number | undefined
     if (modo === 'compas' && compases && compases.length > 1) limiteMs = compases.find((c) => c >= posDesde)
-    else limiteMs = seccionEn(secciones, posDesde)?.finMs
+    else {
+      limiteMs = seccionEn(secciones, posDesde)?.finMs
+      // el fin de la seccion, en el "1" del compas; si eso ya quedo atras, el compas siguiente
+      if (limiteMs !== undefined && limiteMs < dur) {
+        const enCompas = alCompas(tab, limiteMs)
+        limiteMs = enCompas >= posDesde ? enCompas : (compases?.find((c) => c >= posDesde) ?? limiteMs)
+      }
+    }
     if (limiteMs === undefined || limiteMs > dur || limiteMs < posDesde) return null
     return { limiteMs, tSalto: desde + (limiteMs - posDesde) }
   }
@@ -268,11 +329,14 @@ export class Transporte {
 
     if (this.state.loop) {
       const seccion = seccionEn(calcularSecciones(tab.proyecto.marcadores, dur), pos)
-      if (seccion && seccion.finMs - seccion.inicioMs >= MIN_SECCION_LOOP_MS && seccion.finMs > pos) {
-        const tSalto = tRef + (seccion.finMs - pos)
+      // la vuelta tambien en el "1": del compas del fin de la seccion al compas de su comienzo
+      const inicio = seccion ? alCompas(tab, seccion.inicioMs) : 0
+      const fin = seccion ? (seccion.finMs >= dur ? seccion.finMs : alCompas(tab, seccion.finMs)) : 0
+      if (seccion && fin - inicio >= MIN_SECCION_LOOP_MS && fin > pos) {
+        const tSalto = tRef + (fin - pos)
         // se emite con anticipacion (al menos ANTICIPO_MIN_LOOP_MS) para que cada cliente programe el salto exacto
         const emitirEn = tSalto - Math.max(this.margen(), ANTICIPO_MIN_LOOP_MS)
-        this.timer = setTimeout(() => this.saltoDeLoop(tabId, seccion.inicioMs, tSalto), Math.max(0, emitirEn - now))
+        this.timer = setTimeout(() => this.saltoDeLoop(tabId, inicio, tSalto), Math.max(0, emitirEn - now))
         return
       }
     }

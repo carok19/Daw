@@ -3,6 +3,7 @@ import type { Seccion } from '@shared/playback'
 import type { SaltoPendiente } from '@shared/types'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadMs } from '../app/playheadStore'
+import { ajustarACompas } from '../app/useAppController'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
 
@@ -14,7 +15,10 @@ interface Props {
   loop: boolean
   /** salto elegido: se marca donde se va a saltar y a que seccion */
   salto: SaltoPendiente | null
-  onSeek: (ms: number) => void
+  /** iman de compas: el click (y la guia del mouse) caen en el "1" mas cercano; Alt lo desactiva */
+  ajustar: boolean
+  /** `inmediato`: con Shift (sonando, si no, espera al proximo compas) */
+  onSeek: (ms: number, inmediato: boolean) => void
   /** `sinAjustar`: se solto con Alt apretado (no ajustar al compas) */
   onMoverMarcador: (marcadorId: string, ms: number, sinAjustar: boolean) => void
 }
@@ -24,7 +28,7 @@ interface Props {
  * Click = ir a ese punto. Las marcas blancas (triangulos) al inicio de cada
  * seccion se arrastran para mover el marcador.
  */
-export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, onSeek, onMoverMarcador }: Props) {
+export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, ajustar, onSeek, onMoverMarcador }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const playhead = usePlayheadMs()
   const [hover, setHover] = useState<number | null>(null)
@@ -38,14 +42,20 @@ export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, onSee
     return Math.round(Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) * dur)
   }
 
+  /** Posicion del mouse, en el "1" del compas si el iman esta prendido (y no se aprieta Alt). */
+  function destinoDesdeX(clientX: number, alt: boolean): number {
+    const ms = msDesdeX(clientX)
+    return ajustar && !alt && compasesMs ? ajustarACompas(compasesMs, ms) : ms
+  }
+
   return (
     <div
       ref={ref}
       className="timeline"
       onClick={(e) => {
-        if (!arrastre) onSeek(msDesdeX(e.clientX))
+        if (!arrastre) onSeek(destinoDesdeX(e.clientX, e.altKey), e.shiftKey)
       }}
-      onMouseMove={(e) => setHover(msDesdeX(e.clientX))}
+      onMouseMove={(e) => setHover(destinoDesdeX(e.clientX, e.altKey))}
       onMouseLeave={() => setHover(null)}
       role="slider"
       aria-label="Posición de la canción"
@@ -104,11 +114,12 @@ export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, onSee
                 }
                 const soltar = (ev: PointerEvent): void => {
                   alt = alt || ev.altKey
+                  const shift = ev.shiftKey
                   el.removeEventListener('pointermove', mover)
                   el.removeEventListener('pointerup', soltar)
                   el.removeEventListener('pointercancel', soltar)
                   if (Math.abs(ultimo - s.inicioMs) > 30) onMoverMarcador(id, ultimo, alt)
-                  else onSeek(s.inicioMs) // click sin arrastrar: ir a esa seccion
+                  else onSeek(s.inicioMs, shift) // click sin arrastrar: ir a esa seccion
                   // se limpia despues del click que dispara el pointerup
                   setTimeout(() => setArrastre(null), 0)
                 }

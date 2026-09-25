@@ -293,7 +293,8 @@ export function registerSocketHandlers(
 
     socket.on('transport:seek', (payload: TransportSeekPayload) => {
       if (typeof payload?.positionMs !== 'number' || !permitido()) return
-      transporte.seek(payload.positionMs)
+      // sonando, a tiempo (proximo compas, al "1"); con `inmediato` (Shift) o sin tempo, ya
+      transporte.saltarAPosicion(payload.positionMs, payload.inmediato === true)
     })
 
     socket.on('marker:jump', (payload: MarcadorSaltarPayload) => {
