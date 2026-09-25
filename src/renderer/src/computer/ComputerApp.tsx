@@ -228,7 +228,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             </div>
             <h2>Armá el setlist</h2>
             <p>
-              Importá una canción (un .zip con una pista por archivo) o abrí una ya guardada. El audio sale de los celulares:
+              Importá una canción (un .zip o .rar con una pista por archivo) o abrí una ya guardada. El audio sale de los celulares:
               conectalos con el código QR de <b>Celulares</b>.
             </p>
             <div className="vacio-acciones">

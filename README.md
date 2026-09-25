@@ -77,8 +77,8 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
    permite conexiones: marcá **redes privadas** y aceptá (si no, los
    celulares no pueden conectarse).
 3. Abrí la app: si se había cerrado, **el setlist vuelve solo**. Si no, armalo
-   con **+ Canción** (importar `.zip` o abrir una guardada) o abrí un setlist
-   guardado. Lo más cómodo: copiar los `.zip` en la **carpeta de canciones**
+   con **+ Canción** (importar `.zip`/`.rar` o abrir una guardada) o abrí un setlist
+   guardado. Lo más cómodo: copiar los `.zip` o `.rar` en la **carpeta de canciones**
    (con subcarpetas por categoría) antes del culto; se importan y se analizan
    solos, y en **+ Canción** aparecen ordenados por categoría, recientes o A–Z.
    Conviene abrir cada canción nueva una vez antes, para revisar sus
@@ -145,7 +145,14 @@ lo avisa (en el celular y en la compu) y se pone al día sola cuando mejora.
 
 ### Importación de canciones
 
-Un `.zip` con una pista por archivo (WAV, MP3, M4A/AAC, AIFF, FLAC u OGG).
+Un `.zip` o un `.rar` (también un `.rar` en partes: `Canción.part1.rar`,
+`Canción.part2.rar`… — se puede elegir cualquier parte, tienen que estar en
+la misma carpeta) con una pista por archivo (WAV, MP3, M4A/AAC, AIFF, FLAC u
+OGG). Se descomprime en un **proceso aparte** (el RAR con `node-unrar-js`, el
+descompresor oficial de RARLAB compilado a WebAssembly, gratis y sin
+internet): aunque la canción pese 1 GB, el servidor sigue atendiendo a los
+celulares mientras tanto. Un `.rar` con contraseña se rechaza con un aviso
+claro.
 Cada pista se normaliza con **ffmpeg** (incluido en la app, `ffmpeg-static`)
 a **WAV PCM 16-bit**, el único formato que se puede cortar en cualquier
 muestra y pedir por partes sin clicks. Si una pista estéreo es en realidad
@@ -190,7 +197,8 @@ pausado mientras suena música.
 ### Carpeta de canciones (biblioteca)
 
 La app vigila una carpeta (por defecto `Documentos/Multitrack Alabanza`, se
-cambia en **+ Canción**): cada `.zip` que se copia ahí se importa solo, y las
+cambia en **+ Canción**): cada `.zip` o `.rar` que se copia ahí se importa solo
+(un `.rar` en partes, una sola vez y recién cuando están todas), y las
 **subcarpetas son categorías** (*Adoración*, *Alabanza*, *Navidad/2024*…).
 Mover un zip de carpeta cambia su categoría; reemplazarlo por uno nuevo
 actualiza la canción conservando la mezcla y las secciones marcadas a mano

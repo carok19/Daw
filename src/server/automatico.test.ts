@@ -5,7 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
 import { createServer, type AppServer } from './index'
-import { ANUNCIOS, inicioCompas, SR_GUIA, textoDeFrase, zipConGuia } from './__fixtures__/sintetico'
+import { ANUNCIOS, generarClick, inicioCompas, SR, SR_GUIA, textoDeFrase, wav16, zipConGuia } from './__fixtures__/sintetico'
+import { crearRar5 } from './__fixtures__/rar'
 import type { EstadoBiblioteca, EstadoCompleto, PedidoVoz, ProyectoResumen } from '../shared/types'
 
 const TOKEN = 't'
@@ -164,6 +165,44 @@ test('biblioteca: importa sola, categorías por carpeta, mover, actualizar y no 
   server.biblioteca.escanear()
   await esperar(1500)
   assert.equal((await lista()).length, 0)
+})
+
+test('biblioteca con .rar: uno en partes se importa una sola vez, y al importar uno de afuera se copian todas sus partes', { timeout: 120000 }, async (t) => {
+  const { tmp, server, ack } = await entorno(t)
+  const bib = path.join(tmp, 'Biblioteca')
+  server.iniciarServicios(bib)
+  const lista = (): Promise<ProyectoResumen[]> => ack<ProyectoResumen[]>('projects:list', {})
+  const pistas = [
+    { nombre: '01 Click.wav', datos: wav16(generarClick(90, 4, 6), SR) },
+    { nombre: '02 Pad.wav', datos: wav16(new Float32Array(6 * SR).map((_, i) => 0.2 * Math.sin((2 * Math.PI * 220 * i) / SR)), SR) }
+  ]
+  const partes = crearRar5(pistas, { bytesPorVolumen: 300_000 })
+  assert.ok(partes.length >= 3)
+
+  // en partes, dentro de una categoria: una sola cancion "Rey de Reyes"
+  fs.mkdirSync(path.join(bib, 'Alabanza'))
+  partes.forEach((b, i) => fs.writeFileSync(path.join(bib, 'Alabanza', `Rey de Reyes.part${i + 1}.rar`), b))
+  // y un .rar comun
+  fs.writeFileSync(path.join(bib, 'Alabanza', 'Digno.rar'), crearRar5(pistas)[0])
+  server.biblioteca.escanear()
+  await esperarQue(async () => ((await lista()).length === 2 ? true : null), 60000)
+  const canciones = await lista()
+  assert.deepEqual(canciones.map((c) => [c.nombre, c.categoria]).sort(), [['Digno', 'Alabanza'], ['Rey de Reyes', 'Alabanza']])
+  assert.equal(server.biblioteca.estado().ultimoError, null)
+
+  // importar desde otra carpeta uno en partes (eligiendo la ultima): se copian todas a la biblioteca, sin reimportar
+  const afuera = path.join(tmp, 'Descargas')
+  fs.mkdirSync(afuera)
+  partes.forEach((b, i) => fs.writeFileSync(path.join(afuera, `Cuan Grande.part${i + 1}.rar`), b))
+  const r = await ack<{ ok: boolean; error?: string }>('project:load-from-zip', { filePath: path.join(afuera, `Cuan Grande.part${partes.length}.rar`) })
+  assert.equal(r.ok, true, r.error)
+  const copiadas = fs.readdirSync(bib).filter((f) => f.startsWith('Cuan Grande')).sort()
+  assert.deepEqual(copiadas, partes.map((_, i) => `Cuan Grande.part${i + 1}.rar`))
+  server.biblioteca.escanear()
+  await esperar(3000)
+  server.biblioteca.escanear()
+  await esperar(1500)
+  assert.deepEqual((await lista()).map((c) => c.nombre).sort(), ['Cuan Grande', 'Digno', 'Rey de Reyes'])
 })
 
 test('"Detectar secciones" reemplaza las existentes y el modelo de voz se informa si falta', { timeout: 60000 }, async (t) => {

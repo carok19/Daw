@@ -2,6 +2,19 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { EstadoBiblioteca, Proyecto } from '../shared/types'
 import { appBaseDir, proyectoExiste } from './projects'
+import { baseDeComprimido, esComprimido, volumenesDe } from './comprimidos'
+
+/** Tamaño y fecha de un comprimido; si es un .rar en partes, de todas juntas (asi se nota si falta copiar alguna). */
+function firmaDe(abs: string): { size: number; mtimeMs: number } {
+  let size = 0
+  let mtimeMs = 0
+  for (const v of volumenesDe(abs)) {
+    const st = fs.statSync(v)
+    size += st.size
+    mtimeMs = Math.max(mtimeMs, st.mtimeMs)
+  }
+  return { size, mtimeMs }
+}
 
 /**
  * Biblioteca en carpetas: una carpeta (por defecto Documentos/Multitrack
@@ -151,8 +164,9 @@ export class Biblioteca {
     this.hooks.estado(this.estado())
   }
 
-  private listarZips(): Map<string, fs.Stats> {
-    const res = new Map<string, fs.Stats>()
+  /** Canciones de la carpeta: .zip y .rar (de un .rar en partes, la primera). */
+  private listarZips(): Map<string, { size: number; mtimeMs: number }> {
+    const res = new Map<string, { size: number; mtimeMs: number }>()
     const raiz = this.datos.ruta
     if (!raiz) return res
     const recorrer = (dir: string, prof: number): void => {
@@ -166,9 +180,9 @@ export class Biblioteca {
         if (e.name.startsWith('.') || e.name.startsWith('~$')) continue
         const abs = path.join(dir, e.name)
         if (e.isDirectory() && prof < PROFUNDIDAD_MAX) recorrer(abs, prof + 1)
-        else if (e.isFile() && e.name.toLowerCase().endsWith('.zip')) {
+        else if (e.isFile() && esComprimido(e.name)) {
           try {
-            res.set(path.relative(raiz, abs), fs.statSync(abs))
+            res.set(path.relative(raiz, abs), firmaDe(abs))
           } catch {
             // se borro en el medio
           }
@@ -246,7 +260,7 @@ export class Biblioteca {
         this.importando = rel
         this.avisar()
         try {
-          const st = fs.statSync(abs)
+          const st = firmaDe(abs)
           const p = await this.hooks.importar(abs, categoriaDe(rel), reemplazarId)
           this.datos.archivos[rel] = { proyectoId: p.id, tam: st.size, mtimeMs: Math.round(st.mtimeMs) }
           this.guardar()
@@ -257,7 +271,7 @@ export class Biblioteca {
           this.hooks.error(mensaje)
           // no reintentar en cada escaneo un zip roto: queda registrado hasta que cambie
           try {
-            const st = fs.statSync(abs)
+            const st = firmaDe(abs)
             this.datos.archivos[rel] = { proyectoId: null, tam: st.size, mtimeMs: Math.round(st.mtimeMs) }
             this.guardar()
           } catch {
@@ -275,25 +289,32 @@ export class Biblioteca {
     }
   }
 
-  /** Una cancion importada con el dialogo: se guarda una copia del zip en la biblioteca, ya registrada. */
-  registrarImportada(zipOrigen: string, proyectoId: string): void {
+  /**
+   * Una cancion importada con el dialogo: se guarda una copia del comprimido
+   * (todas sus partes, si es un .rar en partes) en la biblioteca, ya registrada.
+   */
+  registrarImportada(origen: string, proyectoId: string): void {
     const raiz = this.datos.ruta
     if (!raiz) return
-    const relOrigen = path.relative(raiz, zipOrigen)
+    const relOrigen = path.relative(raiz, origen)
     if (!relOrigen.startsWith('..') && !path.isAbsolute(relOrigen)) {
       // ya estaba dentro de la biblioteca
-      const st = fs.statSync(zipOrigen)
+      const st = firmaDe(origen)
       this.datos.archivos[relOrigen] = { proyectoId, tam: st.size, mtimeMs: Math.round(st.mtimeMs) }
       this.guardar()
       return
     }
-    const base = path.basename(zipOrigen, '.zip')
-    let rel = `${base}.zip`
-    for (let n = 2; fs.existsSync(path.join(raiz, rel)); n++) rel = `${base} (${n}).zip`
+    const base = baseDeComprimido(origen)
+    const volumenes = volumenesDe(origen)
+    // ".zip", ".part1.rar", ".r00"...: lo que sigue al nombre en cada parte
+    const sufijos = volumenes.map((v) => path.basename(v).slice(base.length))
+    let nuevoBase = base
+    for (let n = 2; fs.existsSync(path.join(raiz, `${nuevoBase}${sufijos[0]}`)); n++) nuevoBase = `${base} (${n})`
+    const rel = `${nuevoBase}${sufijos[0]}`
     this.ignorar.add(rel)
     try {
-      fs.copyFileSync(zipOrigen, path.join(raiz, rel))
-      const st = fs.statSync(path.join(raiz, rel))
+      volumenes.forEach((v, i) => fs.copyFileSync(v, path.join(raiz, `${nuevoBase}${sufijos[i]}`)))
+      const st = firmaDe(path.join(raiz, rel))
       this.datos.archivos[rel] = { proyectoId, tam: st.size, mtimeMs: Math.round(st.mtimeMs) }
       this.guardar()
     } catch {

@@ -179,6 +179,8 @@ export function marcadoresDeTexto(texto: string): MarcadorArchivo[] {
 }
 
 const EXT_TEXTO = new Set(['.txt', '.csv', '.tsv', '.labels', '.markers'])
+/** Archivos (no de audio) de los que se pueden sacar marcadores: se extraen del comprimido si son chicos. */
+export const EXTENSIONES_MARCADORES = new Set([...EXT_TEXTO, '.mid', '.midi'])
 
 /**
  * Busca marcadores en las entradas del zip. Se queda con la primera fuente

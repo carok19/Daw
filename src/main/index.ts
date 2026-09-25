@@ -2,6 +2,7 @@ import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, shell } from 'electron'
 import { createServer, type AppServer } from '../server'
 import { getLanIp } from '../server/network'
+import { EXTENSIONES_COMPRIMIDO } from '../server/comprimidos'
 
 const PUERTO_PREFERIDO = 4848
 
@@ -79,9 +80,9 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('dialog:pick-zip', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
-      title: 'Seleccionar canción (.zip)',
+      title: 'Seleccionar canción (.zip o .rar)',
       properties: ['openFile'],
-      filters: [{ name: 'Archivo ZIP', extensions: ['zip'] }]
+      filters: [{ name: 'Canción comprimida (.zip, .rar)', extensions: EXTENSIONES_COMPRIMIDO }]
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]

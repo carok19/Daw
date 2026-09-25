@@ -27,6 +27,7 @@ import type {
 import type { AppState } from './state'
 import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ImportError, ZipSinPistasError } from './zip'
+import { primerVolumen } from './comprimidos'
 import {
   borrarSetlist,
   cargarSetlist,
@@ -416,14 +417,15 @@ export function registerSocketHandlers(
       if (
         typeof filePath !== 'string' ||
         !path.isAbsolute(filePath) ||
-        path.extname(filePath).toLowerCase() !== '.zip' ||
+        !['.zip', '.rar'].includes(path.extname(filePath).toLowerCase()) ||
         !fs.existsSync(filePath)
       ) {
-        return ack?.({ ok: false, error: 'Elegí un archivo .zip válido' })
+        return ack?.({ ok: false, error: 'Elegí un archivo .zip o .rar válido' })
       }
       try {
-        const proyecto = await importarZip(filePath, '', null, (p: ImportProgreso) => socket.emit('import:progreso', p))
-        biblioteca.registrarImportada(filePath, proyecto.id)
+        const primero = primerVolumen(filePath)
+        const proyecto = await importarZip(primero, '', null, (p: ImportProgreso) => socket.emit('import:progreso', p))
+        biblioteca.registrarImportada(primero, proyecto.id)
         // importar mientras suena una cancion no la corta: la nueva queda al final del setlist
         const activar = !algoSuena()
         state.abrirProyecto(proyecto, activar)
@@ -434,7 +436,7 @@ export function registerSocketHandlers(
         const mensaje =
           err instanceof ZipSinPistasError || err instanceof ImportError
             ? err.message
-            : 'No se pudo cargar el archivo .zip'
+            : 'No se pudo cargar el archivo'
         if (!(err instanceof ZipSinPistasError)) console.error('[import]', err)
         ack?.({ ok: false, error: mensaje })
       }

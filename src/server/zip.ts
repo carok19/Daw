@@ -2,13 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
-import AdmZip from 'adm-zip'
 import type { ImportProgreso, Marcador, Proyecto, Pista } from '../shared/types'
 import { FORMATO_PROYECTO_ACTUAL } from '../shared/types'
 import { colorPorIndice, deleteProyecto, loadProyecto, projectAudioDir, projectDir, proyectoExiste, saveProyecto } from './projects'
 import { EXTENSIONES_AUDIO, enParalelo, normalizarAWav } from './audio'
-import { marcadoresDelZip } from './analisis/archivos'
+import { EXTENSIONES_MARCADORES, marcadoresDelZip } from './analisis/archivos'
 import { clavePista } from './clavePista'
+import { baseDeComprimido, ErrorComprimido, extraerComprimido, primerVolumen } from './comprimidos'
 
 export class ZipSinPistasError extends Error {
   constructor() {
@@ -19,16 +19,10 @@ export class ZipSinPistasError extends Error {
 
 export class ImportError extends Error {}
 
-/** Limites contra zips malformados o maliciosos ("zip bombs"). */
+/** Limites contra comprimidos malformados o maliciosos ("zip bombs"). */
 const MAX_BYTES_POR_PISTA = 2 * 1024 ** 3
 const MAX_BYTES_TOTAL = 12 * 1024 ** 3
 const MAX_PISTAS = 64
-
-function esArchivoBasura(entryName: string): boolean {
-  // Recursos de macOS dentro del zip (AppleDouble / __MACOSX): no son archivos reales
-  const base = path.basename(entryName)
-  return base.startsWith('._') || base.startsWith('.DS_Store') || entryName.split('/').includes('__MACOSX')
-}
 
 /**
  * "01_Click" -> "Click", "02 - Guia" -> "Guia", "Bajo_DI" -> "Bajo DI". El
@@ -43,8 +37,9 @@ export function nombrePistaDesdeArchivo(baseNameSinExt: string): string {
   return limpio || baseNameSinExt
 }
 
+/** "Santo_Santo.zip" / "Santo Santo.part1.rar" -> "Santo Santo" */
 export function nombreCancionDesdeZip(zipPath: string): string {
-  const base = path.basename(zipPath, path.extname(zipPath))
+  const base = baseDeComprimido(zipPath)
   return base.replace(/_/g, ' ').replace(/\s+/g, ' ').trim() || base
 }
 
@@ -66,31 +61,14 @@ export interface OpcionesImport {
 }
 
 /**
- * Descomprime el zip, filtra archivos de audio, los normaliza a WAV (ver
- * audio.ts), lee los marcadores que traiga (WAV/MIDI/texto, ver
- * analisis/archivos.ts) y crea (o actualiza) la cancion. Si algo falla a mitad
- * de camino, no deja nada a medias en disco.
+ * Descomprime la cancion (.zip o .rar, en otro proceso: ver comprimidos.ts),
+ * normaliza las pistas a WAV (ver audio.ts), lee los marcadores que traiga
+ * (WAV/MIDI/texto, ver analisis/archivos.ts) y crea (o actualiza) la cancion.
+ * Si algo falla a mitad de camino, no deja nada a medias en disco.
  */
-export async function crearProyectoDesdeZip(zipPath: string, opciones: OpcionesImport = {}): Promise<Proyecto> {
+export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: OpcionesImport = {}): Promise<Proyecto> {
   const { onProgreso } = opciones
-  let zip: AdmZip
-  try {
-    zip = new AdmZip(zipPath)
-  } catch {
-    throw new ImportError('No se pudo abrir el archivo .zip (está dañado o no es un zip)')
-  }
-  const entradas = zip.getEntries().filter((e) => !e.isDirectory && !esArchivoBasura(e.entryName))
-  const entradasAudio = entradas
-    .filter((e) => EXTENSIONES_AUDIO.has(path.extname(e.entryName).toLowerCase()))
-    .sort((a, b) => a.entryName.localeCompare(b.entryName, 'es', { numeric: true }))
-
-  if (entradasAudio.length === 0) throw new ZipSinPistasError()
-  if (entradasAudio.length > MAX_PISTAS) throw new ImportError(`Demasiadas pistas en el zip (máximo ${MAX_PISTAS})`)
-  const totalDeclarado = entradasAudio.reduce((acc, e) => acc + e.header.size, 0)
-  if (totalDeclarado > MAX_BYTES_TOTAL || entradasAudio.some((e) => e.header.size > MAX_BYTES_POR_PISTA)) {
-    throw new ImportError('El zip es demasiado grande')
-  }
-
+  const zipPath = primerVolumen(rutaArchivo)
   const anterior = opciones.reemplazarId && proyectoExiste(opciones.reemplazarId) ? loadProyecto(opciones.reemplazarId) : null
   const id = anterior?.id ?? crypto.randomUUID()
   const audioFinal = projectAudioDir(id)
@@ -100,19 +78,37 @@ export async function crearProyectoDesdeZip(zipPath: string, opciones: OpcionesI
   fs.mkdirSync(audioDir, { recursive: true })
 
   try {
-    onProgreso?.({ etapa: 'extrayendo', actual: 0, total: entradasAudio.length })
+    onProgreso?.({ etapa: 'extrayendo', actual: 0, total: 0 })
+    let extraidos
+    try {
+      extraidos = await extraerComprimido(
+        {
+          ruta: zipPath,
+          destino: tmpDir,
+          extensionesAudio: [...EXTENSIONES_AUDIO],
+          extensionesExtra: [...EXTENSIONES_MARCADORES],
+          maxPistas: MAX_PISTAS,
+          maxBytesPorPista: MAX_BYTES_POR_PISTA,
+          maxBytesTotal: MAX_BYTES_TOTAL
+        },
+        (actual, total) => onProgreso?.({ etapa: 'extrayendo', actual, total })
+      )
+    } catch (err) {
+      if (err instanceof ErrorComprimido) throw err.codigo === 'sin-pistas' ? new ZipSinPistasError() : new ImportError(err.message)
+      throw err
+    }
+    const esAudio = (nombre: string): boolean => EXTENSIONES_AUDIO.has(path.extname(nombre).toLowerCase())
+    const audio = extraidos.filter((e) => esAudio(e.nombre)).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { numeric: true }))
     const nombresUsados = new Set<string>()
-    const tareas = entradasAudio.map((entry, i) => {
-      const baseName = path.basename(entry.entryName)
+    const tareas = audio.map((e) => {
+      const baseName = path.basename(e.nombre)
       const ext = path.extname(baseName)
       const base = nombreArchivoSeguro(path.basename(baseName, ext))
       let destino = `${base}.wav`
       let n = 1
       while (nombresUsados.has(destino.toLowerCase())) destino = `${base}_${n++}.wav`
       nombresUsados.add(destino.toLowerCase())
-      const origenTmp = path.join(tmpDir, `${i}${ext.toLowerCase()}`)
-      fs.writeFileSync(origenTmp, entry.getData())
-      return { origenTmp, destino, nombre: nombrePistaDesdeArchivo(path.basename(baseName, ext)) }
+      return { origenTmp: e.ruta, destino, nombre: nombrePistaDesdeArchivo(path.basename(baseName, ext)) }
     })
 
     let hechas = 0
@@ -130,7 +126,7 @@ export async function crearProyectoDesdeZip(zipPath: string, opciones: OpcionesI
     // marcadores que ya traen los archivos (se leen de los originales, antes de convertir)
     const marcadoresArchivo = marcadoresDelZip(
       [
-        ...entradas.filter((e) => !EXTENSIONES_AUDIO.has(path.extname(e.entryName).toLowerCase())).map((e) => ({ nombre: e.entryName, datos: () => e.getData() })),
+        ...extraidos.filter((e) => !esAudio(e.nombre)).map((e) => ({ nombre: e.nombre, datos: () => fs.readFileSync(e.ruta) })),
         ...tareas.slice(0, 2).map((t) => ({ nombre: t.origenTmp, datos: () => fs.readFileSync(t.origenTmp) }))
       ],
       duracionTotalMs

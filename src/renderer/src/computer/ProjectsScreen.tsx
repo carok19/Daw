@@ -13,7 +13,7 @@ interface Props {
 }
 
 function textoProgreso(p: ImportProgreso): string {
-  if (p.etapa === 'extrayendo') return 'Descomprimiendo el zip…'
+  if (p.etapa === 'extrayendo') return p.total ? `Descomprimiendo ${p.actual}/${p.total}…` : 'Descomprimiendo…'
   return `Preparando pistas ${p.actual}/${p.total}${p.pista ? ` — ${p.pista}` : ''}`
 }
 
@@ -235,7 +235,7 @@ export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerra
           />
           <div className="barra-busqueda">
             <button className="btn-primario" onClick={importar} disabled={!!ocupado}>
-              <FileArchive size={16} /> {ocupado === 'importar' ? 'Importando…' : 'Importar .zip'}
+              <FileArchive size={16} /> {ocupado === 'importar' ? 'Importando…' : 'Importar .zip / .rar'}
             </button>
             <input
               type="search"
@@ -283,7 +283,7 @@ export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerra
             <p className="vacio">
               {busqueda
                 ? 'No hay canciones con ese nombre.'
-                : 'Todavía no hay canciones. Importá un .zip o copialo en la carpeta de la biblioteca.'}
+                : 'Todavía no hay canciones. Importá un .zip o .rar, o copialo en la carpeta de la biblioteca.'}
             </p>
           ) : (
             <ul className="lista">
@@ -433,7 +433,7 @@ function BarraBiblioteca({
       </div>
       {estado ?? (
         <span className="biblioteca-estado">
-          Copiá los .zip acá y se importan solos (una pista por archivo: WAV, MP3, M4A, AIFF, FLAC u OGG). Usá subcarpetas para
+          Copiá los .zip o .rar acá y se importan solos (una pista por archivo: WAV, MP3, M4A, AIFF, FLAC u OGG). Usá subcarpetas para
           ordenarlas: <i>Adoración</i>, <i>Alabanza</i>, <i>Navidad</i>…
         </span>
       )}

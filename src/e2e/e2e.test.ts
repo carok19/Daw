@@ -21,22 +21,29 @@ import { createServer, type AppServer } from '../server'
 import { rutaFfmpeg } from '../server/audio'
 import { buildEstadoCompleto } from '../server/estado'
 import { ANUNCIOS, inicioCompas, zipConGuia } from '../server/__fixtures__/sintetico'
+import { crearRar5 } from '../server/__fixtures__/rar'
 
 const RENDERER = path.resolve(__dirname, '../renderer')
 const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-function generarZip(dir: string, nombre: string, pistas: [string, number][], segundos: number, ext: 'wav' | 'mp3'): string {
+/** Cancion de prueba comprimida (.zip, o .rar como las que se bajan de internet). */
+function generarZip(dir: string, nombre: string, pistas: [string, number][], segundos: number, ext: 'wav' | 'mp3', formato: 'zip' | 'rar' = 'zip'): string {
   const ffmpeg = rutaFfmpeg()
   assert.ok(ffmpeg, 'hace falta ffmpeg')
-  const zip = new AdmZip()
+  const archivos: { nombre: string; datos: Buffer }[] = []
   for (const [pista, freq] of pistas) {
     const archivo = path.join(dir, `${pista}.${ext}`)
     const r: SpawnSyncReturns<Buffer> = spawnSync(ffmpeg!, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=${freq}:duration=${segundos}`, '-ac', '2', archivo])
     assert.equal(r.status, 0, r.stderr?.toString())
-    zip.addFile(path.basename(archivo), fs.readFileSync(archivo))
+    archivos.push({ nombre: path.basename(archivo), datos: fs.readFileSync(archivo) })
   }
-  const destino = path.join(dir, `${nombre}.zip`)
-  zip.writeZip(destino)
+  const destino = path.join(dir, `${nombre}.${formato}`)
+  if (formato === 'rar') fs.writeFileSync(destino, crearRar5(archivos)[0])
+  else {
+    const zip = new AdmZip()
+    for (const a of archivos) zip.addFile(a.nombre, a.datos)
+    zip.writeZip(destino)
+  }
   return destino
 }
 
@@ -126,7 +133,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-e2e-'))
   process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
   const zipWav = generarZip(tmp, 'Cuan Grande Es El', [['01_Click', 1000], ['02_Guia', 660], ['03_Bajo', 82], ['04_Pad', 330]], 40, 'wav')
-  const zipMp3 = generarZip(tmp, 'Rey de Reyes', [['Click', 900], ['Guia', 550], ['Bajo', 110]], 25, 'mp3')
+  const zipMp3 = generarZip(tmp, 'Rey de Reyes', [['Click', 900], ['Guia', 550], ['Bajo', 110]], 25, 'mp3', 'rar')
 
   const server: AppServer = createServer(RENDERER, { compuToken: 'e2e' })
   const port = await server.start(0)
@@ -179,7 +186,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
   }
 
-  await t.test('importar WAV y MP3 (se convierten, colores distintos, nombres limpios)', async () => {
+  await t.test('importar un .zip con WAV y un .rar con MP3 (se convierten, colores distintos, nombres limpios)', async () => {
     await importar(zipWav)
     await importar(zipMp3)
     assert.deepEqual(await compu.locator('.setlist-nombre').allTextContents(), ['Cuan Grande Es El', 'Rey de Reyes'])

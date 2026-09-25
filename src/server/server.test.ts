@@ -10,6 +10,8 @@ import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
 import { createServer, type AppServer } from './index'
 import { rutaFfmpeg, leerInfoWav } from './audio'
 import { nombrePistaDesdeArchivo } from './zip'
+import { crearRar4, crearRar5 } from './__fixtures__/rar'
+import { parseWavHeader } from '../shared/wav'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
   ClockSyncAck,
@@ -338,6 +340,79 @@ test('zip sin audio o dañado no crea proyecto', async (t) => {
   const lista = await emitAck<ProyectoResumen[]>(compu, 'projects:list', {})
   assert.equal(lista.length, 0)
 
+  await env.cerrar()
+})
+
+test('canciones en .rar: RAR5, RAR4, en partes (eligiendo cualquier parte) y errores claros', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const a = audiosDePrueba()
+  const dir = tmpDir('multitrack-rar-')
+  const importar = (ruta: string): Promise<{ ok: boolean; error?: string }> => emitAck(compu, 'project:load-from-zip', { filePath: ruta }, 60000)
+  const escribir = (nombre: string, datos: Buffer): string => {
+    const ruta = path.join(dir, nombre)
+    fs.writeFileSync(ruta, datos)
+    return ruta
+  }
+
+  // RAR5 con subcarpeta, nombres con acentos, un MP3, marcadores en texto y basura de macOS
+  const [rar5] = crearRar5([
+    { nombre: 'Santo Santo/01 Click.wav', datos: fs.readFileSync(a.wav2s) },
+    { nombre: 'Santo Santo/02 Guía.mp3', datos: fs.readFileSync(a.mp3Dual) },
+    { nombre: 'Santo Santo/marcadores.txt', datos: Buffer.from('0:00.5 Intro\n0:01.2 Coro\n') },
+    { nombre: '__MACOSX/Santo Santo/._01 Click.wav', datos: Buffer.from('basura') }
+  ])
+  let r = await importar(escribir('Santo_Santo.rar', rar5))
+  assert.equal(r.ok, true, r.error)
+  let e = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.equal(e.proyectoActivo!.nombre, 'Santo Santo')
+  assert.deepEqual(e.proyectoActivo!.pistas.map((p) => p.nombre), ['Click', 'Guía'])
+  assert.deepEqual(e.proyectoActivo!.marcadores.map((m) => [m.nombre, m.tiempoMs, m.origen]), [['Intro', 500, 'archivo'], ['Coro', 1200, 'archivo']])
+  const resp = await fetch(`http://localhost:${env.port}/media/${e.proyectoActivo!.id}/${e.proyectoActivo!.pistas[1].archivo}`)
+  assert.equal(parseWavHeader(await resp.arrayBuffer()).bitsPerSample, 16, 'el MP3 del .rar quedó convertido a WAV')
+
+  // RAR4 (el formato de WinRAR viejo)
+  r = await importar(escribir('Viejo.rar', crearRar4([{ nombre: 'Viejo\\01 Bajo.wav', datos: fs.readFileSync(a.wav4s) }])))
+  assert.equal(r.ok, true, r.error)
+  e = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.deepEqual(e.proyectoActivo!.pistas.map((p) => p.nombre), ['Bajo'])
+  assert.ok(Math.abs(e.proyectoActivo!.duracionTotalMs - 4000) < 50)
+
+  // .rar en partes: se puede elegir cualquier parte, se arranca por la primera
+  const partes = crearRar5(
+    [
+      { nombre: '01 Click.wav', datos: fs.readFileSync(a.wav2s) },
+      { nombre: '02 Pad.wav', datos: fs.readFileSync(a.wav4s) }
+    ],
+    { bytesPorVolumen: 200_000 }
+  )
+  assert.ok(partes.length >= 3)
+  partes.forEach((p, i) => escribir(`Rey de Reyes.part${i + 1}.rar`, p))
+  r = await importar(path.join(dir, 'Rey de Reyes.part2.rar'))
+  assert.equal(r.ok, true, r.error)
+  e = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.equal(e.proyectoActivo!.nombre, 'Rey de Reyes')
+  assert.deepEqual(e.proyectoActivo!.pistas.map((p) => p.nombre), ['Click', 'Pad'])
+
+  // errores: parte que falta, contraseña, dañado
+  const incompleto = tmpDir('multitrack-rar-')
+  fs.writeFileSync(path.join(incompleto, 'Mitad.part1.rar'), partes[0])
+  fs.writeFileSync(path.join(incompleto, 'Mitad.part3.rar'), partes[2])
+  r = await importar(path.join(incompleto, 'Mitad.part1.rar'))
+  assert.equal(r.ok, false)
+  assert.match(r.error ?? '', /Falta una parte/)
+  r = await importar(escribir('Secreto.rar', crearRar5([{ nombre: 'click.wav', datos: fs.readFileSync(a.wav2s) }], { cifrado: true })[0]))
+  assert.equal(r.ok, false)
+  assert.match(r.error ?? '', /contraseña/)
+  r = await importar(escribir('Roto.rar', Buffer.from('Rar!\x1a\x07\x01\x00 esto no es un rar de verdad')))
+  assert.equal(r.ok, false)
+  assert.match(r.error ?? '', /dañado|incompleto/)
+  r = await importar(escribir('Solo texto.rar', crearRar5([{ nombre: 'leeme.txt', datos: Buffer.from('hola') }])[0]))
+  assert.equal(r.ok, false)
+  assert.match(r.error ?? '', /No se encontraron pistas/)
+
+  const lista = await emitAck<ProyectoResumen[]>(compu, 'projects:list', {})
+  assert.deepEqual(lista.map((p) => p.nombre).sort(), ['Rey de Reyes', 'Santo Santo', 'Viejo'])
   await env.cerrar()
 })
 

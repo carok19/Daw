@@ -61,3 +61,11 @@ await esbuild.build({
   outfile: 'out/main/modelos-cli.cjs',
   logLevel: 'warning'
 })
+
+// proceso aparte que descomprime .zip/.rar (ver src/server/comprimidos.ts)
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/server/extraerProceso.ts'],
+  outfile: 'out/main/extraer.cjs',
+  logLevel: 'warning'
+})
