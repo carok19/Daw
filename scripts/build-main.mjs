@@ -30,3 +30,11 @@ if (existsSync('src/server/server.test.ts')) {
     outfile: 'out/main/server.test.cjs'
   })
 }
+
+if (existsSync('src/e2e/e2e.test.ts')) {
+  await esbuild.build({
+    ...common,
+    entryPoints: ['src/e2e/e2e.test.ts'],
+    outfile: 'out/main/e2e.test.cjs'
+  })
+}

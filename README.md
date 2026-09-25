@@ -41,6 +41,11 @@ culto). `MULTITRACK_APP_DIR` cambia esa carpeta (lo usan los tests).
   Socket.IO + ffmpeg reales, clientes "compu" y "celular" por socket): import
   de WAV/MP3, seguridad, sincronización, loop, fin de canción, dispositivos,
   sesión, setlists, migración de canciones viejas.
+- `npm run test:e2e` — prueba de punta a punta con la interfaz real en
+  Chromium: una compu y dos celulares; importa WAV y MP3, reproduce, marca
+  secciones, salta, repite secciones, bloquea, cierra la canción que suena, y
+  mide el desfase real de cada celular contra el servidor (tiene que quedar
+  por debajo de 20 ms). La primera vez: `npx playwright install chromium`.
 - `npm run dev:renderer` — solo la interfaz en un navegador (sin servidor).
 - Con `?debug` en la URL del celular se expone `window.__mt` (motor, socket y
   estado) para diagnosticar en pruebas de campo.

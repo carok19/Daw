@@ -11,12 +11,13 @@
     "build:main": "node scripts/build-main.mjs",
     "build": "npm run build:renderer && npm run build:main",
     "start": "npm run build && electron .",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p src/renderer/tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.e2e.json && tsc --noEmit -p src/renderer/tsconfig.json",
     "test:server": "npm run build:main && node --test out/main/server.test.cjs",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:linux": "npm run build && electron-builder --linux"
+    "dist:linux": "npm run build && electron-builder --linux",
+    "test:e2e": "npm run build && node --test --test-reporter=spec out/main/e2e.test.cjs"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",
@@ -37,6 +38,7 @@
     "esbuild": "^0.28.2",
     "lucide-react": "^1.48.0",
     "nosleep.js": "^0.12.0",
+    "playwright": "^1.56.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
