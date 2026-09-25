@@ -64,14 +64,26 @@ function escribirJson(ruta: string, datos: unknown): void {
   fs.renameSync(tmp, ruta)
 }
 
+/**
+ * Un solo objeto en memoria por cancion: el setlist, el analisis automatico y
+ * la biblioteca modifican siempre el mismo (nunca dos copias que se pisen al
+ * guardar).
+ */
+const enMemoria = new Map<string, Proyecto>()
+
 export function saveProyecto(proyecto: Proyecto): void {
   fs.mkdirSync(projectDir(proyecto.id), { recursive: true })
   escribirJson(projectJsonPath(proyecto.id), proyecto)
+  enMemoria.set(proyecto.id, proyecto)
 }
 
 export function loadProyecto(id: string): Proyecto {
+  const cargado = enMemoria.get(id)
+  if (cargado && fs.existsSync(projectJsonPath(id))) return cargado
   const raw = fs.readFileSync(projectJsonPath(id), 'utf-8')
-  return JSON.parse(raw) as Proyecto
+  const proyecto = JSON.parse(raw) as Proyecto
+  enMemoria.set(id, proyecto)
+  return proyecto
 }
 
 export function proyectoExiste(id: string): boolean {
@@ -86,14 +98,7 @@ export function listProyectos(): ProyectoResumen[] {
     if (!entry.isDirectory() || !esIdValido(entry.name)) continue
     try {
       const proyecto = loadProyecto(entry.name)
-      resumenes.push({
-        id: proyecto.id,
-        nombre: proyecto.nombre,
-        creadoEn: proyecto.creadoEn,
-        duracionTotalMs: proyecto.duracionTotalMs,
-        cantidadPistas: proyecto.pistas.length,
-        cantidadMarcadores: proyecto.marcadores.length
-      })
+      resumenes.push(resumenDe(proyecto))
     } catch {
       // carpeta corrupta o incompleta: se ignora
     }
@@ -102,7 +107,24 @@ export function listProyectos(): ProyectoResumen[] {
   return resumenes
 }
 
+export function resumenDe(proyecto: Proyecto): ProyectoResumen {
+  return {
+    id: proyecto.id,
+    nombre: proyecto.nombre,
+    creadoEn: proyecto.creadoEn,
+    duracionTotalMs: proyecto.duracionTotalMs,
+    cantidadPistas: proyecto.pistas.length,
+    cantidadMarcadores: proyecto.marcadores.length,
+    categoria: proyecto.categoria ?? '',
+    usadoEn: proyecto.usadoEn ?? null,
+    bpm: proyecto.tempo?.bpm ?? null,
+    compas: proyecto.tempo?.compas ?? null,
+    analisis: proyecto.analisis?.estado ?? null
+  }
+}
+
 export function deleteProyecto(id: string): void {
+  enMemoria.delete(id)
   const dir = projectDir(id)
   if (fs.existsSync(dir)) {
     fs.rmSync(dir, { recursive: true, force: true })

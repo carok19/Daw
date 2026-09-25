@@ -82,7 +82,7 @@ async function entorno(t: { after(fn: () => Promise<void> | void): void }, appDi
   process.env.MULTITRACK_APP_DIR = appDir
   const rendererDir = tmpDir('multitrack-renderer-')
   fs.writeFileSync(path.join(rendererDir, 'index.html'), '<html></html>')
-  const server = createServer(rendererDir, { compuToken: TOKEN })
+  const server = createServer(rendererDir, { compuToken: TOKEN, analisisAutomatico: false })
   const port = await server.start(0)
   const sockets: ClientSocket[] = []
   let cerrado = false

@@ -21,6 +21,49 @@ export interface Marcador {
   nombre: string
   tiempoMs: number
   color?: string
+  /** de donde salio: puesto a mano, leido de los archivos del zip, o detectado por la voz guia */
+  origen?: 'manual' | 'archivo' | 'guia'
+}
+
+/** Tempo detectado a partir de la pista de click. */
+export interface TempoProyecto {
+  bpm: number
+  /** pulsos por compas (4 = 4/4, 3 = 3/4, 6 = 6/8...) */
+  compas: number
+  /** inicio (ms) de cada compas, de principio a fin de la cancion */
+  compasesMs: number[]
+  clickPistaId: string | null
+  /** false = no se distinguio el acento del "1": los compases se contaron desde el primer golpe */
+  acentoClaro: boolean
+}
+
+/** Frase hablada de la voz guia, recortada para reconocerla ("Verso uno", "Coro"...). */
+export interface CueVoz {
+  n: number
+  inicioMs: number
+  finMs: number
+  /** audio 16 kHz mono float32 servido en /media/<proyecto>/analisis/cue-<n>.f32 */
+  archivo: string
+}
+
+export type EstadoAnalisis =
+  | 'analizando' // click/tempo/guia en curso en el servidor
+  | 'esperando-voz' // falta reconocer las frases de la guia (lo hace la compu)
+  | 'reconociendo'
+  | 'falta-modelo' // no esta descargado el reconocedor de voz
+  | 'listo'
+  | 'sin-guia'
+  | 'error'
+
+export interface AnalisisProyecto {
+  estado: EstadoAnalisis
+  /** de donde salieron las secciones automaticas */
+  fuente: 'archivo' | 'guia' | null
+  guiaPistaId: string | null
+  cues?: CueVoz[]
+  mensaje?: string
+  /** si al terminar se deben reemplazar las secciones existentes (pedido explicito "Detectar") */
+  reemplazar?: boolean
 }
 
 /** Version del formato en disco: 2 = todas las pistas normalizadas a WAV + duracion calculada por el servidor. */
@@ -36,6 +79,14 @@ export interface Proyecto {
   /** duracion de la pista mas larga */
   duracionTotalMs: number
   formato?: number
+  tempo?: TempoProyecto | null
+  analisis?: AnalisisProyecto
+  /** subcarpeta de la biblioteca ("Adoración", "Navidad/2024"...) */
+  categoria?: string
+  /** ultima vez que se abrio en el setlist o se reprodujo (ISO) */
+  usadoEn?: string
+  /** sube cada vez que se reemplaza el audio (zip actualizado): los dispositivos descartan lo que tenian */
+  revision?: number
 }
 
 /** Resumen liviano de proyecto guardado en disco, para la lista de "Canciones guardadas". */
@@ -46,6 +97,39 @@ export interface ProyectoResumen {
   duracionTotalMs: number
   cantidadPistas: number
   cantidadMarcadores: number
+  categoria: string
+  usadoEn: string | null
+  bpm: number | null
+  compas: number | null
+  analisis: EstadoAnalisis | null
+}
+
+/** Estado de la carpeta de biblioteca (importacion automatica de .zip). */
+export interface EstadoBiblioteca {
+  ruta: string | null
+  /** canciones esperando/importandose */
+  pendientes: number
+  importando: string | null
+  /** true mientras se espera a que termine de sonar la cancion para importar */
+  esperandoSilencio: boolean
+  ultimoError: string | null
+}
+
+export type EstadoModeloVoz = 'listo' | 'falta' | 'descargando' | 'error'
+
+export interface InfoModeloVoz {
+  estado: EstadoModeloVoz
+  progreso?: number
+  mensaje?: string
+  /** URL base (del servidor local) desde donde el reconocedor carga el modelo */
+  url?: string
+}
+
+/** Pedido de reconocimiento de voz que la compu tiene que resolver. */
+export interface PedidoVoz {
+  proyectoId: string
+  nombre: string
+  cues: CueVoz[]
 }
 
 export interface SetlistResumen {

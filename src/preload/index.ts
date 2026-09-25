@@ -12,7 +12,11 @@ const electronAPI = {
   compuToken: ipcRenderer.sendSync('app:compu-token') as string,
   pickZipFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-zip'),
   getConnectionInfo: (): Promise<{ url: string; ip: string | null; port: number }> =>
-    ipcRenderer.invoke('app:connection-info')
+    ipcRenderer.invoke('app:connection-info'),
+  /** dialogo nativo para elegir la carpeta de la biblioteca */
+  elegirCarpeta: (): Promise<string | null> => ipcRenderer.invoke('biblioteca:elegir'),
+  /** abre la carpeta de la biblioteca en el explorador de archivos */
+  abrirCarpeta: (ruta: string): Promise<void> => ipcRenderer.invoke('biblioteca:abrir', ruta)
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

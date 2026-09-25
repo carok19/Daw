@@ -4,6 +4,8 @@ export interface ElectronAPI {
   compuToken: string
   pickZipFile(): Promise<string | null>
   getConnectionInfo(): Promise<{ url: string; ip: string | null; port: number }>
+  elegirCarpeta?(): Promise<string | null>
+  abrirCarpeta?(ruta: string): Promise<void>
 }
 
 declare global {

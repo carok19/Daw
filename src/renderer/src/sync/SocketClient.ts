@@ -102,7 +102,7 @@ export class SocketClient {
     this.socket.emit(evento, payload)
   }
 
-  private on<T>(evento: string, cb: (v: T) => void): Desuscribir {
+  on<T>(evento: string, cb: (v: T) => void): Desuscribir {
     this.socket.on(evento, cb)
     return () => this.socket.off(evento, cb)
   }

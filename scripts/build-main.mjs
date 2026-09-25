@@ -38,3 +38,19 @@ if (existsSync('src/e2e/e2e.test.ts')) {
     outfile: 'out/main/e2e.test.cjs'
   })
 }
+
+if (existsSync('src/server/analisis/analisis.test.ts')) {
+  await esbuild.build({
+    ...common,
+    entryPoints: ['src/server/analisis/analisis.test.ts'],
+    outfile: 'out/main/analisis.test.cjs'
+  })
+}
+
+if (existsSync('src/server/automatico.test.ts')) {
+  await esbuild.build({
+    ...common,
+    entryPoints: ['src/server/automatico.test.ts'],
+    outfile: 'out/main/automatico.test.cjs'
+  })
+}

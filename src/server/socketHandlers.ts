@@ -37,10 +37,14 @@ import {
   listProyectos,
   loadProyecto,
   migrarProyecto,
-  proyectoExiste
+  proyectoExiste,
+  saveProyecto
 } from './projects'
 import type { DeviceRegistry } from './devices'
 import { Transporte } from './transport'
+import { Analizador } from './analisis'
+import { Biblioteca } from './biblioteca'
+import type { ModelosVoz } from './modelos'
 
 export { MARGIN_MS, MARGIN_SIN_CELULARES_MS } from './transport'
 
@@ -71,7 +75,20 @@ function soloCompu(socket: Socket): boolean {
   return (socket.data as SocketData).origen === 'compu'
 }
 
-export function registerSocketHandlers(io: Server, state: AppState, devices: DeviceRegistry, compuToken: string): Transporte {
+export interface Servicios {
+  transporte: Transporte
+  analizador: Analizador
+  biblioteca: Biblioteca
+}
+
+export function registerSocketHandlers(
+  io: Server,
+  state: AppState,
+  devices: DeviceRegistry,
+  compuToken: string,
+  modelos: ModelosVoz,
+  analisisAutomatico = true
+): Servicios {
   function hayCelularesConectados(): boolean {
     for (const socket of io.sockets.sockets.values()) {
       if ((socket.data as SocketData).origen === 'celular') return true
@@ -94,6 +111,69 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
     return state.getActiveTab()?.playback.estado === 'playing'
   }
 
+  function aCompus(evento: string, payload: unknown): void {
+    for (const s of io.sockets.sockets.values()) if ((s.data as SocketData).origen === 'compu') s.emit(evento, payload)
+  }
+
+  // varios cambios seguidos (analisis, biblioteca) -> un solo estado completo
+  let estadoProgramado: NodeJS.Timeout | null = null
+  function emitirEstadoPronto(): void {
+    if (estadoProgramado) return
+    estadoProgramado = setTimeout(() => {
+      estadoProgramado = null
+      emitirEstado()
+    }, 80)
+  }
+
+  const analizador = new Analizador({
+    obtener(id) {
+      if (!proyectoExiste(id)) return null
+      const p = state.tabDeProyecto(id)?.proyecto ?? loadProyecto(id)
+      // si la cancion se borro mientras se analizaba, no se la "resucita" al guardar
+      return { proyecto: p, guardar: () => proyectoExiste(id) && saveProyecto(p) }
+    },
+    cambio(id, aviso) {
+      if (state.tabDeProyecto(id)) {
+        transporte.reprogramarTimers()
+        emitirEstadoPronto()
+      }
+      aCompus('proyectos:cambio', { proyectoId: id })
+      if (aviso) aCompus('aviso', { tipo: 'info', texto: aviso })
+    },
+    pedidosVoz: (pedidos) => aCompus('analisis:pedidos', pedidos),
+    puedeTrabajar: () => !algoSuena()
+  }, analisisAutomatico)
+
+  modelos.onCambio((info) => {
+    aCompus('modelo:estado', info)
+    if (info.estado === 'listo') aCompus('analisis:pedidos', analizador.pedidos())
+  })
+
+  async function importarZip(zip: string, categoria: string | undefined, reemplazarId: string | null, onProgreso?: (p: ImportProgreso) => void): Promise<Proyecto> {
+    const p = await crearProyectoDesdeZip(zip, { categoria, reemplazarId: reemplazarId ?? undefined, onProgreso })
+    analizador.encolar(p.id)
+    if (state.tabDeProyecto(p.id)) emitirEstadoPronto()
+    aCompus('proyectos:cambio', { proyectoId: p.id })
+    return p
+  }
+
+  const biblioteca = new Biblioteca({
+    async importar(zip, categoria, reemplazarId) {
+      const p = await importarZip(zip, categoria, reemplazarId)
+      aCompus('aviso', { tipo: 'info', texto: reemplazarId ? `Se actualizó “${p.nombre}” desde la biblioteca` : `Nueva canción en la biblioteca: “${p.nombre}”` })
+      return p
+    },
+    moverCategoria(id, categoria) {
+      const p = loadProyecto(id)
+      p.categoria = categoria
+      saveProyecto(p)
+      aCompus('proyectos:cambio', { proyectoId: id })
+    },
+    puedeTrabajar: () => !algoSuena(),
+    estado: (e) => aCompus('biblioteca:estado', e),
+    error: (mensaje) => aCompus('aviso', { tipo: 'error', texto: `Biblioteca: ${mensaje}` })
+  })
+
   /**
    * Abre (o activa si ya esta abierto) un proyecto guardado, migrandolo al
    * formato actual si hace falta. Una cancion NUEVA en el setlist nunca
@@ -109,6 +189,8 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
     const proyecto = await migrarProyecto(loadProyecto(id))
     const activarla = activar && !algoSuena()
     state.abrirProyecto(proyecto, activarla)
+    // canciones de versiones anteriores (sin analisis): se analizan en segundo plano
+    if (!proyecto.analisis) analizador.encolar(proyecto.id)
     return activarla
   }
 
@@ -125,6 +207,11 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
 
     devices.conectar(socket.id, origen, auth.deviceId, auth.nombre)
     emitirDispositivos()
+    if (origen === 'compu') {
+      socket.emit('modelo:estado', modelos.estado())
+      socket.emit('biblioteca:estado', biblioteca.estado())
+      socket.emit('analisis:pedidos', analizador.pedidos())
+    }
 
     socket.on('disconnect', () => {
       devices.desconectar(socket.id)
@@ -312,7 +399,8 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
         return ack?.({ ok: false, error: 'Elegí un archivo .zip válido' })
       }
       try {
-        const proyecto = await crearProyectoDesdeZip(filePath, (p: ImportProgreso) => socket.emit('import:progreso', p))
+        const proyecto = await importarZip(filePath, '', null, (p: ImportProgreso) => socket.emit('import:progreso', p))
+        biblioteca.registrarImportada(filePath, proyecto.id)
         // importar mientras suena una cancion no la corta: la nueva queda al final del setlist
         const activar = !algoSuena()
         state.abrirProyecto(proyecto, activar)
@@ -354,6 +442,8 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
         if (tab.tabId === state.activeTabId) transporte.detenerInmediato(tab)
         state.cerrarTab(tab.tabId)
       }
+      analizador.olvidar(payload.id)
+      biblioteca.olvidarProyecto(payload.id)
       deleteProyecto(payload.id)
       transporte.reprogramarTimers()
       emitirEstado()
@@ -403,6 +493,54 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
       }
     })
 
+    // ---- Analisis automatico (tempo, secciones por la voz guia) ----
+
+    socket.on('analisis:detectar', (payload: { proyectoId?: string }) => {
+      if (!soloCompu(socket) || !esIdValido(payload?.proyectoId) || !proyectoExiste(payload.proyectoId)) return
+      analizador.encolar(payload.proyectoId, true)
+    })
+
+    socket.on('analisis:progreso', (payload: { proyectoId?: string; hechos?: number; total?: number }) => {
+      if (!soloCompu(socket) || !esIdValido(payload?.proyectoId)) return
+      analizador.estadoVoz(payload.proyectoId, 'reconociendo')
+      aCompus('analisis:progreso', { proyectoId: payload.proyectoId, hechos: Number(payload.hechos) || 0, total: Number(payload.total) || 0 })
+    })
+
+    socket.on('analisis:textos', (payload: { proyectoId?: string; textos?: unknown }) => {
+      if (!soloCompu(socket) || !esIdValido(payload?.proyectoId) || !Array.isArray(payload.textos)) return
+      const textos = payload.textos
+        .filter((t): t is { n: number; texto: string } => !!t && typeof (t as { n: unknown }).n === 'number' && typeof (t as { texto: unknown }).texto === 'string')
+        .map((t) => ({ n: t.n, texto: t.texto.slice(0, 200) }))
+      analizador.aplicarTextos(payload.proyectoId, textos)
+    })
+
+    socket.on('analisis:fallo', (payload: { proyectoId?: string; motivo?: string; mensaje?: string }) => {
+      if (!soloCompu(socket) || !esIdValido(payload?.proyectoId)) return
+      analizador.estadoVoz(payload.proyectoId, payload.motivo === 'falta-modelo' ? 'falta-modelo' : 'error', typeof payload.mensaje === 'string' ? payload.mensaje.slice(0, 300) : undefined)
+    })
+
+    socket.on('modelo:descargar', () => {
+      if (!soloCompu(socket)) return
+      void modelos.descargar()
+    })
+
+    // ---- Biblioteca (carpeta vigilada) ----
+
+    socket.on('biblioteca:ruta', (payload: { ruta?: string }, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      try {
+        if (typeof payload?.ruta !== 'string') throw new Error('Ruta inválida')
+        biblioteca.setRuta(payload.ruta)
+        ack?.({ ok: true })
+      } catch (err) {
+        ack?.({ ok: false, error: (err as Error).message })
+      }
+    })
+
+    socket.on('biblioteca:escanear', () => {
+      if (soloCompu(socket)) biblioteca.escanear()
+    })
+
     socket.on('setlists:delete', (payload: { id?: string }, ack?: Ack<{ ok: boolean }>) => {
       if (!soloCompu(socket) || !esIdValido(payload?.id)) return ack?.({ ok: false })
       borrarSetlist(payload.id)
@@ -410,7 +548,7 @@ export function registerSocketHandlers(io: Server, state: AppState, devices: Dev
     })
   })
 
-  return transporte
+  return { transporte, analizador, biblioteca }
 }
 
 /** Reabre las canciones que estaban abiertas la ultima vez (si la app se cerro a mitad de un culto). */

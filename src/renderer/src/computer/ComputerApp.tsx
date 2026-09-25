@@ -178,7 +178,9 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             onLoop={controller.setLoop}
             onSiguienteCancion={() => cancionRelativa(1)}
             onRenombrar={(n) => controller.renameProject(proyecto.id, n)}
-            onMoverMarcador={(id, ms) => controller.updateMarker(id, { tiempoMs: ms })}
+            onMoverMarcador={(id, ms, sinAjustar) => controller.updateMarker(id, { tiempoMs: ms }, sinAjustar)}
+            ajustarCompas={controller.ajustarCompas}
+            onAjustarCompas={controller.setAjustarCompas}
           />
           <main className="compu-main">
             <Mixer proyecto={proyecto} onUpdate={controller.updateMixer} onReorder={controller.reorderPistas} />

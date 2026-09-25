@@ -8,9 +8,12 @@ import { colorDeSeccion } from '../secciones'
 interface Props {
   secciones: Seccion[]
   duracionMs: number
+  /** inicio de cada compas (si se detecto el tempo): rayitas en la linea de tiempo */
+  compasesMs: number[] | null
   loop: boolean
   onSeek: (ms: number) => void
-  onMoverMarcador: (marcadorId: string, ms: number) => void
+  /** `sinAjustar`: se solto con Alt apretado (no ajustar al compas) */
+  onMoverMarcador: (marcadorId: string, ms: number, sinAjustar: boolean) => void
 }
 
 /**
@@ -18,7 +21,7 @@ interface Props {
  * Click = ir a ese punto. Las marcas blancas (triangulos) al inicio de cada
  * seccion se arrastran para mover el marcador.
  */
-export function Timeline({ secciones, duracionMs, loop, onSeek, onMoverMarcador }: Props) {
+export function Timeline({ secciones, duracionMs, compasesMs, loop, onSeek, onMoverMarcador }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const playhead = usePlayheadMs()
   const [hover, setHover] = useState<number | null>(null)
@@ -62,6 +65,7 @@ export function Timeline({ secciones, duracionMs, loop, onSeek, onMoverMarcador 
           </div>
         )
       })}
+      {compasesMs && <RayasCompas compasesMs={compasesMs} duracionMs={dur} />}
       <div className="timeline-pasado" style={{ width: pct(playhead) }} />
       {secciones
         .filter((s) => s.marcador)
@@ -81,9 +85,11 @@ export function Timeline({ secciones, duracionMs, loop, onSeek, onMoverMarcador 
                 const el = e.currentTarget
                 el.setPointerCapture(e.pointerId)
                 let ultimo = ms
+                let alt = false
                 setArrastre({ id, ms })
                 const mover = (ev: PointerEvent): void => {
                   ultimo = msDesdeX(ev.clientX)
+                  alt = ev.altKey
                   setArrastre({ id, ms: ultimo })
                   setHover(ultimo)
                 }
@@ -91,7 +97,7 @@ export function Timeline({ secciones, duracionMs, loop, onSeek, onMoverMarcador 
                   el.removeEventListener('pointermove', mover)
                   el.removeEventListener('pointerup', soltar)
                   el.removeEventListener('pointercancel', soltar)
-                  if (Math.abs(ultimo - s.inicioMs) > 30) onMoverMarcador(id, ultimo)
+                  if (Math.abs(ultimo - s.inicioMs) > 30) onMoverMarcador(id, ultimo, alt)
                   else onSeek(s.inicioMs) // click sin arrastrar: ir a esa seccion
                   // se limpia despues del click que dispara el pointerup
                   setTimeout(() => setArrastre(null), 0)
@@ -110,5 +116,17 @@ export function Timeline({ secciones, duracionMs, loop, onSeek, onMoverMarcador 
         </div>
       )}
     </div>
+  )
+}
+
+/** Una rayita por compas (cada 4 si quedarian muy juntas), abajo de la linea de tiempo. */
+function RayasCompas({ compasesMs, duracionMs }: { compasesMs: number[]; duracionMs: number }) {
+  const cada = compasesMs.length > 160 ? 8 : compasesMs.length > 80 ? 4 : 1
+  return (
+    <svg className="timeline-compases" preserveAspectRatio="none" viewBox={`0 0 ${duracionMs} 10`} aria-hidden>
+      {compasesMs.map((c, i) =>
+        i % cada === 0 ? <line key={c} x1={c} x2={c} y1={i % (cada * 4) === 0 ? 2 : 5} y2={10} vectorEffect="non-scaling-stroke" /> : null
+      )}
+    </svg>
   )
 }

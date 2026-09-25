@@ -61,9 +61,12 @@ async function crearVentana(url: string): Promise<void> {
 app.whenReady().then(async () => {
   if (!tieneLock) return
   const rendererDir = path.join(__dirname, '../renderer')
-  server = createServer(rendererDir)
+  // modelo de voz incluido en el instalador (resources/modelos) o, en desarrollo, <repo>/modelos
+  const dirModelos = app.isPackaged ? path.join(process.resourcesPath, 'modelos') : path.join(__dirname, '../../modelos')
+  server = createServer(rendererDir, { dirModelos })
   await server.restaurarSesion()
   puertoActivo = await server.start(PUERTO_PREFERIDO)
+  server.iniciarServicios(path.join(app.getPath('documents'), 'Multitrack Alabanza'))
 
   // la pantalla de la compu no se apaga ni entra en reposo mientras la app esta abierta
   powerSaveBlocker.start('prevent-display-sleep')
@@ -82,6 +85,19 @@ app.whenReady().then(async () => {
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
+  })
+
+  ipcMain.handle('biblioteca:elegir', async () => {
+    const r = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Carpeta de la biblioteca de canciones',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+  })
+
+  ipcMain.handle('biblioteca:abrir', async (_e, ruta: unknown) => {
+    // solo la carpeta de la biblioteca actual (no cualquier ruta que pida la pagina)
+    if (typeof ruta === 'string' && ruta === server?.biblioteca.ruta) await shell.openPath(ruta)
   })
 
   ipcMain.handle('app:connection-info', () => {

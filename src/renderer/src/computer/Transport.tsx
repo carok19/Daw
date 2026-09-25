@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, Pause, Play, Repeat, SkipBack, SkipForward, Square } from 'lucide-react'
+import { ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square } from 'lucide-react'
 import type { PlaybackState, Proyecto } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
@@ -24,7 +24,13 @@ interface Props {
   onLoop: (v: boolean) => void
   onSiguienteCancion: () => void
   onRenombrar: (nombre: string) => void
-  onMoverMarcador: (id: string, ms: number) => void
+  onMoverMarcador: (id: string, ms: number, sinAjustar: boolean) => void
+  ajustarCompas: boolean
+  onAjustarCompas: (v: boolean) => void
+}
+
+function textoCompas(compas: number): string {
+  return compas === 6 ? '6/8' : `${compas}/4`
 }
 
 function Reloj({ duracionMs }: { duracionMs: number }) {
@@ -102,7 +108,23 @@ export function Transport(p: Props) {
               {p.proyecto.nombre}
             </div>
           )}
-          <SeccionActual secciones={p.secciones} loop={p.loop} />
+          <div className="transporte-meta">
+            <SeccionActual secciones={p.secciones} loop={p.loop} />
+            {p.proyecto.tempo && (
+              <span className="chip-tempo num" title={p.proyecto.tempo.acentoClaro ? 'Detectado del click' : 'Detectado del click (no se distinguió el acento del 1: se contó desde el primer golpe)'}>
+                {Math.round(p.proyecto.tempo.bpm)} BPM · {textoCompas(p.proyecto.tempo.compas)}
+                <button
+                  className={`boton-iman ${p.ajustarCompas ? 'activo' : ''}`}
+                  onClick={() => p.onAjustarCompas(!p.ajustarCompas)}
+                  title={p.ajustarCompas ? 'Ajustar al compás: las secciones caen en el "1" (Alt al arrastrar para moverlas libres)' : 'Ajustar al compás: desactivado'}
+                  aria-pressed={p.ajustarCompas}
+                  aria-label="Ajustar al compás"
+                >
+                  <Magnet size={13} />
+                </button>
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="transporte-botones">
@@ -151,6 +173,7 @@ export function Transport(p: Props) {
       <Timeline
         secciones={p.secciones}
         duracionMs={p.proyecto.duracionTotalMs}
+        compasesMs={p.proyecto.tempo?.compasesMs ?? null}
         loop={p.loop}
         onSeek={p.onSeek}
         onMoverMarcador={p.onMoverMarcador}

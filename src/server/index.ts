@@ -6,8 +6,11 @@ import { Server as SocketIOServer } from 'socket.io'
 import { AppState } from './state'
 import { DeviceRegistry } from './devices'
 import { registerSocketHandlers, restaurarSesion } from './socketHandlers'
-import { ensureBaseDir, leerSesion, projectsBaseDir } from './projects'
+import { ensureBaseDir, leerSesion, listProyectos, loadProyecto, projectsBaseDir } from './projects'
 import type { Transporte } from './transport'
+import type { Analizador } from './analisis'
+import type { Biblioteca } from './biblioteca'
+import { ModelosVoz } from './modelos'
 
 export interface AppServer {
   app: express.Express
@@ -16,16 +19,28 @@ export interface AppServer {
   state: AppState
   devices: DeviceRegistry
   transporte: Transporte
+  analizador: Analizador
+  biblioteca: Biblioteca
+  modelos: ModelosVoz
   /** secreto que identifica a la ventana de Electron como "la compu" (ver socketHandlers.origenDe) */
   compuToken: string
   start(preferredPort: number): Promise<number>
   /** reabre las canciones de la ultima sesion (pestanas abiertas al cerrar la app) */
   restaurarSesion(): Promise<void>
+  /**
+   * Arranca la biblioteca (carpeta vigilada) y retoma los analisis que
+   * quedaron a medias o pendientes (canciones viejas sin analizar incluidas).
+   */
+  iniciarServicios(bibliotecaPorDefecto: string | null): void
   close(): Promise<void>
 }
 
 export interface OpcionesServidor {
   compuToken?: string
+  /** carpeta de modelos incluida en el instalador (resources/modelos) */
+  dirModelos?: string | null
+  /** analizar tempo/secciones al importar (por defecto si; los tests que no lo prueban lo apagan) */
+  analisisAutomatico?: boolean
 }
 
 /**
@@ -45,6 +60,16 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
 
   // audio de las pistas: express.static responde "206 Partial Content" a los pedidos Range del streaming
   app.use('/media', express.static(projectsBaseDir(), { fallthrough: false, maxAge: '1h' }))
+
+  // modelo de reconocimiento de voz (incluido en el instalador o descargado): lo carga la compu
+  const modelos = new ModelosVoz(opciones.dirModelos ?? null)
+  const estaticos = new Map<string, express.Handler>()
+  app.use('/modelos', (req, res, next) => {
+    const base = modelos.dirDisponible()
+    if (!base) return res.status(404).end()
+    if (!estaticos.has(base)) estaticos.set(base, express.static(base, { fallthrough: false, maxAge: '30d' }))
+    estaticos.get(base)!(req, res, next)
+  })
   // index.html nunca se cachea (asi un celular siempre toma la version nueva de la app); los assets tienen hash
   app.use(express.static(rendererDir, { index: false, maxAge: '7d' }))
   app.get('*', (_req, res) => {
@@ -52,7 +77,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     res.sendFile(path.join(rendererDir, 'index.html'))
   })
 
-  const transporte = registerSocketHandlers(io, state, devices, compuToken)
+  const { transporte, analizador, biblioteca } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true)
 
   async function listenOn(port: number): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -83,7 +108,18 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     throw new Error('sin puerto disponible')
   }
 
+  function iniciarServicios(bibliotecaPorDefecto: string | null): void {
+    for (const r of listProyectos()) {
+      const p = loadProyecto(r.id)
+      if (!p.analisis || p.analisis.estado === 'analizando') analizador.encolar(p.id)
+      else analizador.registrarPendiente(p)
+    }
+    biblioteca.iniciar(bibliotecaPorDefecto)
+  }
+
   async function close(): Promise<void> {
+    biblioteca.detener()
+    analizador.detener()
     transporte.cancelarTimers()
     state.guardarPendientes()
     io.close()
@@ -97,9 +133,13 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     state,
     devices,
     transporte,
+    analizador,
+    biblioteca,
+    modelos,
     compuToken,
     start,
     restaurarSesion: () => restaurarSesion(state, leerSesion()),
+    iniciarServicios,
     close
   }
 }

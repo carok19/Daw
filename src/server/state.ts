@@ -98,6 +98,11 @@ export class AppState {
     }
     this.activeTabId = tabId
     this.loop = false
+    const nueva = this.tabs.get(tabId)
+    if (nueva) {
+      nueva.proyecto.usadoEn = new Date().toISOString()
+      this.guardarConDebounce(nueva.proyecto)
+    }
   }
 
   reordenarTabs(orden: string[]): boolean {
@@ -186,7 +191,8 @@ export class AppState {
     const marcador: Marcador = {
       id: crypto.randomUUID(),
       nombre: nombreFinal,
-      tiempoMs: this.limitarTiempo(tab, tiempoMs)
+      tiempoMs: this.limitarTiempo(tab, tiempoMs),
+      origen: 'manual'
     }
     tab.proyecto.marcadores.push(marcador)
     this.ordenarMarcadores(tab)
@@ -202,7 +208,8 @@ export class AppState {
     tab.proyecto.marcadores.push({
       id: marcador.id.slice(0, 64),
       nombre: limpiarNombre(marcador.nombre) || 'Sección',
-      tiempoMs: this.limitarTiempo(tab, marcador.tiempoMs)
+      tiempoMs: this.limitarTiempo(tab, marcador.tiempoMs),
+      origen: marcador.origen === 'guia' || marcador.origen === 'archivo' ? marcador.origen : 'manual'
     })
     this.ordenarMarcadores(tab)
     this.guardarYa(tab.proyecto)

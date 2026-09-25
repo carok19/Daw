@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ComandoProgramado,
   DispositivoInfo,
+  EstadoBiblioteca,
   EstadoBuffer,
   EstadoCompleto,
   ImportProgreso,
+  InfoModeloVoz,
+  PedidoVoz,
   Marcador,
   MixerActualizadoPayload,
   OrigenCliente,
@@ -21,6 +24,23 @@ import type { MezclaPersonal, PlaybackEngine } from '../audio/PlaybackEngine'
 import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_SUAVE_MS } from '../sync/driftConfig'
 import { setPlayheadMs, getPlayheadMs } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
+import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
+
+/** Compas mas cercano (si esta a menos de medio compas): "ajustar al compas". */
+export function ajustarACompas(compasesMs: number[] | undefined, ms: number): number {
+  if (!compasesMs || compasesMs.length < 2) return ms
+  let mejor = ms
+  let dist = Infinity
+  for (const c of compasesMs) {
+    const d = Math.abs(c - ms)
+    if (d < dist) {
+      dist = d
+      mejor = c
+    }
+  }
+  const medioCompas = (compasesMs[1] - compasesMs[0]) / 2
+  return dist <= medioCompas ? mejor : ms
+}
 
 export interface Aviso {
   id: number
@@ -69,6 +89,12 @@ export function useAppController() {
   const [errorAudio, setErrorAudio] = useState<string | null>(null)
   const [dispositivos, setDispositivos] = useState<DispositivoInfo[]>([])
   const [importProgreso, setImportProgreso] = useState<ImportProgreso | null>(null)
+  const [modeloVoz, setModeloVoz] = useState<InfoModeloVoz>({ estado: 'falta' })
+  const [biblioteca, setBiblioteca] = useState<EstadoBiblioteca | null>(null)
+  const [progresoAnalisis, setProgresoAnalisis] = useState<Record<string, { hechos: number; total: number }>>({})
+  /** sube cada vez que el servidor avisa que cambio alguna cancion guardada (para refrescar listas) */
+  const [versionProyectos, setVersionProyectos] = useState(0)
+  const [ajustarCompas, setAjustarCompasState] = useState<boolean>(() => leerPref('ajustar-compas', true))
 
   // preferencias de ESTE dispositivo
   const [sonidoLocal, setSonidoLocalState] = useState<boolean>(() => (origen === 'compu' ? leerPref('sonido-compu', false) : true))
@@ -90,6 +116,12 @@ export function useAppController() {
     }))
   }
   const engineRef = useRef<PlaybackEngine | null>(null)
+  const reconocimientoRef = useRef<ReconocimientoGuia | null>(null)
+  if (origen === 'compu' && !reconocimientoRef.current) {
+    reconocimientoRef.current = new ReconocimientoGuia(socketRef.current!, () => estadoRef.current?.playbackActivo?.estado === 'playing')
+  }
+  const ajustarRef = useRef(ajustarCompas)
+  ajustarRef.current = ajustarCompas
   // espejo del estado, para callbacks/intervalos registrados una sola vez
   const estadoRef = useRef<EstadoCompleto | null>(null)
   estadoRef.current = estado
@@ -222,6 +254,17 @@ export function useAppController() {
       socket.onRechazado((err) => avisar({ tipo: 'error', texto: err.mensaje })),
       socket.onDispositivos((lista) => setDispositivos(lista)),
       socket.onImportProgreso((p) => setImportProgreso(p.etapa === 'listo' ? null : p)),
+      socket.on<InfoModeloVoz>('modelo:estado', (m) => {
+        setModeloVoz(m)
+        reconocimientoRef.current?.setModeloListo(m.estado === 'listo')
+      }),
+      socket.on<EstadoBiblioteca>('biblioteca:estado', (b) => setBiblioteca(b)),
+      socket.on<PedidoVoz[]>('analisis:pedidos', (p) => reconocimientoRef.current?.setPedidos(p)),
+      socket.on<{ proyectoId: string; hechos: number; total: number }>('analisis:progreso', (p) =>
+        setProgresoAnalisis((prev) => ({ ...prev, [p.proyectoId]: { hechos: p.hechos, total: p.total } }))
+      ),
+      socket.on<{ tipo: 'info' | 'error'; texto: string }>('aviso', (a) => avisar({ tipo: a.tipo, texto: a.texto }, 6000)),
+      socket.on('proyectos:cambio', () => setVersionProyectos((v) => v + 1)),
       socket.onConexionCambia(async (c) => {
         setConectado(c)
         if (c) {
@@ -452,12 +495,20 @@ export function useAppController() {
         emit('loop:set', { activo })
       },
 
-      // ---- marcadores ----
+      // ---- marcadores (con "ajustar al compas" si hay tempo detectado) ----
       createMarker(tiempoMs: number, nombre?: string): void {
-        emit('marker:create', { tiempoMs, nombre })
+        const compases = estadoRef.current?.proyectoActivo?.tempo?.compasesMs
+        emit('marker:create', { tiempoMs: ajustarRef.current ? ajustarACompas(compases, tiempoMs) : tiempoMs, nombre })
       },
-      updateMarker(marcadorId: string, patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs' | 'color'>>): void {
-        emit('marker:update', { marcadorId, patch })
+      updateMarker(marcadorId: string, patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs' | 'color'>>, sinAjustar = false): void {
+        const compases = estadoRef.current?.proyectoActivo?.tempo?.compasesMs
+        const p = { ...patch }
+        if (p.tiempoMs !== undefined && ajustarRef.current && !sinAjustar) p.tiempoMs = ajustarACompas(compases, p.tiempoMs)
+        emit('marker:update', { marcadorId, patch: p })
+      },
+      setAjustarCompas(v: boolean): void {
+        setAjustarCompasState(v)
+        guardarPref('ajustar-compas', v)
       },
       deleteMarker(marcador: Marcador): void {
         emit('marker:delete', { marcadorId: marcador.id })
@@ -554,6 +605,25 @@ export function useAppController() {
         emit('devices:forget', { id })
       },
 
+      // ---- analisis automatico / modelo de voz / biblioteca ----
+      detectarSecciones(proyectoId: string): void {
+        emit('analisis:detectar', { proyectoId })
+      },
+      descargarModeloVoz(): void {
+        emit('modelo:descargar')
+      },
+      async elegirCarpetaBiblioteca(): Promise<{ ok: boolean; error?: string }> {
+        const ruta = await window.electronAPI?.elegirCarpeta?.()
+        if (!ruta) return { ok: false }
+        return socket.emitAck('biblioteca:ruta', { ruta })
+      },
+      abrirCarpetaBiblioteca(ruta: string): void {
+        void window.electronAPI?.abrirCarpeta?.(ruta)
+      },
+      escanearBiblioteca(): void {
+        emit('biblioteca:escanear')
+      },
+
       avisar,
       cerrarAviso(id: number): void {
         setAvisos((prev) => prev.filter((a) => a.id !== id))
@@ -581,6 +651,11 @@ export function useAppController() {
     dispositivos,
     avisos,
     importProgreso,
+    modeloVoz,
+    biblioteca,
+    progresoAnalisis,
+    versionProyectos,
+    ajustarCompas,
     driftMs,
     bufferEstado,
     errorAudio,
