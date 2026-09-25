@@ -8,6 +8,7 @@ import type {
   ErrorPayload,
   ImportProgreso,
   MixerActualizadoPayload,
+  MotivoCodigo,
   OrigenCliente
 } from '@shared/types'
 
@@ -129,6 +130,22 @@ export class SocketClient {
 
   onImportProgreso(cb: (p: ImportProgreso) => void): Desuscribir {
     return this.on('import:progreso', cb)
+  }
+
+  /**
+   * La compu pide el codigo de la banda (o el que se mando no es). Despues de
+   * ese rechazo Socket.IO no reintenta solo: se reintenta con `reconectar()`.
+   */
+  onCodigo(cb: (motivo: MotivoCodigo) => void): Desuscribir {
+    const h = (err: Error & { data?: { motivo?: MotivoCodigo } }): void => {
+      if (err?.message === 'codigo') cb(err.data?.motivo ?? 'codigo-requerido')
+    }
+    this.socket.on('connect_error', h)
+    return () => this.socket.off('connect_error', h)
+  }
+
+  reconectar(): void {
+    if (!this.socket.connected) this.socket.connect()
   }
 
   onConexionCambia(cb: (conectado: boolean) => void): Desuscribir {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   ArrowRight,
@@ -13,6 +13,7 @@ import {
   Settings,
   SkipBack,
   SkipForward,
+  UserPlus,
   Volume2,
   VolumeX,
   WifiOff,
@@ -31,8 +32,10 @@ import { FaderTactil } from '../ui/FaderTactil'
 import { useConfirmar } from '../ui/Confirmar'
 import { useWakeLock } from './useWakeLock'
 import { Hoja, HojaAjustes } from './Hojas'
+import { AccesoFijo, HojaInvitar, PantallaCodigo } from './Conectar'
+import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion'
 
-type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones'
+type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones' | 'invitar'
 
 /**
  * Celular: lo que el musico toca es SU mezcla, asi que es la pantalla
@@ -44,6 +47,17 @@ export function MobileApp({ controller }: { controller: AppController }) {
   const [hoja, setHoja] = useState<HojaAbierta>(null)
   const wake = useWakeLock()
   const proyecto = estado?.proyectoActivo ?? null
+  // dentro de la app Android: el audio arranca solo y la pantalla la mantiene encendida la app
+  const app = puenteAndroid()
+  const [mostrarActivar, setMostrarActivar] = useState(!app)
+  const activarAudio = controller.activarAudio
+  useEffect(() => {
+    if (!app) return
+    void activarAudio()
+    // si el sistema igual pidio un toque, aparece el boton
+    const t = setTimeout(() => setMostrarActivar(true), 1500)
+    return () => clearTimeout(t)
+  }, [app, activarAudio])
 
   const miEtiqueta = useMemo(() => {
     const id = `celular:${leerPref<string>('device-id', '')}`
@@ -51,7 +65,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
   }, [controller.dispositivos])
 
   async function empezar(): Promise<void> {
-    wake.activar() // tiene que ser dentro del toque del usuario
+    if (!app) wake.activar() // tiene que ser dentro del toque del usuario
     await controller.activarAudio()
   }
 
@@ -62,6 +76,9 @@ export function MobileApp({ controller }: { controller: AppController }) {
           <span className={`punto ${conectado ? 'verde' : 'rojo'}`} />
           <strong>{miEtiqueta}</strong>
         </span>
+        <button onClick={() => setHoja('invitar')} disabled={!conectado} aria-label="Invitar a alguien">
+          <UserPlus size={18} /> Invitar
+        </button>
         <button onClick={() => setHoja('ajustes')} aria-label="Ajustes">
           <Settings size={18} />
         </button>
@@ -101,7 +118,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
 
       {proyecto && <BarraFlotante controller={controller} onHoja={setHoja} />}
 
-      {!controller.audioActivo && (
+      {!controller.audioActivo && mostrarActivar && (
         <div className="activar">
           <h1>{proyecto?.nombre ?? 'Multitrack Alabanza'}</h1>
           <p>Conectá los auriculares y tocá el botón. La pantalla va a quedar encendida mientras uses la app.</p>
@@ -112,14 +129,43 @@ export function MobileApp({ controller }: { controller: AppController }) {
           <p style={{ fontSize: 13, color: 'var(--text-3)' }}>
             <span className={`punto ${conectado ? 'verde' : 'rojo'}`} /> {conectado ? 'Conectado a la computadora' : 'Conectando…'}
           </p>
+          {!app && !enPantallaDeInicio() && (esIOS() || esAndroid()) && conectado && <ProximaVez controller={controller} />}
         </div>
       )}
 
-      {hoja === 'ajustes' && <HojaAjustes controller={controller} etiqueta={miEtiqueta} pantallaEncendida={wake.activo} onCerrar={() => setHoja(null)} />}
+      {hoja === 'ajustes' && (
+        <HojaAjustes
+          controller={controller}
+          etiqueta={miEtiqueta}
+          pantallaEncendida={!!app || wake.activo}
+          accesoFijo={<AccesoFijo controller={controller} />}
+          onCerrar={() => setHoja(null)}
+        />
+      )}
+      {hoja === 'invitar' && <HojaInvitar controller={controller} onCerrar={() => setHoja(null)} />}
       {hoja === 'secciones' && proyecto && <HojaSecciones controller={controller} onCerrar={() => setHoja(null)} />}
       {hoja === 'canciones' && <HojaCanciones controller={controller} onCerrar={() => setHoja(null)} />}
 
+      {controller.pedidoCodigo && <PantallaCodigo controller={controller} />}
+
       <Avisos avisos={controller.avisos} onCerrar={controller.cerrarAviso} />
+    </div>
+  )
+}
+
+/** En la pantalla de inicio: como no escanear el QR en el proximo ensayo (plegado). */
+function ProximaVez({ controller }: { controller: AppController }) {
+  const [abierto, setAbierto] = useState(false)
+  if (!abierto) {
+    return (
+      <button className="btn-fantasma activar-proxima-boton" onClick={() => setAbierto(true)}>
+        ¿La próxima vez sin escanear el QR?
+      </button>
+    )
+  }
+  return (
+    <div className="activar-proxima">
+      <AccesoFijo controller={controller} />
     </div>
   )
 }

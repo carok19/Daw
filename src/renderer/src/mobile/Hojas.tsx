@@ -23,11 +23,14 @@ export function HojaAjustes({
   controller,
   etiqueta,
   pantallaEncendida,
+  accesoFijo,
   onCerrar
 }: {
   controller: AppController
   etiqueta: string
   pantallaEncendida: boolean
+  /** como entrar sin QR la proxima vez (segun el celular) */
+  accesoFijo?: ReactNode
   onCerrar: () => void
 }) {
   const [nombre, setNombre] = useState(controller.nombreDispositivo)
@@ -86,6 +89,13 @@ export function HojaAjustes({
           <RotateCcw size={15} /> Volver a 0
         </button>
       </div>
+
+      {accesoFijo && (
+        <div className="hoja-seccion">
+          <h3>La próxima vez, sin QR</h3>
+          {accesoFijo}
+        </div>
+      )}
 
       <div className="hoja-seccion">
         <h3>Estado</h3>

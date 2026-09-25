@@ -259,12 +259,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         <ProjectsScreen controller={controller} vistaInicial={ventana.tipo} onCerrar={() => setVentana(null)} />
       )}
       {ventana?.tipo === 'conexion' && (
-        <ConnectionPanel
-          dispositivos={controller.dispositivos}
-          sonando={sonando}
-          onOlvidar={controller.forgetDevice}
-          onCerrar={() => setVentana(null)}
-        />
+        <ConnectionPanel controller={controller} sonando={sonando} onCerrar={() => setVentana(null)} />
       )}
       {ventana?.tipo === 'atajos' && <ShortcutsModal onCerrar={() => setVentana(null)} />}
 

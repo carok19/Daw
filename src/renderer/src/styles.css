@@ -2498,3 +2498,312 @@ input[type='range'].slider::-moz-range-thumb {
   color: var(--text-2);
   font-size: 12px;
 }
+
+/* ==========================================================================
+   CONECTAR: codigo de la banda, invitar, entrar sin QR
+   ========================================================================== */
+.boton-enlace {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-2);
+  background: var(--panel-3);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.boton-enlace.btn-primario {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.pasos {
+  margin: 8px 0 12px;
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.pasos svg {
+  vertical-align: -2px;
+}
+
+.pantalla-codigo {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: radial-gradient(circle at 50% 30%, #1a2140 0%, var(--bg) 70%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.pantalla-codigo h1 {
+  margin: 0;
+  font-size: 24px;
+}
+.pantalla-codigo > p {
+  margin: 0;
+  color: var(--text-2);
+  line-height: 1.5;
+  max-width: 320px;
+}
+.pantalla-codigo form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  width: min(280px, 100%);
+}
+.codigo-input {
+  font: inherit;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.35em;
+  text-align: center;
+  padding: 12px 8px 12px calc(8px + 0.35em);
+  margin: 0;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  width: 100%;
+}
+.codigo-input::placeholder {
+  color: var(--text-3);
+}
+.codigo-boton {
+  padding: 14px;
+  font-size: 17px;
+}
+
+.invitar-paso {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.invitar-paso h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+.invitar-numero {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.invitar-qr-fila {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.invitar-qr {
+  width: 150px;
+  height: 150px;
+  flex: none;
+  background: #fff;
+  padding: 7px;
+  border-radius: 10px;
+}
+.invitar-datos {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.invitar-datos span {
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.invitar-datos span:first-child {
+  margin-top: 0;
+}
+.invitar-datos strong {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.invitar-direccion {
+  user-select: all;
+}
+.invitar-codigo {
+  font-size: 26px !important;
+  letter-spacing: 0.12em;
+  color: var(--accent-hover);
+}
+.invitar-botones {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+.invitar-botones > * {
+  padding: 13px 10px;
+  font-weight: 600;
+}
+.invitar-botones .btn-primario {
+  background: #1faa59;
+  border-color: #1faa59;
+}
+.activar-proxima-boton {
+  font-size: 13px;
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.activar-proxima {
+  max-width: 340px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.activar .activar-proxima p {
+  max-width: none;
+}
+
+/* compu: panel de conexion */
+.conexion-fija {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.conexion-fija b {
+  color: var(--text-2);
+  user-select: all;
+}
+.conexion-otras code {
+  display: inline-block;
+  margin: 2px 6px 0 0;
+  padding: 1px 6px;
+  background: var(--panel-3);
+  border-radius: 5px;
+  color: var(--text);
+  user-select: all;
+}
+.conexion-ajustes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 18px;
+}
+.conexion-tarjeta {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.conexion-tarjeta h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+.conexion-tarjeta .hoja-fila input {
+  font-size: 15px;
+  padding: 8px 10px;
+}
+.conexion-codigo {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--accent-hover);
+  line-height: 1.1;
+}
+.codigo-chico {
+  letter-spacing: 0.2em;
+  font-weight: 700;
+  max-width: 150px;
+}
+.conexion-wifi {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.hoja-impresa {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+  html,
+  body {
+    background: #fff !important;
+    height: auto;
+  }
+  #root {
+    display: none !important;
+  }
+  .hoja-impresa {
+    display: block;
+    color: #000;
+    font-family: var(--font);
+    font-size: 13pt;
+  }
+  .hoja-impresa h1 {
+    font-size: 26pt;
+    margin: 0;
+  }
+  .hoja-impresa h2 {
+    font-size: 16pt;
+    margin: 16pt 0 8pt;
+  }
+  .impresa-sub {
+    margin: 4pt 0 10pt;
+    color: #444;
+  }
+  .impresa-qrs {
+    display: flex;
+    gap: 18mm;
+    justify-content: center;
+  }
+  .impresa-qrs section {
+    text-align: center;
+    flex: 1;
+    max-width: 80mm;
+  }
+  .impresa-qrs img {
+    width: 62mm;
+    height: 62mm;
+  }
+  .impresa-qrs p {
+    line-height: 1.5;
+    margin: 6pt 0 0;
+  }
+  .impresa-codigo {
+    font-size: 20pt;
+    letter-spacing: 0.1em;
+  }
+  .hoja-impresa ul {
+    padding-left: 18pt;
+    line-height: 1.6;
+  }
+}
+.activar-proxima .pasos:last-child,
+.activar-proxima .ayuda:last-child {
+  margin-bottom: 0;
+}

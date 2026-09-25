@@ -515,6 +515,85 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     assert.deepEqual(repetidos, [], 'se volvió a bajar lo que ya estaba precargado')
   })
 
+  await t.test('código de la banda e invitar: el que llega tarde entra con el enlace de un compañero', async () => {
+    // la compu pone un codigo y el WiFi desde "Conectar celulares"
+    await compu.locator('.chip-dispositivos').click()
+    const tarjetaCodigo = compu.locator('.conexion-tarjeta', { hasText: 'Código de la banda' })
+    await tarjetaCodigo.getByRole('button', { name: 'Pedir un código' }).click()
+    await compu.getByLabel(/Código de la banda \(4 a 8/).fill('4821')
+    await tarjetaCodigo.getByRole('button', { name: 'Guardar' }).click()
+    await compu.waitForSelector('.conexion-codigo')
+    assert.equal(await compu.locator('.conexion-codigo').textContent(), '4821')
+    const tarjetaWifi = compu.locator('.conexion-tarjeta', { hasText: 'WiFi para invitar' })
+    await compu.getByLabel('Nombre de la red WiFi').fill('Iglesia Central')
+    await compu.getByLabel('Clave del WiFi').fill('alaba;nza')
+    await tarjetaWifi.getByRole('button', { name: 'Guardar' }).click()
+    // el QR de la compu ya lleva el codigo, y la hoja para imprimir tiene el QR del WiFi y el de la app
+    await compu.waitForFunction(() => /\/#codigo=4821$/.test(document.querySelector('.modal .qr')?.getAttribute('data-enlace') ?? ''))
+    await compu.waitForFunction(() => document.querySelectorAll('.hoja-impresa img').length === 2)
+    assert.match((await compu.locator('.hoja-impresa').textContent()) ?? '', /Iglesia Central.*alaba;nza.*4821/s)
+    assert.equal(await compu.locator('.hoja-impresa').isVisible(), false, 'la hoja solo aparece al imprimir')
+    await compu.keyboard.press('Escape')
+
+    // los que ya estaban conectados siguen (no se corta nada en vivo)
+    await esperar(500)
+    for (const cel of celulares) assert.equal(await cel.locator('.pantalla-codigo').count(), 0)
+
+    // un celular nuevo: le pide el codigo; uno mal avisa; el bueno entra y queda guardado
+    const ctxNuevo = await browser.newContext({ ...devices['Pixel 7'] })
+    ctxNuevo.setDefaultTimeout(15000)
+    const nuevo = await ctxNuevo.newPage()
+    await nuevo.goto(base)
+    await nuevo.waitForSelector('.pantalla-codigo')
+    await nuevo.getByRole('textbox', { name: 'Código de la banda' }).fill('1111')
+    await nuevo.getByRole('button', { name: 'Entrar' }).click()
+    await nuevo.getByText('Ese código no es').waitFor()
+    await nuevo.getByRole('textbox', { name: 'Código de la banda' }).fill('4821')
+    await nuevo.getByRole('button', { name: 'Entrar' }).click()
+    await nuevo.waitForSelector('.pantalla-codigo', { state: 'detached' })
+    await nuevo.reload()
+    await nuevo.getByRole('button', { name: /Tocá para empezar/ }).waitFor()
+    await esperar(500)
+    assert.equal(await nuevo.locator('.pantalla-codigo').count(), 0, 'al volver a abrir no lo pide de nuevo')
+    // en Android (sin la app en la compu) le explica como tenerla a mano
+    await nuevo.getByRole('button', { name: /La próxima vez sin escanear/ }).click()
+    await nuevo.getByText(/Agregar a la pantalla principal/).waitFor()
+
+    // invitar desde un celular que ya esta: QR del WiFi y de la app (con el codigo) y WhatsApp
+    const cel = celulares[1]
+    await cel.getByRole('button', { name: 'Invitar a alguien' }).click()
+    await cel.waitForFunction(() => document.querySelectorAll('.hoja img.invitar-qr').length === 2)
+    const enlace = (await cel.locator('.hoja img[data-enlace]').getAttribute('data-enlace'))!
+    assert.match(enlace, /^http:\/\/[^/]+:\d+\/#codigo=4821$/)
+    assert.match((await cel.locator('.hoja').textContent()) ?? '', /Iglesia Central.*alaba;nza.*4821/s)
+    const whatsapp = (await cel.getByRole('link', { name: /WhatsApp/ }).getAttribute('href'))!
+    const mensaje = decodeURIComponent(whatsapp.replace('https://wa.me/?text=', ''))
+    assert.match(mensaje, /Iglesia Central/)
+    assert.ok(mensaje.includes(enlace), `el mensaje lleva el enlace: ${mensaje}`)
+    await cel.getByRole('button', { name: 'Cerrar' }).click()
+
+    // el que llega tarde abre ese enlace: entra sin escribir nada y el codigo no queda a la vista
+    const ctxTarde = await browser.newContext({ ...devices['iPhone 13'] })
+    ctxTarde.setDefaultTimeout(15000)
+    const tarde = await ctxTarde.newPage()
+    await tarde.goto(`${base}/${new URL(enlace).hash}`)
+    await tarde.getByRole('button', { name: /Tocá para empezar/ }).waitFor()
+    await tarde.waitForFunction(() => /Conectado a la computadora/.test(document.querySelector('.activar')?.textContent ?? ''))
+    assert.equal(await tarde.locator('.pantalla-codigo').count(), 0)
+    assert.equal(new URL(tarde.url()).hash, '')
+    // iPhone: como dejarla en la pantalla de inicio
+    await tarde.getByRole('button', { name: /La próxima vez sin escanear/ }).click()
+    await tarde.getByText(/Agregar a inicio/).waitFor()
+
+    // sin codigo, vuelve a entrar cualquiera
+    await compu.locator('.chip-dispositivos').click()
+    await compu.getByRole('button', { name: 'Quitar el código' }).click()
+    await compu.waitForSelector('.conexion-codigo', { state: 'detached' })
+    await compu.keyboard.press('Escape')
+    await ctxNuevo.close()
+    await ctxTarde.close()
+  })
+
   await t.test('sin errores de JavaScript en la compu', () => {
     assert.deepEqual(errores, [])
   })

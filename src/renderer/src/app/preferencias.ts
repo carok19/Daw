@@ -5,9 +5,25 @@
  */
 const PREFIJO = 'multitrack:'
 
+/**
+ * Dentro de la app Android las preferencias se guardan tambien en la app:
+ * el localStorage del navegador es por direccion (http://IP:puerto) y si la
+ * compu cambia de IP entre un ensayo y otro, el celular perderia su nombre,
+ * su mezcla y el codigo de la banda.
+ */
+interface PrefsDeLaApp {
+  leerPref?(clave: string): string | null | undefined
+  guardarPref?(clave: string, valor: string): void
+}
+
+function prefsDeLaApp(): PrefsDeLaApp | null {
+  return (window as unknown as { AlabanzaApp?: PrefsDeLaApp }).AlabanzaApp ?? null
+}
+
 export function leerPref<T>(clave: string, porDefecto: T): T {
   try {
-    const raw = window.localStorage.getItem(PREFIJO + clave)
+    const desdeApp = prefsDeLaApp()?.leerPref?.(clave)
+    const raw = typeof desdeApp === 'string' ? desdeApp : window.localStorage.getItem(PREFIJO + clave)
     return raw === null ? porDefecto : (JSON.parse(raw) as T)
   } catch {
     return porDefecto
@@ -15,10 +31,16 @@ export function leerPref<T>(clave: string, porDefecto: T): T {
 }
 
 export function guardarPref<T>(clave: string, valor: T): void {
+  const json = JSON.stringify(valor)
   try {
-    window.localStorage.setItem(PREFIJO + clave, JSON.stringify(valor))
+    window.localStorage.setItem(PREFIJO + clave, json)
   } catch {
     // almacenamiento no disponible: no es critico
+  }
+  try {
+    prefsDeLaApp()?.guardarPref?.(clave, json)
+  } catch {
+    // la app no respondio: queda el localStorage
   }
 }
 

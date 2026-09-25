@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  AjustesConexion,
   ComandoProgramado,
+  DatosInvitacion,
   DispositivoInfo,
   EstadoBiblioteca,
   EstadoBuffer,
@@ -11,6 +13,7 @@ import type {
   Marcador,
   ModoSalto,
   MixerActualizadoPayload,
+  MotivoCodigo,
   OrigenCliente,
   PatchPista,
   PlaybackState,
@@ -26,6 +29,7 @@ import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_S
 import { setPlayheadMs, getPlayheadMs } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
 import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
+import { codigoDesdeDireccion } from '../conexion'
 
 /** Compas mas cercano (si esta a menos de medio compas): "ajustar al compas". */
 export function ajustarACompas(compasesMs: number[] | undefined, ms: number): number {
@@ -105,15 +109,24 @@ export function useAppController() {
   const [mezclaPersonal, setMezclaPersonalState] = useState<MezclaPersonal>(() => leerPref('mezcla-personal', {}))
   const [nombreDispositivo, setNombreDispositivoState] = useState<string>(() => leerPref('nombre', ''))
 
+  /** la compu pide el codigo de la banda (n: cuantas veces, para reaccionar a cada rechazo) */
+  const [pedidoCodigo, setPedidoCodigo] = useState<{ motivo: MotivoCodigo; n: number } | null>(null)
+
   const nombreRef = useRef(nombreDispositivo)
   nombreRef.current = nombreDispositivo
+  // codigo de la banda: el del enlace de invitacion (#codigo=...) o el que ya funciono en este celular
+  const codigoRef = useRef<string | null | undefined>(undefined)
+  if (codigoRef.current === undefined) {
+    codigoRef.current = origen === 'celular' ? (codigoDesdeDireccion() ?? leerPref<string | null>('codigo-banda', null)) : null
+  }
   const socketRef = useRef<SocketClient | null>(null)
   if (!socketRef.current) {
     const deviceId = deviceIdPersistente()
     socketRef.current = new SocketClient(origen, () => ({
       token: window.electronAPI?.compuToken,
       deviceId,
-      nombre: nombreRef.current || undefined
+      nombre: nombreRef.current || undefined,
+      codigo: codigoRef.current ?? undefined
     }))
   }
   const engineRef = useRef<PlaybackEngine | null>(null)
@@ -290,9 +303,13 @@ export function useAppController() {
       ),
       socket.on<{ tipo: 'info' | 'error'; texto: string; grupo?: string }>('aviso', (a) => avisarAgrupado(a)),
       socket.on('proyectos:cambio', () => setVersionProyectos((v) => v + 1)),
+      socket.onCodigo((motivo) => setPedidoCodigo((prev) => ({ motivo, n: (prev?.n ?? 0) + 1 }))),
       socket.onConexionCambia(async (c) => {
         setConectado(c)
         if (c) {
+          setPedidoCodigo(null)
+          // el codigo funciono: queda guardado para la proxima
+          if (codigoRef.current) guardarPref('codigo-banda', codigoRef.current)
           await socket.sincronizarReloj()
           aplicarEstado(await socket.pedirEstado(), true)
         }
@@ -639,6 +656,24 @@ export function useAppController() {
         emit('devices:forget', { id })
       },
 
+      // ---- conexion: codigo de la banda, invitar, ajustes (compu) ----
+      enviarCodigo(codigo: string): void {
+        codigoRef.current = codigo.replace(/\D/g, '')
+        socket.reconectar()
+      },
+      async datosInvitacion(): Promise<DatosInvitacion> {
+        return socket.emitAck<DatosInvitacion>('invitacion:datos', {}, 5000)
+      },
+      async ajustesConexion(): Promise<AjustesConexion | null> {
+        return socket.emitAck<AjustesConexion | null>('ajustes:obtener', {}, 5000)
+      },
+      async setCodigoBanda(codigo: string | null): Promise<{ ok: boolean; error?: string; ajustes?: AjustesConexion }> {
+        return socket.emitAck('ajustes:codigo', { codigo }, 5000)
+      },
+      async setWifiInvitacion(wifi: { ssid: string; clave: string } | null): Promise<{ ok: boolean; ajustes?: AjustesConexion }> {
+        return socket.emitAck('ajustes:wifi', wifi, 5000)
+      },
+
       // ---- analisis automatico / modelo de voz / biblioteca ----
       detectarSecciones(proyectoId: string): void {
         emit('analisis:detectar', { proyectoId })
@@ -679,6 +714,7 @@ export function useAppController() {
   return {
     origen,
     conectado,
+    pedidoCodigo,
     estado,
     secciones,
     siguienteProyecto,
