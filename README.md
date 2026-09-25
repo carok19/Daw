@@ -4,14 +4,29 @@ App de escritorio (Electron) para reproducir pistas multitrack en vivo donde
 **el audio sale de los celulares de los músicos**, todos sincronizados. La
 computadora es el director: arma el setlist, maneja la mezcla y el
 transporte, y sirve el audio por la WiFi local. Cada celular abre una página
-web (sin instalar nada), recibe el audio por streaming y lo reproduce en el
-mismo instante que los demás.
+web (sin instalar nada) o la app para Android, recibe el audio por streaming y
+lo reproduce en el mismo instante que los demás.
 
 No necesita internet ni ninguna base de datos en la nube: todo vive en la
 computadora (`~/MultitrackApp`), para que nada dependa de una conexión externa
 durante un culto.
 
 ---
+
+## Descargas
+
+Página de descargas (se actualiza sola con cada cambio, los enlaces no cambian):
+**https://github.com/carok19/Daw/releases/tag/descargas**
+
+- Computadora (Windows): [Multitrack-Alabanza-Instalador.exe](https://github.com/carok19/Daw/releases/download/descargas/Multitrack-Alabanza-Instalador.exe)
+  — incluye el reconocedor de voz y la app Android (la compu se la ofrece a los celulares).
+- Celulares Android: [alabanza.apk](https://github.com/carok19/Daw/releases/download/descargas/alabanza.apk)
+  — también se baja desde la compu, sin internet.
+
+Los arma GitHub Actions (`.github/workflows/instaladores.yml`): pruebas, app
+Android, instalador de Windows con el reconocedor y la app adentro, y los sube
+a la release `descargas`. Windows puede avisar que el instalador "no es común"
+(no está firmado): **Más información → Ejecutar de todas formas**.
 
 ## Instalar y correr
 
@@ -25,7 +40,7 @@ operativo, o en un CI con Windows/macOS):
 
 ```bash
 npm run modelos        # (opcional, una vez) incluye el reconocedor de voz en el instalador
-npm run dist:win       # instalador .exe (NSIS)
+npm run dist:win       # instalador .exe (NSIS); con extras/alabanza.apk incluye la app Android
 npm run dist:mac       # .dmg
 npm run dist:linux     # AppImage
 ```
@@ -60,9 +75,14 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
   por debajo de 20 ms, y si se corre, volver solo). También copia un zip a la
   biblioteca y verifica que se importe con su categoría y BPM, que las
   secciones salgan de la voz guía en el “1” del compás, el arrastre con imán,
-  y que los celulares precarguen la siguiente canción. El reconocedor de voz
-  se reemplaza por uno falso (`window.__asrFalso`). La primera vez:
+  y que los celulares precarguen la siguiente canción. Además: el código de
+  la banda (incorrecto, correcto, recordado), "Invitar" desde un celular
+  (QR del WiFi y de la app, WhatsApp) y que el que llega tarde entre con ese
+  enlace, y la app Android simulada (`window.AlabanzaApp`: arranca sola y
+  guarda nombre y mezcla en la app). El reconocedor de voz se reemplaza por
+  uno falso (`window.__asrFalso`). La primera vez:
   `npx playwright install chromium`.
+- App Android: ver `android/LEEME.md` (Java sin librerías; la arma el CI).
 - `npm run dev:renderer` — solo la interfaz en un navegador (sin servidor).
 - Con `?debug` en la URL del celular se expone `window.__mt` (motor, socket y
   estado) para diagnosticar en pruebas de campo.
@@ -73,9 +93,10 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
 
 1. **Misma WiFi para todos.** Ideal: un router propio para el equipo de
    alabanza (5 GHz, cerca del escenario). No necesita internet.
-2. **Windows:** la primera vez que se abre la app, el firewall pregunta si
-   permite conexiones: marcá **redes privadas** y aceptá (si no, los
-   celulares no pueden conectarse).
+2. **Windows:** el instalador deja a la app pasar el firewall. Si igual
+   Windows pregunta al abrirla, marcá **las dos casillas** (redes privadas y
+   públicas: la WiFi de una iglesia suele quedar como "pública") y aceptá; si
+   no, los celulares no pueden conectarse.
 3. Abrí la app: si se había cerrado, **el setlist vuelve solo**. Si no, armalo
    con **+ Canción** (importar `.zip`/`.rar` o abrir una guardada) o abrí un setlist
    guardado. Lo más cómodo: copiar los `.zip` o `.rar` en la **carpeta de canciones**
@@ -85,7 +106,25 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
    secciones.
 4. **Celulares:** botón **Celulares** (arriba a la derecha) → escanear el QR →
    **“Tocá para empezar”** → conectar auriculares. En ⚙ cada músico puede
-   ponerle nombre a su celular (“Batería”, “Bajo”…).
+   ponerle nombre a su celular (“Batería”, “Bajo”…). Para no escanear en cada
+   ensayo:
+   - **Android:** la app (`alabanza.apk`, se baja desde la compu). Se abre y
+     encuentra la compu sola en el WiFi (sin QR ni internet, como DroidCam);
+     la próxima vez entra directo, aunque la compu cambie de IP.
+   - **iPhone:** la dirección fija **`alabanza.local`** (no cambia con la IP)
+     y *Compartir → Agregar a inicio*: queda el ícono “Alabanza”. El celular
+     lo explica solo en “¿La próxima vez sin escanear el QR?”.
+   - **El que llega tarde**, con la banda ya tocando: cualquiera que ya esté
+     conectado toca **Invitar** en su celular y le muestra el QR (o se lo
+     manda por WhatsApp). Si en la compu se cargó el WiFi, también sale el QR
+     del WiFi (se conecta sin preguntar la clave).
+   - **Hoja impresa:** en la ventana de Celulares, *Imprimir hoja para la
+     banda* (QR del WiFi, QR de la app, código y pasos) para pegar en la sala.
+   - **Dirección corta:** si el puerto 80 está libre, alcanza con escribir
+     `http://192.168.x.x` (sin `:4848`).
+   - **Código de la banda** (opcional, en la ventana de Celulares): solo entra
+     quien lo sabe. Se pone una vez por celular; va incluido en el QR y en las
+     invitaciones. Cambiarlo no desconecta a los que ya están.
 5. Mirá el chip de celulares: **verde** = todos listos y sincronizados;
    **amarillo** = alguien no activó el audio, tiene WiFi lento o está
    desfasado; **rojo** = alguien se desconectó o tiene un error de audio. El
@@ -303,6 +342,25 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
    marca la página como reproducción de audio, y al volver a primer plano se
    resincroniza al instante.
 
+### Conexión de los celulares
+
+Todo por la WiFi local, sin internet ni servidores externos:
+
+- **QR / dirección**: `http://IP:4848`. La IP que se muestra (y la que recibe
+  cada celular al invitar) es la de la interfaz que está en la misma red que
+  ese celular (WiFi/Ethernet reales antes que adaptadores virtuales o VPN).
+- **Puerto 80**: si está libre, un servidor chico redirige `http://IP` al
+  puerto de la app (dirección corta).
+- **mDNS/Bonjour**: la compu responde `alabanza.local` (iPhone lo resuelve en
+  Safari y en el ícono de inicio) y anuncia el servicio `_multitrack._tcp`
+  (lo busca la app Android). Si hay dos compus con la app en la misma red,
+  las dos responden ese nombre: la app Android igual las distingue por su id.
+- **Búsqueda UDP**: la app Android pregunta `MULTITRACK-ALABANZA?` por
+  difusión al puerto 48480 y cada compu contesta con su nombre, puerto e id.
+  Si el router filtra difusión y mDNS, la app prueba las direcciones de la red.
+- `/api/info` (nombre, versión, id, si pide código) y `/app/alabanza.apk`
+  (la app Android incluida en el instalador).
+
 ### Seguridad
 
 - La compu se identifica con un **token secreto** que genera el proceso
@@ -314,6 +372,14 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
 - Límites contra zips maliciosos (tamaño y cantidad de pistas).
 - `/media` es solo lectura; `index.html` no se cachea (los celulares siempre
   toman la versión nueva de la app).
+- **Código de la banda** (opcional): sin el código un celular no se conecta
+  (la compu siempre); 5 intentos fallidos desde el mismo celular lo frenan un
+  minuto. Protege el control y la información de la sesión; el audio en sí
+  (`/media`) no pide código.
+- El instalador agrega una regla del firewall de Windows solo para el
+  programa de la app, en todos los perfiles de red (la WiFi de una iglesia
+  suele quedar como "pública"). Si se usa la compu en redes ajenas, conviene
+  poner el código de la banda.
 
 ---
 
@@ -354,7 +420,8 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
    reconectarse, un celular se alinea con lo que está pasando (si mientras
    no estaba se pausó o se saltó, lo aplica en el momento).
 9. **Puerto fijo:** 4848, y si está ocupado 4849, 4850… (misma dirección y
-   mismo QR de un día al otro).
+   mismo QR de un día al otro). La app Android y el ícono de iPhone no
+   dependen de la IP (id de la instalación / `alabanza.local`).
 10. **Sin base de datos externa:** todo en archivos JSON locales con
     escritura atómica. Funciona sin internet (una base en la nube, como
     Supabase, haría depender el culto de internet sin aportar nada acá).
@@ -378,5 +445,11 @@ segmentos se encadenan por aritmética de muestras (sin huecos) sobre
   mantiene la pantalla encendida, pero conviene no bloquearla a mano.
 - Los instaladores no están firmados: Windows (SmartScreen) y macOS
   (Gatekeeper) muestran un aviso la primera vez.
-- Una APK nativa de Android daría mejor control de la latencia y del
-  segundo plano.
+- **App Android:** el código se compiló contra la API de Android 15 y la
+  parte web se probó con el puente simulado, pero el APK lo arma GitHub
+  Actions (en el entorno de desarrollo no hay SDK de Android) y falta
+  probarlo en celulares reales (búsqueda en distintos routers, audio en
+  segundo plano). La firma por defecto es pública a propósito (ver
+  `android/LEEME.md`).
+- `alabanza.local` depende de que el router deje pasar mDNS (la mayoría lo
+  hace); el celular lo prueba antes de ofrecerlo.

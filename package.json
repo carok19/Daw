@@ -75,7 +75,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Multitrack Alabanza"
+      "shortcutName": "Multitrack Alabanza",
+      "artifactName": "Multitrack-Alabanza-Instalador.${ext}",
+      "include": "build/installer.nsh"
     },
     "mac": {
       "target": "dmg",
@@ -92,6 +94,13 @@
         "filter": [
           "**/*",
           "!**/*.parte"
+        ]
+      },
+      {
+        "from": "extras",
+        "to": "extras",
+        "filter": [
+          "alabanza.apk"
         ]
       }
     ]
