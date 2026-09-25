@@ -9,6 +9,7 @@ import type {
   InfoModeloVoz,
   PedidoVoz,
   Marcador,
+  ModoSalto,
   MixerActualizadoPayload,
   OrigenCliente,
   PatchPista,
@@ -499,24 +500,29 @@ export function useAppController() {
       seek(positionMs: number): void {
         emit('transport:seek', { positionMs })
       },
-      jumpToMarker(marcadorId: string): void {
-        emit('marker:jump', { marcadorId })
+      /** Ir a una seccion (sonando: en el limite segun el modo de salto; `inmediato`: ya). */
+      jumpToMarker(marcadorId: string, inmediato = false): void {
+        const m = estadoRef.current?.proyectoActivo?.marcadores.find((x) => x.id === marcadorId)
+        if (m) emit('seccion:saltar', { posicionMs: m.tiempoMs, inmediato })
       },
-      /** Salta a la seccion `delta` posiciones antes/despues de la actual (o al principio de la actual si ya paso >2s). */
-      saltarSeccion(delta: number): void {
-        const lista = secciones()
-        if (lista.length === 0) return
-        const pos = getPlayheadMs()
-        const actual = seccionEn(lista, pos) ?? lista[0]
-        let destino = actual.indice + delta
-        if (delta < 0 && pos - actual.inicioMs > 2000) destino = actual.indice // "anterior" = volver al inicio de esta
-        destino = Math.max(0, Math.min(lista.length - 1, destino))
-        emit('transport:seek', { positionMs: lista[destino].inicioMs })
+      /**
+       * Seccion anterior/siguiente. Sonando, el servidor la hace en el limite
+       * (al terminar la seccion o en el compas, segun el modo) y es relativa a
+       * la que ya se habia elegido: dos veces "siguiente" saltea una.
+       */
+      saltarSeccion(delta: number, inmediato = false): void {
+        emit('seccion:saltar', { relativo: delta, inmediato })
       },
-      irASeccion(numero: number): void {
+      irASeccion(numero: number, inmediato = false): void {
         const lista = secciones().filter((s) => s.marcador)
         const s = lista[numero - 1]
-        if (s) emit('transport:seek', { positionMs: s.inicioMs })
+        if (s) emit('seccion:saltar', { posicionMs: s.inicioMs, inmediato })
+      },
+      cancelarSalto(): void {
+        emit('salto:cancelar')
+      },
+      setModoSalto(modo: ModoSalto): void {
+        emit('salto:modo', { modo })
       },
       setLoop(activo: boolean): void {
         emit('loop:set', { activo })

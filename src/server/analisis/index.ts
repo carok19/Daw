@@ -6,7 +6,7 @@ import { projectDir } from '../projects'
 import { decodificarMono } from './decodificar'
 import { calcularTempo, detectarGolpes, pareceNombreDeClick, puntajeClick, PUNTAJE_MIN_CLICK, SR_ANALISIS } from './tempo'
 import { detectarFrases, guardarFrases, pareceNombreDeGuia, SR_VOZ } from './guia'
-import { seccionesDesdeFrases } from './secciones'
+import { anunciosDesdeFrases, faseDesdeAnuncios, seccionesDesdeFrases } from './secciones'
 
 /** Acceso a un proyecto (abierto en el setlist o solo en disco) y como guardarlo/avisar. */
 export interface AccesoProyecto {
@@ -168,6 +168,11 @@ export class Analizador {
     const a = p?.analisis
     if (!acceso || !p || !a || !a.cues) return 0
     const frases = a.cues.map((c) => ({ ...c, texto: textos.find((t) => t.n === c.n)?.texto ?? '' }))
+    // click sin acento: el "1" de cada compas se deduce de donde terminan los anuncios de la guia
+    if (p.tempo && !p.tempo.acentoClaro) {
+      const corregidos = faseDesdeAnuncios(p.tempo.compasesMs, p.tempo.compas, anunciosDesdeFrases(frases))
+      if (corregidos) p.tempo = { ...p.tempo, compasesMs: corregidos, faseDesdeGuia: true }
+    }
     const secciones = seccionesDesdeFrases(frases, p.tempo?.compasesMs ?? null, p.duracionTotalMs)
     const hayManuales = p.marcadores.some((m) => m.origen !== 'guia')
     let aplicadas = 0

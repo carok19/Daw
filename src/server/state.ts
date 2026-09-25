@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import type { Marcador, PatchPista, PlaybackState, Proyecto, TabResumen } from '../shared/types'
+import type { Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
 import { posicionActualMs } from '../shared/playback'
 import { guardarSesion, saveProyecto } from './projects'
 
@@ -42,6 +42,9 @@ export class AppState {
   activeTabId: string | null = null
   locked = false
   loop = false
+  modoSalto: ModoSalto = 'seccion'
+  /** salto elegido que espera su limite (lo maneja Transporte); se cancela al cambiar de cancion */
+  saltoPendiente: (SaltoPendiente & { tabId: string }) | null = null
   private guardadosPendientes = new Map<string, NodeJS.Timeout>()
 
   abrirProyecto(proyecto: Proyecto, activar = true): string {
@@ -70,6 +73,7 @@ export class AppState {
       // la que queda en el mismo lugar (la siguiente del setlist), o la anterior si era la ultima
       this.activeTabId = this.orden[Math.min(indice, this.orden.length - 1)] ?? null
       this.loop = false
+      this.saltoPendiente = null
     }
     this.persistirSesion()
   }
@@ -98,6 +102,7 @@ export class AppState {
     }
     this.activeTabId = tabId
     this.loop = false
+    this.saltoPendiente = null
     const nueva = this.tabs.get(tabId)
     if (nueva) {
       nueva.proyecto.usadoEn = new Date().toISOString()

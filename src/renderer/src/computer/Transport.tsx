@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square } from 'lucide-react'
-import type { PlaybackState, Proyecto } from '@shared/types'
+import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square, X } from 'lucide-react'
+import type { PlaybackState, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadPaso } from '../app/playheadStore'
@@ -27,6 +27,8 @@ interface Props {
   onMoverMarcador: (id: string, ms: number, sinAjustar: boolean) => void
   ajustarCompas: boolean
   onAjustarCompas: (v: boolean) => void
+  saltoPendiente: SaltoPendiente | null
+  onCancelarSalto: () => void
 }
 
 function textoCompas(compas: number): string {
@@ -45,17 +47,44 @@ function Reloj({ duracionMs }: { duracionMs: number }) {
   )
 }
 
-function SeccionActual({ secciones, loop }: { secciones: Seccion[]; loop: boolean }) {
+/** "en 3 s" hasta el limite del salto (en tiempo de la cancion: sigue al playhead). */
+export function faltaParaSalto(salto: SaltoPendiente, pos: number): string {
+  const s = Math.max(0, Math.ceil((salto.limiteMs - pos) / 1000))
+  return s <= 0 ? 'ya' : `en ${s} s`
+}
+
+function SeccionActual({
+  secciones,
+  loop,
+  salto,
+  onCancelarSalto
+}: {
+  secciones: Seccion[]
+  loop: boolean
+  salto: SaltoPendiente | null
+  onCancelarSalto: () => void
+}) {
   const pos = usePlayheadPaso(100)
   const actual = seccionEn(secciones, pos)
   const siguiente = actual ? secciones[actual.indice + 1] : null
   if (!actual) return null
+  const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
   return (
     <div className="seccion-actual">
       <span className="seccion-pill" style={{ background: colorDeSeccion(actual) }}>
         {loop && <Repeat size={14} />}
         {actual.nombre}
       </span>
+      {salto && destino ? (
+        <span className="salto-pendiente" role="status" style={{ '--color-seccion': colorDeSeccion(destino) } as React.CSSProperties}>
+          <ArrowRight size={14} />
+          <b>{salto.nombre}</b>
+          <span className="num">{faltaParaSalto(salto, pos)}</span>
+          <button onClick={onCancelarSalto} title="Cancelar el salto (Esc)" aria-label="Cancelar el salto">
+            <X size={13} />
+          </button>
+        </span>
+      ) : (
       <span className="seccion-siguiente">
         {secciones.length === 1 && !actual.marcador
           ? 'Sin secciones: presioná M con la canción sonando'
@@ -65,6 +94,7 @@ function SeccionActual({ secciones, loop }: { secciones: Seccion[]; loop: boolea
               ? `Sigue: ${siguiente.nombre}`
               : 'Última sección'}
       </span>
+      )}
     </div>
   )
 }
@@ -109,9 +139,15 @@ export function Transport(p: Props) {
             </div>
           )}
           <div className="transporte-meta">
-            <SeccionActual secciones={p.secciones} loop={p.loop} />
+            <SeccionActual secciones={p.secciones} loop={p.loop} salto={p.saltoPendiente} onCancelarSalto={p.onCancelarSalto} />
             {p.proyecto.tempo && (
-              <span className="chip-tempo num" title={p.proyecto.tempo.acentoClaro ? 'Detectado del click' : 'Detectado del click (no se distinguió el acento del 1: se contó desde el primer golpe)'}>
+              <span className="chip-tempo num" title={
+                  p.proyecto.tempo.acentoClaro
+                    ? 'Detectado del click'
+                    : p.proyecto.tempo.faseDesdeGuia
+                      ? 'Detectado del click; el "1" de cada compás, de la voz guía (el click no tiene acento)'
+                      : 'Detectado del click (no se distinguió el acento del 1: se contó desde el primer golpe)'
+                }>
                 {Math.round(p.proyecto.tempo.bpm)} BPM · {textoCompas(p.proyecto.tempo.compas)}
                 <button
                   className={`boton-iman ${p.ajustarCompas ? 'activo' : ''}`}
@@ -128,7 +164,7 @@ export function Transport(p: Props) {
         </div>
 
         <div className="transporte-botones">
-          <button className="tbtn" onClick={() => p.onSeccion(-1)} title="Sección anterior (←)" aria-label="Sección anterior">
+          <button className="tbtn" onClick={() => p.onSeccion(-1)} title="Sección anterior (←; sonando, al terminar la sección — Shift+← salta ya)" aria-label="Sección anterior">
             <SkipBack size={20} />
           </button>
           <button className="tbtn" onClick={p.onStop} title="Stop y volver al inicio (Enter)" aria-label="Stop">
@@ -142,7 +178,7 @@ export function Transport(p: Props) {
           >
             {sonando ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" style={{ marginLeft: 3 }} />}
           </button>
-          <button className="tbtn" onClick={() => p.onSeccion(1)} title="Sección siguiente (→)" aria-label="Sección siguiente">
+          <button className="tbtn" onClick={() => p.onSeccion(1)} title="Sección siguiente (→; sonando, en el próximo compás — Shift+→ salta ya)" aria-label="Sección siguiente">
             <SkipForward size={20} />
           </button>
           <button
@@ -175,6 +211,7 @@ export function Transport(p: Props) {
         duracionMs={p.proyecto.duracionTotalMs}
         compasesMs={p.proyecto.tempo?.compasesMs ?? null}
         loop={p.loop}
+        salto={p.saltoPendiente}
         onSeek={p.onSeek}
         onMoverMarcador={p.onMoverMarcador}
       />

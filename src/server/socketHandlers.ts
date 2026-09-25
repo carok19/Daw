@@ -12,6 +12,8 @@ import type {
   MarcadorEliminarPayload,
   MarcadorRestaurarPayload,
   MarcadorSaltarPayload,
+  ModoSalto,
+  SeccionSaltarPayload,
   MixerActualizadoPayload,
   MixerActualizarPayload,
   OrigenCliente,
@@ -97,7 +99,7 @@ export function registerSocketHandlers(
     return false
   }
 
-  const transporte = new Transporte(io, state, hayCelularesConectados)
+  const transporte = new Transporte(io, state, hayCelularesConectados, () => emitirEstadoPronto())
 
   function emitirEstado(): void {
     io.emit('estado:actualizado', buildEstadoCompleto(state))
@@ -297,6 +299,27 @@ export function registerSocketHandlers(
     socket.on('marker:jump', (payload: MarcadorSaltarPayload) => {
       if (!permitido()) return
       transporte.saltarAMarcador(payload?.marcadorId)
+    })
+
+    socket.on('seccion:saltar', (payload: SeccionSaltarPayload) => {
+      if (!permitido() || !payload) return
+      transporte.saltarASeccion({
+        posicionMs: typeof payload.posicionMs === 'number' ? payload.posicionMs : undefined,
+        relativo: typeof payload.relativo === 'number' ? Math.sign(payload.relativo) : undefined,
+        inmediato: payload.inmediato === true
+      })
+    })
+
+    socket.on('salto:cancelar', () => {
+      if (!permitido()) return
+      transporte.cancelarSalto()
+    })
+
+    socket.on('salto:modo', (payload: { modo?: ModoSalto }) => {
+      if (!soloCompu(socket) || !payload || !['seccion', 'compas', 'inmediato'].includes(payload.modo ?? '')) return
+      state.modoSalto = payload.modo!
+      if (state.modoSalto === 'inmediato') transporte.cancelarSalto()
+      emitirEstado()
     })
 
     socket.on('loop:set', (payload: LoopSetPayload) => {

@@ -11,6 +11,16 @@ export function buildEstadoCompleto(state: AppState): EstadoCompleto {
     proyectoActivo: tab?.proyecto ?? null,
     proyectos: state.listaProyectos(),
     playbackActivo: tab?.playback ?? null,
+    modoSalto: state.modoSalto,
+    saltoPendiente:
+      state.saltoPendiente && state.saltoPendiente.tabId === tab?.tabId
+        ? {
+            destinoMs: state.saltoPendiente.destinoMs,
+            nombre: state.saltoPendiente.nombre,
+            limiteMs: state.saltoPendiente.limiteMs,
+            tSalto: state.saltoPendiente.tSalto
+          }
+        : null,
     serverTime: Date.now()
   }
 }

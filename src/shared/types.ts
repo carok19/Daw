@@ -35,6 +35,8 @@ export interface TempoProyecto {
   clickPistaId: string | null
   /** false = no se distinguio el acento del "1": los compases se contaron desde el primer golpe */
   acentoClaro: boolean
+  /** con click sin acento, el "1" se dedujo de donde termina de hablar la voz guia */
+  faseDesdeGuia?: boolean
 }
 
 /** Frase hablada de la voz guia, recortada para reconocerla ("Verso uno", "Coro"...). */
@@ -174,6 +176,24 @@ export interface TabResumen {
   posicionMs: number
 }
 
+/**
+ * Cuando se elige una seccion con la cancion sonando, el salto se hace en el
+ * limite (al terminar la seccion actual, o en el proximo compas) para que la
+ * musica siga sin cortes; 'inmediato' salta enseguida (con el margen de sync).
+ */
+export type ModoSalto = 'seccion' | 'compas' | 'inmediato'
+
+/** Salto elegido que todavia no llego a su limite (se puede cambiar o cancelar). */
+export interface SaltoPendiente {
+  /** inicio de la seccion a la que se va */
+  destinoMs: number
+  nombre: string
+  /** posicion de la cancion donde se salta (fin de la seccion actual o un compas) */
+  limiteMs: number
+  /** hora del servidor en la que suena el salto */
+  tSalto: number
+}
+
 /** Snapshot completo enviado a un cliente que se conecta o ante cambios estructurales. */
 export interface EstadoCompleto {
   tabs: TabResumen[]
@@ -185,6 +205,8 @@ export interface EstadoCompleto {
   /** Proyectos completos de TODAS las pestanas abiertas, mismo orden/indice que `tabs`. */
   proyectos: Proyecto[]
   playbackActivo: PlaybackState | null
+  modoSalto: ModoSalto
+  saltoPendiente: SaltoPendiente | null
   serverTime: number
 }
 
@@ -243,6 +265,13 @@ export interface MarcadorEliminarPayload {
 }
 export interface MarcadorSaltarPayload {
   marcadorId: string
+}
+/** Ir a una seccion: por posicion (el inicio de la seccion) o relativa a la actual/pendiente (±1). */
+export interface SeccionSaltarPayload {
+  posicionMs?: number
+  relativo?: number
+  /** saltar ya, sin esperar el limite (Shift en la compu) */
+  inmediato?: boolean
 }
 export interface MarcadorRestaurarPayload {
   marcador: Marcador

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import type { Seccion } from '@shared/playback'
+import type { SaltoPendiente } from '@shared/types'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadMs } from '../app/playheadStore'
 import { formatMmSs } from '../format'
@@ -11,6 +12,8 @@ interface Props {
   /** inicio de cada compas (si se detecto el tempo): rayitas en la linea de tiempo */
   compasesMs: number[] | null
   loop: boolean
+  /** salto elegido: se marca donde se va a saltar y a que seccion */
+  salto: SaltoPendiente | null
   onSeek: (ms: number) => void
   /** `sinAjustar`: se solto con Alt apretado (no ajustar al compas) */
   onMoverMarcador: (marcadorId: string, ms: number, sinAjustar: boolean) => void
@@ -21,7 +24,7 @@ interface Props {
  * Click = ir a ese punto. Las marcas blancas (triangulos) al inicio de cada
  * seccion se arrastran para mover el marcador.
  */
-export function Timeline({ secciones, duracionMs, compasesMs, loop, onSeek, onMoverMarcador }: Props) {
+export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, onSeek, onMoverMarcador }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const playhead = usePlayheadMs()
   const [hover, setHover] = useState<number | null>(null)
@@ -66,6 +69,12 @@ export function Timeline({ secciones, duracionMs, compasesMs, loop, onSeek, onMo
         )
       })}
       {compasesMs && <RayasCompas compasesMs={compasesMs} duracionMs={dur} />}
+      {salto && (
+        <>
+          <div className="timeline-salto-limite" style={{ left: pct(salto.limiteMs) }} title={`Acá salta a ${salto.nombre}`} />
+          <div className="timeline-salto-destino" style={{ left: pct(salto.destinoMs) }} />
+        </>
+      )}
       <div className="timeline-pasado" style={{ width: pct(playhead) }} />
       {secciones
         .filter((s) => s.marcador)

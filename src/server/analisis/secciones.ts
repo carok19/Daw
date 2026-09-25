@@ -101,6 +101,20 @@ const NUMEROS: Record<string, number> = {
   six: 6
 }
 
+/** Palabras de una cuenta ("uno, dos, tres, cuatro", "three, four", "1 2 3 4"). */
+const CUENTA = new Set([
+  ...['1', '2', '3', '4', '5', '6', '7', '8'],
+  ...['uno', 'un', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho'],
+  ...['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'],
+  ...['y', 'and', 'a']
+])
+
+/** "tres, cuatro" / "1, 2, 3, 4" / "one two three four": una cuenta (sin nombre de seccion). */
+export function esCuenta(texto: string): boolean {
+  const palabras = normalizar(texto)
+  return palabras.length > 0 && palabras.some((p) => p !== 'y' && p !== 'and' && p !== 'a') && palabras.every((p) => CUENTA.has(p))
+}
+
 function tipoDePalabra(palabra: string): TipoSeccion | null {
   for (const [variantes, tipo] of PALABRAS) {
     for (const v of variantes) {
@@ -141,11 +155,67 @@ export interface SeccionDetectada {
   tiempoMs: number
 }
 
+export interface Anuncio {
+  seccion: SeccionInterpretada
+  inicioMs: number
+  /** cuando termina de hablar la guia, contando la cuenta que sigue al nombre ("Coro… tres, cuatro") */
+  finMs: number
+}
+
+/**
+ * Anuncios de seccion de la guia. Si al nombre le sigue una cuenta ("Coro…
+ * uno, dos, tres, cuatro"), el anuncio termina con la cuenta: la seccion
+ * empieza despues, no en el compas donde se cuenta.
+ */
+export function anunciosDesdeFrases(frases: { inicioMs: number; finMs: number; texto: string }[]): Anuncio[] {
+  const ordenadas = [...frases].sort((a, b) => a.inicioMs - b.inicioMs)
+  const anuncios: Anuncio[] = []
+  for (let i = 0; i < ordenadas.length; i++) {
+    const seccion = interpretarSeccion(ordenadas[i].texto)
+    if (!seccion) continue
+    let finMs = ordenadas[i].finMs
+    for (let j = i + 1; j < ordenadas.length && esCuenta(ordenadas[j].texto) && ordenadas[j].inicioMs - finMs < 3500; j++) {
+      finMs = ordenadas[j].finMs
+    }
+    anuncios.push({ seccion, inicioMs: ordenadas[i].inicioMs, finMs })
+  }
+  return anuncios
+}
+
+/**
+ * Con un click sin acento no se sabe cual golpe es el "1": se conto desde el
+ * primero. La guia lo dice: termina de anunciar justo antes del "1" de la
+ * seccion. Se mira en que pulso del compas cae el golpe siguiente a cada
+ * anuncio y, si la mayoria coincide en otro pulso, se corren los compases.
+ * Devuelve los compases corregidos, o null si no hace falta (o no esta claro).
+ */
+export function faseDesdeAnuncios(compasesMs: number[], pulsosPorCompas: number, anuncios: Anuncio[]): number[] | null {
+  if (compasesMs.length < 2 || anuncios.length < 2 || pulsosPorCompas < 2) return null
+  const votos = new Array<number>(pulsosPorCompas).fill(0)
+  for (const a of anuncios) {
+    const i = compasesMs.findIndex((c, k) => c <= a.finMs && (compasesMs[k + 1] ?? Infinity) > a.finMs)
+    if (i < 0 || i + 1 >= compasesMs.length) continue
+    const pulso = (compasesMs[i + 1] - compasesMs[i]) / pulsosPorCompas
+    const siguiente = Math.ceil((a.finMs - compasesMs[i] - 120) / pulso)
+    votos[((siguiente % pulsosPorCompas) + pulsosPorCompas) % pulsosPorCompas]++
+  }
+  const total = votos.reduce((a, b) => a + b, 0)
+  const fase = votos.indexOf(Math.max(...votos))
+  if (fase === 0 || total < 2 || votos[fase] < total * 0.6) return null
+  // cada compas se corre `fase` pulsos (con el largo de ese compas: sigue al click real)
+  const corridos = compasesMs.slice(0, -1).map((c, k) => Math.round(c + ((compasesMs[k + 1] - c) / pulsosPorCompas) * fase))
+  const ultimo = compasesMs[compasesMs.length - 1]
+  const largo = ultimo - compasesMs[compasesMs.length - 2]
+  corridos.push(Math.round(ultimo + (largo / pulsosPorCompas) * fase))
+  const primero = corridos[0] - (compasesMs[1] - compasesMs[0])
+  return primero >= 0 ? [primero, ...corridos] : corridos
+}
+
 /**
  * Convierte frases de la guia (con su momento) en secciones con nombre y
  * lugar: cada seccion empieza en el primer compas despues de que la voz
- * termina de anunciarla (la guia avisa justo antes de que empiece). Numera
- * versos ("Verso 1", "Verso 2") y repeticiones ("Coro", "Coro 2").
+ * termina de anunciarla, cuenta incluida (la guia avisa justo antes de que
+ * empiece). Numera versos ("Verso 1", "Verso 2") y repeticiones ("Coro", "Coro 2").
  */
 export function seccionesDesdeFrases(
   frases: { inicioMs: number; finMs: number; texto: string }[],
@@ -154,14 +224,12 @@ export function seccionesDesdeFrases(
 ): SeccionDetectada[] {
   const cuenta = new Map<TipoSeccion, number>()
   const resultado: SeccionDetectada[] = []
-  for (const f of [...frases].sort((a, b) => a.inicioMs - b.inicioMs)) {
-    const s = interpretarSeccion(f.texto)
-    if (!s) continue
-    let tiempo = f.finMs
+  for (const { seccion: s, finMs } of anunciosDesdeFrases(frases)) {
+    let tiempo = finMs
     if (compasesMs && compasesMs.length) {
-      const c = compasSiguiente(compasesMs, f.finMs, 120)
-      // si el proximo compas queda lejos (click cortado), se usa el final de la frase
-      if (c !== null && c - f.finMs < 4000) tiempo = c
+      const c = compasSiguiente(compasesMs, finMs, 120)
+      // si el proximo compas queda lejos (click cortado), se usa el final del anuncio
+      if (c !== null && c - finMs < 4000) tiempo = c
     }
     tiempo = Math.max(0, Math.min(duracionMs - 1, Math.round(tiempo)))
     const n = (cuenta.get(s.tipo) ?? 0) + 1

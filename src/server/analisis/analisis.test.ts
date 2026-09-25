@@ -6,7 +6,7 @@ import path from 'node:path'
 import { decodificarMono } from './decodificar'
 import { calcularTempo, detectarGolpes, puntajeClick, PUNTAJE_MIN_CLICK, SR_ANALISIS, pareceNombreDeClick } from './tempo'
 import { detectarFrases, pareceNombreDeGuia, SR_VOZ } from './guia'
-import { interpretarSeccion, seccionesDesdeFrases, nombreDeMarcadorArchivo } from './secciones'
+import { anunciosDesdeFrases, esCuenta, faseDesdeAnuncios, interpretarSeccion, seccionesDesdeFrases, nombreDeMarcadorArchivo } from './secciones'
 import { marcadoresDeMidi, marcadoresDeTexto, marcadoresDeWav } from './archivos'
 
 import { armarGuia, generarClick, SR, wav16 } from '../__fixtures__/sintetico'
@@ -126,6 +126,54 @@ test('secciones: interpretar anuncios y ubicarlos en el compás siguiente', () =
     { nombre: 'Coro 2', tiempoMs: 27170 },
     { nombre: 'Final', tiempoMs: 37838 }
   ])
+})
+
+test('secciones: si la guía cuenta después del nombre ("Coro… tres, cuatro"), la sección empieza después de la cuenta', () => {
+  assert.equal(esCuenta('tres, cuatro'), true)
+  assert.equal(esCuenta('1, 2, 3, 4'), true)
+  assert.equal(esCuenta('One, two, three, four!'), true)
+  assert.equal(esCuenta('Coro'), false)
+  assert.equal(esCuenta('y'), false)
+  // 90 BPM 4/4: compas de 2667 ms, pulso de 667 ms; compases en 500, 3167, 5834, 8501...
+  const compases = Array.from({ length: 30 }, (_, i) => 500 + i * 2667)
+  const secciones = seccionesDesdeFrases(
+    [
+      // "Verso uno" al principio del compas 1 y la cuenta completa en el compas 2 -> empieza en el compas 3
+      { inicioMs: 3200, finMs: 3900, texto: 'Verso uno' },
+      { inicioMs: 5850, finMs: 8300, texto: 'uno, dos, tres, cuatro' },
+      // "Coro" en el pulso 1 del compas 6 y "tres, cuatro" en los pulsos 3-4 -> compas 7
+      { inicioMs: 16510, finMs: 17000, texto: 'Coro' },
+      { inicioMs: 17850, finMs: 18900, texto: 'tres, cuatro' },
+      // sin cuenta: el compas siguiente al final de la voz
+      { inicioMs: 25900, finMs: 26600, texto: 'Puente' }
+    ],
+    compases,
+    80000
+  )
+  assert.deepEqual(secciones, [
+    { nombre: 'Verso 1', tiempoMs: compases[3] },
+    { nombre: 'Coro', tiempoMs: compases[7] },
+    { nombre: 'Puente', tiempoMs: compases[10] }
+  ])
+})
+
+test('click sin acento: el "1" del compás se deduce de dónde termina de anunciar la guía', () => {
+  // compases reales en 500 + k*2667; el analisis del click (sin acento) los conto un pulso tarde
+  const reales = Array.from({ length: 30 }, (_, i) => 500 + i * 2667)
+  const pulso = 2667 / 4
+  const corridos = reales.map((c) => Math.round(c + pulso))
+  const frases = [4, 10, 16, 22].map((k, i) => ({ inicioMs: reales[k] - 900, finMs: reales[k] - 250, texto: ['Verso uno', 'Coro', 'Verso dos', 'Puente'][i] }))
+  const anuncios = anunciosDesdeFrases(frases)
+  const corregidos = faseDesdeAnuncios(corridos, 4, anuncios)!
+  assert.ok(corregidos, 'se corrige la fase')
+  for (const k of [4, 10, 16, 22]) assert.ok(corregidos.some((c) => Math.abs(c - reales[k]) <= 1), `compas ${k}`)
+  assert.deepEqual(
+    seccionesDesdeFrases(frases, corregidos, 80000).map((s) => s.tiempoMs),
+    [4, 10, 16, 22].map((k) => reales[k])
+  )
+  // si ya estaba bien, no se toca; y con un solo anuncio no se arriesga
+  assert.equal(faseDesdeAnuncios(reales, 4, anuncios), null)
+  assert.equal(faseDesdeAnuncios(corridos, 4, anuncios.slice(0, 1)), null)
 })
 
 test('marcadores en archivos: WAV (cue/labl), MIDI y texto', () => {

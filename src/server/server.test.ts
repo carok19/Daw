@@ -27,6 +27,8 @@ const TOKEN = 'token-de-prueba'
 
 // ---------- helpers ----------
 
+const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
 function tmpDir(prefijo: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefijo))
 }
@@ -466,6 +468,85 @@ test('fin de cancion y repetir seccion los maneja el servidor', async (t) => {
   assert.equal(stop.playback.estado, 'stopped')
   assert.equal(stop.positionMs, 0)
 
+  await env.cerrar()
+})
+
+test('saltos de sección: al terminar la sección la música sigue en la elegida, sin cortes; se cambia, se cancela o va ya', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  // 4 s: Inicio 0-1 s, Verso 1-2 s, Coro 2-3 s, Puente 3-4 s
+  const estado0 = await cargarZip(compu, crearZip('saltos', { 'click.wav': a.wav4s, 'marcas.txt': Buffer.from('0:01 Verso\n0:02 Coro\n0:03 Puente\n') }))
+  assert.deepEqual(estado0.proyectoActivo!.marcadores.map((m) => m.tiempoMs), [1000, 2000, 3000])
+  const pendiente = (): Promise<EstadoCompleto> => esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => !!e.saltoPendiente)
+  const sinPendiente = (): Promise<EstadoCompleto> => esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => !e.saltoPendiente)
+
+  // parado: ir a una seccion es inmediato (no queda pendiente)
+  const [seek] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('seccion:saltar', { posicionMs: 2000 })])
+  assert.equal(seek.positionMs, 2000)
+
+  // sonando desde 1.1 s (Verso): elegir Puente -> sigue el Verso hasta 2 s y ahi continua en 3 s
+  const [inicio] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1100 })])
+  await esperar(100)
+  const [conSalto] = await Promise.all([pendiente(), compu.emit('seccion:saltar', { posicionMs: 3000 })])
+  const salto = conSalto.saltoPendiente!
+  assert.equal(salto.nombre, 'Puente')
+  assert.equal(salto.limiteMs, 2000)
+  assert.equal(salto.destinoMs, 3000)
+  assert.ok(Math.abs(salto.tSalto - (inicio.executeAtServerTime + 900)) < 5, `limite a ${salto.tSalto - inicio.executeAtServerTime} ms del arranque`)
+  const cmd = await esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', (c) => c.accion === 'play', 3000)
+  assert.equal(cmd.positionMs, 3000)
+  assert.equal(cmd.executeAtServerTime, salto.tSalto)
+  // continuidad: justo antes del limite sigue el Verso, justo despues ya es el Puente
+  assert.ok(Math.abs(posicionActualMs(cmd.playback, cmd.executeAtServerTime - 1) - 1999) <= 1)
+  assert.ok(Math.abs(posicionActualMs(cmd.playback, cmd.executeAtServerTime + 1) - 3001) <= 1)
+
+  // elegir otra mientras espera la reemplaza; "siguiente" es relativa a la elegida; Esc/cancelar la saca
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1050 })])
+  let e = (await Promise.all([pendiente(), compu.emit('seccion:saltar', { posicionMs: 0 })]))[0]
+  assert.equal(e.saltoPendiente!.nombre, 'Inicio')
+  e = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => x.saltoPendiente?.nombre === 'Verso'), compu.emit('seccion:saltar', { relativo: 1 })]))[0]
+  assert.equal(e.saltoPendiente!.limiteMs, 2000)
+  await Promise.all([sinPendiente(), compu.emit('salto:cancelar')])
+  // sin salto pendiente, sigue de largo: el proximo comando es el stop del final (no un salto)
+  const fin = await esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', () => true, 5000)
+  assert.equal(fin.accion, 'stop')
+
+  // una pausa cancela el salto pendiente
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1050 })])
+  await Promise.all([pendiente(), compu.emit('seccion:saltar', { posicionMs: 3000 })])
+  await Promise.all([sinPendiente(), compu.emit('transport:pause')])
+
+  // modo "ya": salta enseguida
+  await Promise.all([esperarEvento(compu, 'estado:actualizado', (x: EstadoCompleto) => x.modoSalto === 'inmediato'), compu.emit('salto:modo', { modo: 'inmediato' })])
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1050 })])
+  await esperar(50)
+  const t0 = Date.now()
+  const [ya] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('seccion:saltar', { posicionMs: 3000 })])
+  assert.equal(ya.positionMs, 3000)
+  assert.ok(ya.executeAtServerTime - t0 < 200, 'sin celulares, "ya" es enseguida')
+
+  await env.cerrar()
+})
+
+test('saltos de sección con celulares: el salto se manda con todo el margen de sync', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const celular = await env.conectar({ origen: 'celular', deviceId: 'cel-saltos', nombre: 'Bajo' })
+  // 20 s con secciones cada 5 s
+  const largo = path.join(tmpDir('multitrack-audio-'), 'largo.wav')
+  generarAudio(largo, 20, 'mono')
+  await cargarZip(compu, crearZip('largo', { 'click.wav': largo, 'marcas.txt': Buffer.from('0:05 Verso\n0:10 Coro\n0:15 Final\n') }))
+  const [inicio] = await Promise.all([esperarEvento<ComandoProgramado>(celular, 'playback:scheduled'), celular.emit('transport:play', { positionMs: 0 })])
+  // el celular (sin bloqueo) elige el Coro estando en "Inicio": salta al terminar Inicio (5 s)
+  await esperar(200)
+  celular.emit('seccion:saltar', { posicionMs: 10000 })
+  const cmd = await esperarEvento<ComandoProgramado>(celular, 'playback:scheduled', (c) => c.positionMs === 10000, 8000)
+  const llegada = Date.now()
+  assert.equal(cmd.executeAtServerTime, inicio.executeAtServerTime + 5000)
+  assert.ok(cmd.executeAtServerTime - llegada >= 1400, `llegó ${cmd.executeAtServerTime - llegada} ms antes del salto`)
+  compu.emit('transport:stop')
   await env.cerrar()
 })
 

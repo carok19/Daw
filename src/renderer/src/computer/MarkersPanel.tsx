@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { CircleAlert, Download, FileAudio, Flag, LoaderCircle, Mic, Pencil, Trash2, WandSparkles } from 'lucide-react'
-import type { AnalisisProyecto, InfoModeloVoz, Marcador } from '@shared/types'
+import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Mic, Pencil, Trash2, WandSparkles, X } from 'lucide-react'
+import type { AnalisisProyecto, InfoModeloVoz, Marcador, ModoSalto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadPaso } from '../app/playheadStore'
@@ -13,7 +13,12 @@ interface Props {
   progreso: { hechos: number; total: number } | null
   modeloVoz: InfoModeloVoz
   sonando: boolean
-  onJump: (marcadorId: string) => void
+  onJump: (marcadorId: string, inmediato: boolean) => void
+  saltoPendiente: SaltoPendiente | null
+  modoSalto: ModoSalto
+  hayTempo: boolean
+  onModoSalto: (m: ModoSalto) => void
+  onCancelarSalto: () => void
   onCreate: (tiempoMs: number, nombre?: string) => void
   onRename: (marcadorId: string, nombre: string) => void
   onDelete: (marcador: Marcador) => void
@@ -51,6 +56,39 @@ export function MarkersPanel(p: Props) {
             <WandSparkles size={14} /> Detectar
           </button>
         </h3>
+        <div className="modo-salto" role="radiogroup" aria-label="Cuándo salta al elegir una sección sonando">
+          <span>Al elegir, saltar:</span>
+          <div className="segmentado segmentado-chico">
+            <button
+              role="radio"
+              aria-checked={p.modoSalto === 'seccion'}
+              className={p.modoSalto === 'seccion' ? 'activo' : ''}
+              onClick={() => p.onModoSalto('seccion')}
+              title="La sección actual termina y la música sigue directo en la elegida (sin cortes)"
+            >
+              Al terminar
+            </button>
+            <button
+              role="radio"
+              aria-checked={p.modoSalto === 'compas'}
+              className={p.modoSalto === 'compas' ? 'activo' : ''}
+              onClick={() => p.onModoSalto('compas')}
+              disabled={!p.hayTempo}
+              title={p.hayTempo ? 'En el próximo "1" del compás' : 'Hace falta el tempo (pista de click)'}
+            >
+              En el compás
+            </button>
+            <button
+              role="radio"
+              aria-checked={p.modoSalto === 'inmediato'}
+              className={p.modoSalto === 'inmediato' ? 'activo' : ''}
+              onClick={() => p.onModoSalto('inmediato')}
+              title="Enseguida (con el margen de sincronización de los celulares)"
+            >
+              Ya
+            </button>
+          </div>
+        </div>
         <EstadoAnalisisVista
           analisis={p.analisis}
           progreso={p.progreso}
@@ -89,7 +127,9 @@ export function MarkersPanel(p: Props) {
             seccion={s}
             numero={i + 1}
             actual={actual?.indice === s.indice}
-            onJump={() => onJump(s.marcador!.id)}
+            pendiente={p.saltoPendiente?.destinoMs === s.inicioMs}
+            onCancelarSalto={p.onCancelarSalto}
+            onJump={(inmediato) => onJump(s.marcador!.id, inmediato)}
             onRename={(n) => onRename(s.marcador!.id, n)}
             onDelete={() => onDelete(s.marcador!)}
           />
@@ -97,8 +137,8 @@ export function MarkersPanel(p: Props) {
       </ul>
 
       <div className="secciones-pie">
-        <kbd>1</kbd>…<kbd>9</kbd> saltar a una sección · <kbd>←</kbd> <kbd>→</kbd> anterior / siguiente · arrastrá los
-        triángulos de la línea de tiempo para mover una sección.
+        <kbd>1</kbd>…<kbd>9</kbd> ir a una sección (con <kbd>Shift</kbd>, ya) · <kbd>←</kbd> <kbd>→</kbd> anterior / siguiente ·{' '}
+        <kbd>Esc</kbd> cancela el salto · arrastrá los triángulos de la línea de tiempo para mover una sección.
       </div>
     </aside>
   )
@@ -108,6 +148,8 @@ function FilaSeccion({
   seccion,
   numero,
   actual,
+  pendiente,
+  onCancelarSalto,
   onJump,
   onRename,
   onDelete
@@ -115,7 +157,9 @@ function FilaSeccion({
   seccion: Seccion
   numero: number
   actual: boolean
-  onJump: () => void
+  pendiente: boolean
+  onCancelarSalto: () => void
+  onJump: (inmediato: boolean) => void
   onRename: (nombre: string) => void
   onDelete: () => void
 }) {
@@ -132,7 +176,11 @@ function FilaSeccion({
   }
 
   return (
-    <li className={`seccion-fila ${actual ? 'actual' : ''}`} onClick={() => !editando && onJump()} title="Click para ir a esta sección">
+    <li
+      className={`seccion-fila ${actual ? 'actual' : ''} ${pendiente ? 'pendiente' : ''}`}
+      onClick={(e) => !editando && onJump(e.shiftKey)}
+      title="Click para ir a esta sección (sonando, según el modo de salto; Shift+click: ya)"
+    >
       <span className="seccion-numero num">{numero <= 9 ? numero : ''}</span>
       <span className="seccion-color" style={{ background: colorDeSeccion(seccion) }} />
       <span className="seccion-tiempo num">{formatMmSs(seccion.inicioMs)}</span>
@@ -154,6 +202,21 @@ function FilaSeccion({
       ) : (
         <span className="seccion-nombre" onDoubleClick={(e) => (e.stopPropagation(), empezar())}>
           {seccion.nombre}
+        </span>
+      )}
+      {pendiente && !editando && (
+        <span className="seccion-pendiente">
+          <ArrowRight size={13} /> sigue
+          <button
+            title="Cancelar el salto (Esc)"
+            aria-label="Cancelar el salto"
+            onClick={(e) => {
+              e.stopPropagation()
+              onCancelarSalto()
+            }}
+          >
+            <X size={13} />
+          </button>
         </span>
       )}
       {!editando && (

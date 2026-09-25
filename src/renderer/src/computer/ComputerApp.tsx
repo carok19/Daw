@@ -56,9 +56,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
           case 'NumpadEnter':
             return c.stop
           case 'ArrowLeft':
-            return () => c.saltarSeccion(-1)
+            return () => c.saltarSeccion(-1, e.shiftKey)
           case 'ArrowRight':
-            return () => c.saltarSeccion(1)
+            return () => c.saltarSeccion(1, e.shiftKey)
+          case 'Escape':
+            return c.estado?.saltoPendiente ? c.cancelarSalto : null
           case 'PageDown':
             return () => cancionRelativaRef.current(1)
           case 'PageUp':
@@ -69,7 +71,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             return () => c.setLoop(!c.estado?.loop)
         }
         const n = /^(Digit|Numpad)([1-9])$/.exec(e.code)
-        if (n) return () => c.irASeccion(Number(n[2]))
+        if (n) return () => c.irASeccion(Number(n[2]), e.shiftKey)
         return null
       })()
       if (accion) {
@@ -202,6 +204,8 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             onMoverMarcador={(id, ms, sinAjustar) => controller.updateMarker(id, { tiempoMs: ms }, sinAjustar)}
             ajustarCompas={controller.ajustarCompas}
             onAjustarCompas={controller.setAjustarCompas}
+            saltoPendiente={estado?.saltoPendiente ?? null}
+            onCancelarSalto={controller.cancelarSalto}
           />
           <main className="compu-main">
             <Mixer proyecto={proyecto} onUpdate={controller.updateMixer} onReorder={controller.reorderPistas} />
@@ -212,6 +216,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
               modeloVoz={controller.modeloVoz}
               sonando={sonando}
               onJump={controller.jumpToMarker}
+              saltoPendiente={estado?.saltoPendiente ?? null}
+              modoSalto={estado?.modoSalto ?? 'seccion'}
+              hayTempo={!!proyecto.tempo}
+              onModoSalto={controller.setModoSalto}
+              onCancelarSalto={controller.cancelarSalto}
               onCreate={controller.createMarker}
               onRename={(id, nombre) => controller.updateMarker(id, { nombre })}
               onDelete={controller.deleteMarker}
