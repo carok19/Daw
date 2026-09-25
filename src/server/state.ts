@@ -1,9 +1,9 @@
 import crypto from 'node:crypto'
-import type { Marcador, PlaybackState, Proyecto, TabResumen } from '../shared/types'
+import type { Marcador, PatchPista, PlaybackState, Proyecto, TabResumen } from '../shared/types'
 import { posicionActualMs } from '../shared/playback'
-import { deleteProyecto, saveProyecto } from './projects'
+import { guardarSesion, saveProyecto } from './projects'
 
-interface Tab {
+export interface Tab {
   tabId: string
   proyecto: Proyecto
   playback: PlaybackState
@@ -18,56 +18,103 @@ export function posicionActual(playback: PlaybackState, now: number = Date.now()
   return posicionActualMs(playback, now)
 }
 
+const DEBOUNCE_GUARDADO_MS = 400
+
+function limpiarNombre(nombre: unknown, max = 60): string {
+  return typeof nombre === 'string' ? nombre.replace(/\s+/g, ' ').trim().slice(0, max) : ''
+}
+
+function numeroFinito(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
 /**
- * Estado en memoria de la aplicacion: pestanas abiertas (setlist en vivo, seccion 5.4),
- * pestana activa, bloqueo de control y el estado de reproduccion de cada pestana.
+ * Estado en memoria: pestanas abiertas (el setlist en vivo), pestana activa,
+ * bloqueo de control, repetir seccion y el estado de reproduccion de cada
+ * pestana. Solo la pestana activa puede estar "playing".
  *
- * Decision de diseno (ver README): solo la pestana activa puede estar "playing".
- * Al cambiar de pestana, cualquier reproduccion en curso se pausa (se congela su
- * posicion) para evitar reproducir dos canciones a la vez.
+ * Los cambios del mixer se guardan a disco con debounce (mover un fader genera
+ * decenas de cambios por segundo); todo lo demas se guarda al instante.
  */
 export class AppState {
   private tabs = new Map<string, Tab>()
   private orden: string[] = []
   activeTabId: string | null = null
   locked = false
+  loop = false
+  private guardadosPendientes = new Map<string, NodeJS.Timeout>()
 
-  abrirProyecto(proyecto: Proyecto): string {
+  abrirProyecto(proyecto: Proyecto, activar = true): string {
     const tabId = crypto.randomUUID()
     this.tabs.set(tabId, { tabId, proyecto, playback: estadoInicial() })
     this.orden.push(tabId)
-    this.activeTabId = tabId
+    if (activar || !this.activeTabId) this.cambiarActiva(tabId)
+    this.persistirSesion()
     return tabId
   }
 
+  /** Pestana que ya tiene abierto este proyecto, si hay. */
+  tabDeProyecto(proyectoId: string): Tab | null {
+    for (const t of this.tabs.values()) if (t.proyecto.id === proyectoId) return t
+    return null
+  }
+
   cerrarTab(tabId: string): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    this.guardarYa(tab.proyecto)
+    const indice = this.orden.indexOf(tabId)
     this.tabs.delete(tabId)
     this.orden = this.orden.filter((id) => id !== tabId)
     if (this.activeTabId === tabId) {
-      this.activeTabId = this.orden[this.orden.length - 1] ?? null
+      // la que queda en el mismo lugar (la siguiente del setlist), o la anterior si era la ultima
+      this.activeTabId = this.orden[Math.min(indice, this.orden.length - 1)] ?? null
+      this.loop = false
     }
+    this.persistirSesion()
+  }
+
+  cerrarTodo(): void {
+    for (const id of [...this.orden]) this.cerrarTab(id)
   }
 
   setActiveTab(tabId: string): boolean {
-    const tab = this.tabs.get(tabId)
-    if (!tab) return false
+    if (!this.tabs.has(tabId)) return false
+    if (tabId === this.activeTabId) return true
+    this.cambiarActiva(tabId)
+    this.persistirSesion()
+    return true
+  }
+
+  private cambiarActiva(tabId: string): void {
     const anterior = this.getTab(this.activeTabId)
-    if (anterior && anterior.tabId !== tabId && anterior.playback.estado === 'playing') {
+    if (anterior && anterior.tabId !== tabId) {
+      // la cancion que se deja queda pausada donde estaba (solo una suena a la vez)
       const now = Date.now()
-      anterior.playback = {
-        estado: 'paused',
-        positionMs: posicionActual(anterior.playback, now),
-        referenceServerTime: now
+      const pos = posicionActual(anterior.playback, now)
+      if (anterior.playback.estado !== 'stopped') {
+        anterior.playback = { estado: 'paused', positionMs: pos, referenceServerTime: now }
       }
     }
     this.activeTabId = tabId
+    this.loop = false
+  }
+
+  reordenarTabs(orden: string[]): boolean {
+    if (!Array.isArray(orden)) return false
+    const validos = orden.filter((id) => this.tabs.has(id))
+    const faltantes = this.orden.filter((id) => !validos.includes(id))
+    const nuevo = [...new Set([...validos, ...faltantes])]
+    if (nuevo.join() === this.orden.join()) return false
+    this.orden = nuevo
+    this.persistirSesion()
     return true
   }
 
   listaTabs(): TabResumen[] {
     return this.orden.map((id) => {
       const t = this.tabs.get(id)!
-      return { tabId: t.tabId, nombre: t.proyecto.nombre }
+      return { tabId: t.tabId, nombre: t.proyecto.nombre, proyectoId: t.proyecto.id }
     })
   }
 
@@ -94,49 +141,72 @@ export class AppState {
     if (tab) tab.playback = playback
   }
 
-  actualizarMixer(
-    tabId: string,
-    pistaId: string,
-    patch: Partial<{ volumen: number; pan: number; mute: boolean; solo: boolean; nombre: string }>
-  ): boolean {
+  /** Aplica un cambio de mezcla. Devuelve la pista actualizada (o null si no existe). */
+  actualizarMixer(tabId: string, pistaId: string, patch: PatchPista): Tab['proyecto']['pistas'][number] | null {
     const tab = this.tabs.get(tabId)
     const pista = tab?.proyecto.pistas.find((p) => p.id === pistaId)
-    if (!tab || !pista) return false
-    if (patch.volumen !== undefined) pista.volumen = clamp(patch.volumen, 0, 100)
-    if (patch.pan !== undefined) pista.pan = clamp(patch.pan, -100, 100)
-    if (patch.mute !== undefined) pista.mute = patch.mute
-    if (patch.solo !== undefined) pista.solo = patch.solo
-    if (patch.nombre !== undefined && patch.nombre.trim()) pista.nombre = patch.nombre.trim()
-    saveProyecto(tab.proyecto)
-    return true
+    if (!tab || !pista || !patch) return null
+    if (numeroFinito(patch.volumen)) pista.volumen = clamp(Math.round(patch.volumen), 0, 100)
+    if (numeroFinito(patch.pan)) pista.pan = clamp(Math.round(patch.pan), -100, 100)
+    if (typeof patch.mute === 'boolean') pista.mute = patch.mute
+    if (typeof patch.solo === 'boolean') pista.solo = patch.solo
+    const nombre = limpiarNombre(patch.nombre, 40)
+    if (nombre) pista.nombre = nombre
+    if (typeof patch.color === 'string' && /^#[0-9a-f]{6}$/i.test(patch.color)) pista.color = patch.color
+    this.guardarConDebounce(tab.proyecto)
+    return pista
   }
 
   reordenarPistas(tabId: string, orden: string[]): boolean {
     const tab = this.tabs.get(tabId)
-    if (!tab) return false
+    if (!tab || !Array.isArray(orden)) return false
     const porId = new Map(tab.proyecto.pistas.map((p) => [p.id, p]))
     const nuevas = orden.map((id) => porId.get(id)).filter((p): p is NonNullable<typeof p> => !!p)
-    // cualquier pista no incluida en `orden` (no deberia pasar) se agrega al final
     for (const p of tab.proyecto.pistas) {
-      if (!orden.includes(p.id)) nuevas.push(p)
+      if (!nuevas.includes(p)) nuevas.push(p)
     }
-    tab.proyecto.pistas = nuevas
-    saveProyecto(tab.proyecto)
+    tab.proyecto.pistas = [...new Set(nuevas)]
+    this.guardarYa(tab.proyecto)
     return true
+  }
+
+  renombrarProyecto(proyectoId: string, nombre: unknown): Proyecto | null {
+    const tab = this.tabDeProyecto(proyectoId)
+    const limpio = limpiarNombre(nombre, 80)
+    if (!tab || !limpio) return null
+    tab.proyecto.nombre = limpio
+    this.guardarYa(tab.proyecto)
+    return tab.proyecto
   }
 
   crearMarcador(tabId: string, tiempoMs: number, nombre?: string): Marcador | null {
     const tab = this.tabs.get(tabId)
-    if (!tab) return null
-    const nombreFinal = nombre?.trim() || `Marcador ${tab.proyecto.marcadores.length + 1}`
+    if (!tab || !numeroFinito(tiempoMs)) return null
+    const nombreFinal = limpiarNombre(nombre) || `Sección ${tab.proyecto.marcadores.length + 1}`
     const marcador: Marcador = {
       id: crypto.randomUUID(),
       nombre: nombreFinal,
-      tiempoMs: Math.max(0, Math.round(tiempoMs))
+      tiempoMs: this.limitarTiempo(tab, tiempoMs)
     }
     tab.proyecto.marcadores.push(marcador)
-    saveProyecto(tab.proyecto)
+    this.ordenarMarcadores(tab)
+    this.guardarYa(tab.proyecto)
     return marcador
+  }
+
+  /** Vuelve a agregar un marcador borrado (deshacer), con su mismo id. */
+  restaurarMarcador(tabId: string, marcador: Marcador): boolean {
+    const tab = this.tabs.get(tabId)
+    if (!tab || !marcador || typeof marcador.id !== 'string' || !numeroFinito(marcador.tiempoMs)) return false
+    if (tab.proyecto.marcadores.some((m) => m.id === marcador.id)) return false
+    tab.proyecto.marcadores.push({
+      id: marcador.id.slice(0, 64),
+      nombre: limpiarNombre(marcador.nombre) || 'Sección',
+      tiempoMs: this.limitarTiempo(tab, marcador.tiempoMs)
+    })
+    this.ordenarMarcadores(tab)
+    this.guardarYa(tab.proyecto)
+    return true
   }
 
   actualizarMarcador(
@@ -146,34 +216,63 @@ export class AppState {
   ): boolean {
     const tab = this.tabs.get(tabId)
     const marcador = tab?.proyecto.marcadores.find((m) => m.id === marcadorId)
-    if (!tab || !marcador) return false
-    if (patch.nombre !== undefined && patch.nombre.trim()) marcador.nombre = patch.nombre.trim()
-    if (patch.tiempoMs !== undefined) marcador.tiempoMs = Math.max(0, Math.round(patch.tiempoMs))
-    if (patch.color !== undefined) marcador.color = patch.color
-    saveProyecto(tab.proyecto)
+    if (!tab || !marcador || !patch) return false
+    const nombre = limpiarNombre(patch.nombre)
+    if (nombre) marcador.nombre = nombre
+    if (numeroFinito(patch.tiempoMs)) marcador.tiempoMs = this.limitarTiempo(tab, patch.tiempoMs)
+    if (typeof patch.color === 'string' && /^#[0-9a-f]{6}$/i.test(patch.color)) marcador.color = patch.color
+    this.ordenarMarcadores(tab)
+    this.guardarYa(tab.proyecto)
     return true
   }
 
-  eliminarMarcador(tabId: string, marcadorId: string): boolean {
+  eliminarMarcador(tabId: string, marcadorId: string): Marcador | null {
     const tab = this.tabs.get(tabId)
-    if (!tab) return false
-    const antes = tab.proyecto.marcadores.length
+    const marcador = tab?.proyecto.marcadores.find((m) => m.id === marcadorId)
+    if (!tab || !marcador) return null
     tab.proyecto.marcadores = tab.proyecto.marcadores.filter((m) => m.id !== marcadorId)
-    saveProyecto(tab.proyecto)
-    return tab.proyecto.marcadores.length !== antes
+    this.guardarYa(tab.proyecto)
+    return marcador
   }
 
-  actualizarDuracion(tabId: string, duracionTotalMs: number): boolean {
-    const tab = this.tabs.get(tabId)
-    if (!tab || duracionTotalMs <= 0) return false
-    if (tab.proyecto.duracionTotalMs === Math.round(duracionTotalMs)) return false
-    tab.proyecto.duracionTotalMs = Math.round(duracionTotalMs)
-    saveProyecto(tab.proyecto)
-    return true
+  private limitarTiempo(tab: Tab, tiempoMs: number): number {
+    const max = tab.proyecto.duracionTotalMs > 0 ? tab.proyecto.duracionTotalMs - 1 : Number.MAX_SAFE_INTEGER
+    return clamp(Math.round(tiempoMs), 0, max)
   }
 
-  eliminarProyectoGuardado(id: string): void {
-    deleteProyecto(id)
+  private ordenarMarcadores(tab: Tab): void {
+    tab.proyecto.marcadores.sort((a, b) => a.tiempoMs - b.tiempoMs)
+  }
+
+  private guardarConDebounce(proyecto: Proyecto): void {
+    const previo = this.guardadosPendientes.get(proyecto.id)
+    if (previo) clearTimeout(previo)
+    this.guardadosPendientes.set(
+      proyecto.id,
+      setTimeout(() => {
+        this.guardadosPendientes.delete(proyecto.id)
+        saveProyecto(proyecto)
+      }, DEBOUNCE_GUARDADO_MS)
+    )
+  }
+
+  private guardarYa(proyecto: Proyecto): void {
+    const previo = this.guardadosPendientes.get(proyecto.id)
+    if (previo) clearTimeout(previo)
+    this.guardadosPendientes.delete(proyecto.id)
+    saveProyecto(proyecto)
+  }
+
+  /** Guarda a disco cualquier cambio del mixer pendiente (al cerrar la app). */
+  guardarPendientes(): void {
+    for (const t of this.tabs.values()) {
+      if (this.guardadosPendientes.has(t.proyecto.id)) this.guardarYa(t.proyecto)
+    }
+  }
+
+  private persistirSesion(): void {
+    const proyectos = this.listaProyectos().map((p) => p.id)
+    guardarSesion({ proyectos, activo: Math.max(0, this.orden.indexOf(this.activeTabId ?? '')) })
   }
 }
 

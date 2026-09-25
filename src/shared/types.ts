@@ -1,10 +1,10 @@
-// Modelo de datos (ver spec seccion 4) + protocolo de sincronizacion (seccion 7).
-// Compartido entre server (Node) y renderer (browser) — sin dependencias de plataforma.
+// Modelo de datos + protocolo de sincronizacion, compartido entre server (Node)
+// y renderer (browser) — sin dependencias de plataforma.
 
 export interface Pista {
   id: string
   nombre: string
-  /** ruta relativa dentro de la carpeta del proyecto */
+  /** ruta relativa dentro de la carpeta del proyecto (siempre un WAV PCM 16-bit normalizado, ver server/audio.ts) */
   archivo: string
   /** 0 a 100 */
   volumen: number
@@ -12,6 +12,8 @@ export interface Pista {
   pan: number
   mute: boolean
   solo: boolean
+  /** color de la pista en la UI (#rrggbb), asignado al importar por orden */
+  color: string
 }
 
 export interface Marcador {
@@ -20,6 +22,9 @@ export interface Marcador {
   tiempoMs: number
   color?: string
 }
+
+/** Version del formato en disco: 2 = todas las pistas normalizadas a WAV + duracion calculada por el servidor. */
+export const FORMATO_PROYECTO_ACTUAL = 2
 
 export interface Proyecto {
   id: string
@@ -30,9 +35,10 @@ export interface Proyecto {
   marcadores: Marcador[]
   /** duracion de la pista mas larga */
   duracionTotalMs: number
+  formato?: number
 }
 
-/** Resumen liviano de proyecto guardado en disco, para la lista de "Proyectos guardados". */
+/** Resumen liviano de proyecto guardado en disco, para la lista de "Canciones guardadas". */
 export interface ProyectoResumen {
   id: string
   nombre: string
@@ -42,38 +48,54 @@ export interface ProyectoResumen {
   cantidadMarcadores: number
 }
 
+export interface SetlistResumen {
+  id: string
+  nombre: string
+  creadoEn: string
+  /** nombres de las canciones, en orden (las que ya no existen en disco no se listan) */
+  canciones: string[]
+}
+
 export type EstadoTransporte = 'stopped' | 'paused' | 'playing'
 
-/**
- * Estado de reproduccion de una pestana/proyecto, tal como lo administra el servidor.
- * `positionMs` es la posicion valida en `referenceServerTime` (Date.now() del server).
- * Si `estado === 'playing'`, la posicion real en un instante `now >= referenceServerTime`
- * se calcula como `positionMs + (now - referenceServerTime)`.
- */
-export interface PlaybackState {
+/** Un tramo de reproduccion: posicion valida en `referenceServerTime` (Date.now() del server). */
+export interface TramoReproduccion {
   estado: EstadoTransporte
   positionMs: number
   referenceServerTime: number
 }
 
+/**
+ * Estado de reproduccion de la pestana activa, tal como lo administra el servidor.
+ * Si `estado === 'playing'`, la posicion en `now >= referenceServerTime` es
+ * `positionMs + (now - referenceServerTime)`.
+ *
+ * `previo`: los comandos se programan a futuro (margen para que lleguen a todos
+ * los celulares), asi que entre que se emite un salto/pausa y su horario de
+ * ejecucion, lo que REALMENTE esta sonando es el tramo anterior. `previo`
+ * describe ese tramo (solo si estaba sonando) para que la UI, el monitor de
+ * drift y un celular que se une justo en ese momento vean la posicion real y
+ * no la futura (ver `posicionActualMs`).
+ */
+export interface PlaybackState extends TramoReproduccion {
+  previo?: TramoReproduccion
+}
+
 export interface TabResumen {
   tabId: string
   nombre: string
+  proyectoId: string
 }
 
-/** Snapshot completo enviado a un cliente que se conecta o reconecta. */
+/** Snapshot completo enviado a un cliente que se conecta o ante cambios estructurales. */
 export interface EstadoCompleto {
   tabs: TabResumen[]
   activeTabId: string | null
   locked: boolean
+  /** repetir la seccion actual (entre el marcador actual y el siguiente) de la pestana activa */
+  loop: boolean
   proyectoActivo: Proyecto | null
-  /**
-   * Datos completos (pistas, archivos) de TODAS las pestanas abiertas, en el
-   * mismo orden que `tabs` (mismo indice = misma pestana) — no solo la
-   * activa. Necesario para que un cliente pueda precargar en segundo plano
-   * la/las siguientes canciones del setlist antes de que se activen (ver
-   * README, "Precarga y cache de audio").
-   */
+  /** Proyectos completos de TODAS las pestanas abiertas, mismo orden/indice que `tabs`. */
   proyectos: Proyecto[]
   playbackActivo: PlaybackState | null
   serverTime: number
@@ -82,33 +104,36 @@ export interface EstadoCompleto {
 export type AccionProgramada = 'play' | 'pause' | 'stop' | 'seek'
 
 /**
- * Comando de reproduccion programado a futuro (seccion 7.3). Todos los clientes
- * traducen `executeAtServerTime` a su reloj local usando el offset calculado
- * en la sincronizacion de reloj, y usan Web Audio API para programar la accion
- * exactamente en ese instante.
+ * Comando de reproduccion programado a futuro. Todos los clientes traducen
+ * `executeAtServerTime` a su reloj local usando el offset de reloj y programan
+ * el audio con Web Audio para ese instante exacto. `playback` es el nuevo
+ * estado autoritativo (incluye `previo`), para que todos lo apliquen igual.
  */
 export interface ComandoProgramado {
   tabId: string
   accion: AccionProgramada
   positionMs: number
   executeAtServerTime: number
+  playback: PlaybackState
 }
 
 export type OrigenCliente = 'compu' | 'celular'
 
 // ---- Payloads de eventos Socket.IO ----
 
-export interface HelloPayload {
-  origen: OrigenCliente
+/** `auth` del handshake de Socket.IO. `token` solo lo conoce la ventana de Electron (ver main/index.ts). */
+export interface AuthHandshake {
+  origen?: OrigenCliente
+  token?: string
+  /** id estable del dispositivo (localStorage), para no duplicarlo al reconectar */
+  deviceId?: string
+  /** nombre elegido en el propio celular ("Bateria", "Guitarra"...) */
+  nombre?: string
 }
 
 export interface ClockSyncAck {
   tServer: number
 }
-
-// Todos estos comandos operan implicitamente sobre `activeTabId` en el servidor:
-// solo la pestana activa reproduce audio (ver README, "Decisiones de diseno"),
-// asi que no hace falta que el cliente indique de que pestana habla.
 
 export interface TransportPlayPayload {
   /** si se omite, se reanuda desde la posicion actual */
@@ -117,7 +142,6 @@ export interface TransportPlayPayload {
 export interface TransportSeekPayload {
   positionMs: number
 }
-export type TransportSimplePayload = Record<string, never>
 
 export interface MarcadorCrearPayload {
   tiempoMs: number
@@ -133,10 +157,20 @@ export interface MarcadorEliminarPayload {
 export interface MarcadorSaltarPayload {
   marcadorId: string
 }
+export interface MarcadorRestaurarPayload {
+  marcador: Marcador
+}
+
+export type PatchPista = Partial<Pick<Pista, 'volumen' | 'pan' | 'mute' | 'solo' | 'nombre' | 'color'>>
 
 export interface MixerActualizarPayload {
   pistaId: string
-  patch: Partial<Pick<Pista, 'volumen' | 'pan' | 'mute' | 'solo' | 'nombre'>>
+  patch: PatchPista
+}
+/** Broadcast liviano del mixer (en vez del estado completo en cada movimiento de fader). */
+export interface MixerActualizadoPayload {
+  proyectoId: string
+  pista: Pista
 }
 export interface PistasReordenarPayload {
   orden: string[]
@@ -148,55 +182,60 @@ export interface TabsSwitchPayload {
 export interface TabsClosePayload {
   tabId: string
 }
+export interface TabsReordenarPayload {
+  orden: string[]
+}
 
 export interface LockSetPayload {
   locked: boolean
+}
+export interface LoopSetPayload {
+  activo: boolean
 }
 
 export interface ErrorPayload {
   mensaje: string
 }
 
+export interface ImportProgreso {
+  etapa: 'extrayendo' | 'convirtiendo' | 'listo'
+  actual: number
+  total: number
+  pista?: string
+}
+
+export type EstadoBuffer = 'normal' | 'rellenando' | 'critico'
+
 /**
- * Fila del panel "Dispositivos conectados" (seccion 27) / contador junto al QR
- * (seccion 26). Un dispositivo desconectado NO se quita de la lista: queda
- * marcado `conectado: false` para que el operador vea si alguien se cayo a
- * mitad de un culto, en vez de simplemente desaparecer.
+ * Fila del panel "Dispositivos". Un dispositivo desconectado NO se quita de la
+ * lista (queda `conectado: false`) para que el operador note si alguien se cayo
+ * a mitad de un culto. Se identifica por `deviceId` estable: reconectar
+ * reutiliza la misma fila en vez de crear una nueva.
  */
 export interface DispositivoInfo {
   id: string
   origen: OrigenCliente
   etiqueta: string
   conectado: boolean
-  /**
-   * Ultimo drift (ms) reportado por ese dispositivo (ver sistema de
-   * sincronizacion continua). `null` = todavia no reporto ninguno (recien
-   * conectado, o no esta reproduciendo).
-   */
+  /** ultimo drift (ms) reportado; null = no esta reproduciendo o todavia no midio */
   driftMs: number | null
-  /** Estado de precarga de cada proyecto que este dispositivo esta siguiendo (ver PreparacionProyecto). */
-  preparaciones: PreparacionProyecto[]
+  /** estado del buffer de audio (solo mientras reproduce) */
+  buffer: EstadoBuffer | null
+  /** problema de audio reportado por el dispositivo (p.ej. una pista que no se pudo leer) */
+  error: string | null
+  /** false = el celular esta conectado pero todavia no toco "Activar audio" (no va a sonar) */
+  audio: boolean
+  /** Date.now() del server cuando se desconecto (para mostrar "hace X min") */
+  desconectadoDesde: number | null
 }
 
 export interface SyncReportPayload {
   driftMs: number | null
+  buffer?: EstadoBuffer | null
+  error?: string | null
+  audio?: boolean
 }
 
-/**
- * Distingue "tengo los bytes" de "el audio ya esta realmente listo para
- * reproducirse" (seccion pedida explicitamente: descarga != preparacion):
- * - 'sin-preparar': todavia no se empezo (puede estar en cola detras de
- *   una precarga de mayor prioridad).
- * - 'descargando': bajando el archivo por WiFi (`progreso` 0-1 disponible).
- * - 'preparando': ya se bajaron los bytes, decodificando a AudioBuffer.
- * - 'listo': decodificado y activable desde cache al instante.
- * - 'error': fallo la descarga o la decodificacion.
- */
-export type EstadoPreparacion = 'sin-preparar' | 'descargando' | 'preparando' | 'listo' | 'error'
-
-export interface PreparacionProyecto {
-  proyectoId: string
-  estado: EstadoPreparacion
-  /** 0 a 1, solo tiene sentido durante 'descargando'. */
-  progreso?: number
+export interface DeviceRenamePayload {
+  nombre: string
 }

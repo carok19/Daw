@@ -1,21 +1,63 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
-import type { DispositivoInfo, Proyecto } from '@shared/types'
+import { Laptop, Smartphone, Trash2, Wifi } from 'lucide-react'
+import type { DispositivoInfo } from '@shared/types'
+import { Modal } from '../ui/Modal'
 import { SyncBadge } from './SyncBadge'
-import { PreparacionBadge } from './PreparacionBadge'
+import { haceCuanto } from '../format'
+
+function EstadoDispositivo({ d, sonando }: { d: DispositivoInfo; sonando: boolean }) {
+  if (!d.conectado) {
+    return (
+      <span className="dispositivo-estado texto-rojo">
+        <span className="punto rojo" /> Desconectado {haceCuanto(d.desconectadoDesde)}
+      </span>
+    )
+  }
+  if (d.origen === 'compu') return <span className="dispositivo-estado texto-gris">Director</span>
+  if (d.error) {
+    return (
+      <span className="dispositivo-estado texto-rojo" title={d.error}>
+        <span className="punto rojo" /> Error de audio
+      </span>
+    )
+  }
+  if (!d.audio) {
+    return (
+      <span className="dispositivo-estado texto-amarillo" title="En ese celular hay que tocar “Tocá para empezar”">
+        <span className="punto amarillo" /> Falta activar el audio
+      </span>
+    )
+  }
+  if (d.buffer === 'critico') {
+    return (
+      <span className="dispositivo-estado texto-rojo" title="El WiFi no alcanza a traer el audio a tiempo">
+        <span className="punto rojo" /> Conexión lenta
+      </span>
+    )
+  }
+  if (sonando) return <SyncBadge driftMs={d.driftMs} />
+  return (
+    <span className="dispositivo-estado texto-verde">
+      <span className="punto verde" /> Listo
+    </span>
+  )
+}
 
 export function ConnectionPanel({
   dispositivos,
-  siguienteProyecto,
+  sonando,
+  onOlvidar,
   onCerrar
 }: {
   dispositivos: DispositivoInfo[]
-  siguienteProyecto: Proyecto | null
+  sonando: boolean
+  onOlvidar: (id: string) => void
   onCerrar: () => void
 }) {
   const [url, setUrl] = useState<string | null>(null)
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [qr, setQr] = useState<string | null>(null)
+  const [sinRed, setSinRed] = useState(false)
 
   useEffect(() => {
     let cancelado = false
@@ -23,77 +65,72 @@ export function ConnectionPanel({
       if (!window.electronAPI) return
       const info = await window.electronAPI.getConnectionInfo()
       if (cancelado) return
-      if (!info.ip) {
-        setError('No se detectó una red WiFi local. Conectá la computadora a la misma red que los celulares.')
-      }
+      setSinRed(!info.ip)
       setUrl(info.url)
-      const dataUrl = await QRCode.toDataURL(info.url, { width: 260, margin: 1 })
-      if (!cancelado) setQrDataUrl(dataUrl)
+      const dataUrl = await QRCode.toDataURL(info.url, { width: 440, margin: 1 })
+      if (!cancelado) setQr(dataUrl)
     })()
     return () => {
       cancelado = true
     }
   }, [])
 
-  const celularesConectados = dispositivos.filter((d) => d.origen === 'celular' && d.conectado).length
+  const celulares = dispositivos.filter((d) => d.origen === 'celular')
+  const conectados = celulares.filter((d) => d.conectado).length
+  const desconectados = celulares.filter((d) => !d.conectado).length
 
   return (
-    <div className="overlay" onClick={onCerrar}>
-      <div className="panel panel-conexion" onClick={(e) => e.stopPropagation()}>
-        <h2>Conectar celulares</h2>
-        <p>Escaneá este código con la cámara del celular, conectado a la misma red WiFi.</p>
-        {error && <p className="aviso">{error}</p>}
-        {qrDataUrl && <img className="qr" src={qrDataUrl} alt="Código QR de conexión" />}
-        {url && (
-          <p className="conexion-url">
-            o entrá manualmente a: <code>{url}</code>
-          </p>
-        )}
-        <p className="conexion-contador">
-          🟢 {celularesConectados} {celularesConectados === 1 ? 'celular conectado' : 'celulares conectados'}
-        </p>
-
-        <h3 className="dispositivos-titulo">Dispositivos</h3>
-        <ul className="lista-dispositivos">
-          {dispositivos.length === 0 && <li className="markers-vacio">Nadie conectado todavía.</li>}
-          {dispositivos.map((d) => (
-            <li key={d.id} className="dispositivo-row">
-              <span className={`dispositivo-punto ${d.conectado ? 'conectado' : 'desconectado'}`}>
-                {d.conectado ? '🟢' : '🔴'}
-              </span>
-              <span className="dispositivo-etiqueta">
-                {d.etiqueta}
-                {!d.conectado && ' — Desconectado'}
-              </span>
-              {d.conectado && d.origen === 'celular' && <SyncBadge driftMs={d.driftMs} />}
-            </li>
-          ))}
-        </ul>
-
-        {siguienteProyecto && dispositivos.some((d) => d.origen === 'celular') && (
-          <>
-            <h3 className="dispositivos-titulo">
-              Preparación de "{siguienteProyecto.nombre}" <span className="dispositivos-subtitulo">(siguiente)</span>
-            </h3>
-            <p className="dispositivos-ayuda">
-              Esto es solo informativo — el Play no espera a nadie. Si algún celular sigue en rojo/amarillo cuando
-              cambies de canción, se pone al día solo apenas termine.
+    <Modal titulo="Conectar celulares" icono={<Wifi size={20} color="var(--accent)" />} tamano="ancho" onCerrar={onCerrar}>
+      <div className="conexion">
+        <div>
+          {qr ? <img className="qr" src={qr} alt="Código QR para conectar un celular" /> : <div className="qr" />}
+          {url && (
+            <p className="conexion-url">
+              o escribí en el navegador:
+              <code>{url}</code>
             </p>
-            <ul className="lista-dispositivos">
-              {dispositivos
-                .filter((d) => d.origen === 'celular' && d.conectado)
-                .map((d) => (
-                  <li key={d.id} className="dispositivo-row">
-                    <span className="dispositivo-etiqueta">{d.etiqueta}</span>
-                    <PreparacionBadge preparacion={d.preparaciones.find((p) => p.proyectoId === siguienteProyecto.id)} />
-                  </li>
-                ))}
-            </ul>
-          </>
-        )}
+          )}
+        </div>
+        <div>
+          <p className="ayuda" style={{ marginTop: 0 }}>
+            1. Conectá el celular a la <b>misma red WiFi</b> que esta computadora.
+            <br />
+            2. Escaneá el código con la cámara y abrí el link.
+            <br />
+            3. En el celular, tocá <b>“Tocá para empezar”</b> y conectá los auriculares.
+          </p>
+          {sinRed && <p className="error-texto">No se detectó una red WiFi. Conectá la computadora a la red de los celulares.</p>}
 
-        <button onClick={onCerrar}>Cerrar</button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 8px' }}>
+            <strong>
+              <span className="num">{conectados}</span> {conectados === 1 ? 'celular conectado' : 'celulares conectados'}
+            </strong>
+            {desconectados > 0 && (
+              <button className="btn-chico btn-fantasma" onClick={() => onOlvidar('*')}>
+                Limpiar desconectados
+              </button>
+            )}
+          </div>
+          <ul className="lista">
+            {dispositivos.length === 0 && <li className="vacio">Nadie conectado todavía.</li>}
+            {dispositivos.map((d) => (
+              <li key={d.id} className="lista-fila">
+                {d.origen === 'compu' ? <Laptop size={18} color="var(--text-3)" /> : <Smartphone size={18} color="var(--text-3)" />}
+                <div className="lista-principal">
+                  <span className="lista-titulo">{d.etiqueta}</span>
+                  {d.error && d.conectado && <span className="lista-meta texto-rojo">{d.error}</span>}
+                </div>
+                <EstadoDispositivo d={d} sonando={sonando} />
+                {!d.conectado && (
+                  <button className="btn-fantasma btn-icono" title="Quitar de la lista" onClick={() => onOlvidar(d.id)} aria-label={`Quitar ${d.etiqueta}`}>
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
-    </div>
+    </Modal>
   )
 }

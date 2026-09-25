@@ -1,21 +1,24 @@
 import { io, Socket } from 'socket.io-client'
 import type {
+  AuthHandshake,
   ClockSyncAck,
   ComandoProgramado,
   DispositivoInfo,
   EstadoCompleto,
   ErrorPayload,
+  ImportProgreso,
+  MixerActualizadoPayload,
   OrigenCliente
 } from '@shared/types'
 
-const MUESTRAS_SYNC = 5
-const RESYNC_INTERVAL_MS = 5 * 60 * 1000
+const MUESTRAS_SYNC = 7
+const RESYNC_INTERVAL_MS = 2 * 60 * 1000
 
 export type Desuscribir = () => void
 
 /**
- * Envuelve la conexion Socket.IO: sincronizacion de reloj (seccion 7.2) y
- * helpers tipados para emitir comandos / escuchar broadcasts del servidor.
+ * Envuelve la conexion Socket.IO: sincronizacion de reloj y helpers tipados
+ * para emitir comandos / escuchar broadcasts del servidor.
  */
 export class SocketClient {
   readonly socket: Socket
@@ -23,19 +26,22 @@ export class SocketClient {
   conectado = false
 
   private syncEnCurso: Promise<void> | null = null
+  private intervalo: ReturnType<typeof setInterval>
 
-  constructor(private readonly origen: OrigenCliente) {
-    this.socket = io({ auth: { origen } })
+  constructor(origen: OrigenCliente, auth: () => Omit<AuthHandshake, 'origen'>) {
+    // `auth` como funcion: se re-evalua en cada reconexion (p.ej. si el celular cambio de nombre)
+    this.socket = io({
+      auth: (cb) => cb({ origen, ...auth() }),
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 3000
+    })
     this.socket.on('connect', () => {
       this.conectado = true
-      // La sincronizacion inicial (y el orden con el primer pedido de estado)
-      // la maneja explicitamente quien use este cliente (ver onConexionCambia
-      // en useAppController); aca solo se refresca el offset periodicamente.
     })
     this.socket.on('disconnect', () => {
       this.conectado = false
     })
-    setInterval(() => {
+    this.intervalo = setInterval(() => {
       if (this.conectado) void this.sincronizarReloj()
     }, RESYNC_INTERVAL_MS)
   }
@@ -46,11 +52,9 @@ export class SocketClient {
   }
 
   /**
-   * Corre las muestras de sincronizacion (ping/pong, seccion 7.2). Si ya hay
-   * una sincronizacion en curso, se reutiliza esa misma promesa en vez de
-   * lanzar una segunda corrida en paralelo: dos corridas concurrentes se
-   * pisan entre si y corrompen el offset calculado (cada una mide RTT
-   * inflado por el trafico de la otra).
+   * Corre las muestras de sincronizacion (ping/pong) y se queda con la de
+   * menor RTT. Si ya hay una en curso, se reutiliza esa misma promesa: dos
+   * corridas en paralelo se pisan y corrompen el offset.
    */
   async sincronizarReloj(): Promise<void> {
     if (this.syncEnCurso) return this.syncEnCurso
@@ -66,7 +70,7 @@ export class SocketClient {
     for (let i = 0; i < MUESTRAS_SYNC; i++) {
       const t0 = Date.now()
       try {
-        const ack = await this.emitAck<ClockSyncAck>('clock:sync', {})
+        const ack = await this.emitAck<ClockSyncAck>('clock:sync', {}, 2000)
         const t1 = Date.now()
         const rtt = t1 - t0
         const offset = ack.tServer - (t0 + t1) / 2
@@ -85,9 +89,9 @@ export class SocketClient {
     return this.emitAck<EstadoCompleto>('state:request', {})
   }
 
-  emitAck<T>(evento: string, payload: unknown): Promise<T> {
+  emitAck<T>(evento: string, payload: unknown, timeoutMs = 10000): Promise<T> {
     return new Promise((resolve, reject) => {
-      this.socket.timeout(5000).emit(evento, payload, (err: unknown, respuesta: T) => {
+      this.socket.timeout(timeoutMs).emit(evento, payload, (err: unknown, respuesta: T) => {
         if (err) reject(err)
         else resolve(respuesta)
       })
@@ -98,24 +102,33 @@ export class SocketClient {
     this.socket.emit(evento, payload)
   }
 
+  private on<T>(evento: string, cb: (v: T) => void): Desuscribir {
+    this.socket.on(evento, cb)
+    return () => this.socket.off(evento, cb)
+  }
+
   onEstado(cb: (estado: EstadoCompleto) => void): Desuscribir {
-    this.socket.on('estado:actualizado', cb)
-    return () => this.socket.off('estado:actualizado', cb)
+    return this.on('estado:actualizado', cb)
   }
 
   onPlaybackScheduled(cb: (cmd: ComandoProgramado) => void): Desuscribir {
-    this.socket.on('playback:scheduled', cb)
-    return () => this.socket.off('playback:scheduled', cb)
+    return this.on('playback:scheduled', cb)
+  }
+
+  onMixer(cb: (m: MixerActualizadoPayload) => void): Desuscribir {
+    return this.on('mixer:actualizado', cb)
   }
 
   onRechazado(cb: (err: ErrorPayload) => void): Desuscribir {
-    this.socket.on('accion:rechazada', cb)
-    return () => this.socket.off('accion:rechazada', cb)
+    return this.on('accion:rechazada', cb)
   }
 
   onDispositivos(cb: (dispositivos: DispositivoInfo[]) => void): Desuscribir {
-    this.socket.on('dispositivos:actualizado', cb)
-    return () => this.socket.off('dispositivos:actualizado', cb)
+    return this.on('dispositivos:actualizado', cb)
+  }
+
+  onImportProgreso(cb: (p: ImportProgreso) => void): Desuscribir {
+    return this.on('import:progreso', cb)
   }
 
   onConexionCambia(cb: (conectado: boolean) => void): Desuscribir {
@@ -127,5 +140,10 @@ export class SocketClient {
       this.socket.off('connect', onConnect)
       this.socket.off('disconnect', onDisconnect)
     }
+  }
+
+  close(): void {
+    clearInterval(this.intervalo)
+    this.socket.close()
   }
 }

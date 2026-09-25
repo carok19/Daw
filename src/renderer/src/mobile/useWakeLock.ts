@@ -1,43 +1,47 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import NoSleep from 'nosleep.js'
 
 /**
- * Mantiene la pantalla encendida mientras `activo` es true (Modo Celular,
- * despues de tocar "Activar audio"). El motivo tecnico: el audio sigue
- * sonando aunque la pantalla se bloquee, pero el navegador frena los
- * temporizadores de JS (el chequeo de drift cada 4s) cuando la pantalla se
- * apaga o la app pasa a segundo plano — eso es lo que hacia que un celular
- * se fuera desincronizando sin que nadie lo corrigiera hasta que alguien
- * volvia a mirar la pantalla. Evitar que se bloquee es la primera linea de
- * defensa; `useVisibilityResync` (en useAppController) es la segunda, para
- * cuando igual se bloquea (otra app, "apagar pantalla" del sistema, etc).
+ * Mantiene la pantalla del celular encendida mientras la app esta activa.
+ *
+ * Por que importa: el audio sigue sonando con la pantalla apagada, pero el
+ * navegador frena los temporizadores de JS (el control de sincronia) y un
+ * celular se va desfasando sin que nadie lo corrija.
+ *
+ * El Wake Lock API nativo solo existe en conexiones seguras (https) y la app
+ * se abre por http://<ip-de-la-compu>, asi que se usa NoSleep.js: con Wake
+ * Lock si esta disponible y, si no, con un video mudo en loop (funciona en
+ * Android y iPhone). Tiene que habilitarse desde un toque del usuario: por
+ * eso `activar()` se llama en el boton "Tocá para empezar".
  */
-export function useWakeLock(activo: boolean): void {
+export function useWakeLock(): { activar: () => void; activo: boolean } {
+  const noSleep = useRef<NoSleep | null>(null)
+  const [activo, setActivo] = useState(false)
+
   useEffect(() => {
-    if (!activo || !('wakeLock' in navigator)) return
-
-    let sentinel: WakeLockSentinel | null = null
-    let cancelado = false
-
-    async function pedir(): Promise<void> {
-      try {
-        sentinel = await navigator.wakeLock.request('screen')
-      } catch {
-        // rechazado o no soportado en este momento: no es critico, se sigue sin el
+    function onVisible(): void {
+      // al volver a la app, el video / wake lock se reanuda (el sistema los libera al ocultarse)
+      if (document.visibilityState === 'visible' && noSleep.current && activo) {
+        void noSleep.current.enable().catch(() => {})
       }
     }
-
-    function onVisibilityChange(): void {
-      // el wake lock se libera solo cuando la pestana se oculta; hay que
-      // volver a pedirlo cada vez que la pantalla se reactiva
-      if (document.visibilityState === 'visible' && !cancelado) void pedir()
-    }
-
-    void pedir()
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => {
-      cancelado = true
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-      void sentinel?.release().catch(() => {})
-    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
   }, [activo])
+
+  useEffect(() => () => noSleep.current?.disable(), [])
+
+  function activar(): void {
+    try {
+      if (!noSleep.current) noSleep.current = new NoSleep()
+      void noSleep.current
+        .enable()
+        .then(() => setActivo(true))
+        .catch(() => setActivo(false))
+    } catch {
+      setActivo(false)
+    }
+  }
+
+  return { activar, activo }
 }

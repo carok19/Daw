@@ -1,7 +1,15 @@
-import type { ComandoProgramado, Pista, PreparacionProyecto, Proyecto } from '@shared/types'
-import type { PlaybackEngine } from './PlaybackEngine'
-import { BUFFER_CRITICAL_SEC, BUFFER_MIN_START_SEC, BUFFER_TARGET_SEC, SEGMENT_DURATION_SEC } from './streamConfig'
-import { WAV_HEADER_FETCH_BYTES, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from './wav'
+import type { ComandoProgramado, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import { WAV_HEADER_FETCH_BYTES, WavHeaderError, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from '@shared/wav'
+import { clavePista, type MezclaPersonal, type PlaybackEngine } from './PlaybackEngine'
+import {
+  BUFFER_CRITICAL_SEC,
+  BUFFER_MIN_START_SEC,
+  BUFFER_TARGET_SEC,
+  MAX_CUES,
+  MAX_FETCHES_POR_PISTA,
+  SEGMENT_DURATION_SEC,
+  SEGMENTOS_POR_CUE
+} from './streamConfig'
 
 interface FuenteActiva {
   indice: number
@@ -17,53 +25,64 @@ interface CorreccionActiva {
 
 interface PistaStream {
   pistaId: string
+  nombre: string
   archivo: string
   gainNode: GainNode
   pannerNode: StereoPannerNode
   wavInfo: WavInfo | null
   wavInfoPromise: Promise<WavInfo> | null
-  /** Segmentos ya decodificados, indexados por indice (0 = [0, SEGMENT_DURATION_SEC) seg de la cancion). Es la ventana deslizante: nunca contiene la cancion entera. */
+  /** Ventana deslizante alrededor del playhead: nunca contiene la cancion entera. */
   segmentos: Map<number, AudioBuffer>
-  fetchEnCurso: Set<number>
+  /** Arranque de cada marcador (cues), para saltos/loops sin esperar la red. */
+  cueSegmentos: Map<number, AudioBuffer>
+  enVuelo: Map<number, AbortController>
   fuentesActivas: FuenteActiva[]
-  /** ctx.currentTime donde encadenar el proximo segmento de ESTA pista (null = todavia no se encadeno nada en esta corrida). */
+  /** ctx.currentTime donde encadenar el proximo segmento de ESTA pista (null = todavia nada en esta corrida). */
   cursorCtxTime: number | null
   /** Primer indice que ya no existe en el archivo (fin de la pista). null = todavia no se supo. */
   finEnIndice: number | null
+  /** error irrecuperable (archivo que falta, formato ilegible): la pista queda muda, las demas siguen */
+  error: string | null
+  fallosSeguidos: number
+  /** Date.now() hasta el que no se reintenta (backoff ante errores de red) */
+  esperarHasta: number
 }
 
-const MAX_FETCHES_CONCURRENTES_POR_PISTA = 3
 const MARGEN_AGOTAMIENTO_SEC = 0.5
-const INTERVALO_TICK_MS = 300
-const MAX_RATE_DEV = 0.004 // identico a AudioEngine.corregirDriftSuave: misma formula, sin tocarla.
+const INTERVALO_TICK_MS = 250
+const MAX_RATE_DEV = 0.004 // 0.4%: correccion de drift inaudible
+
+class ErrorFatal extends Error {}
 
 /**
- * Motor de audio para el RECEPTOR (celular): buffer deslizante por segmentos,
- * pedidos por HTTP Range directamente al Host (ver README "Streaming
- * progresivo"). A diferencia de `AudioEngine` (compu, cache completo en
- * memoria), este motor NUNCA descarga ni decodifica la cancion entera: cada
- * pista mantiene como maximo unos `BUFFER_TARGET_SEC` segundos de audio
- * futuro, en segmentos de `SEGMENT_DURATION_SEC`, y libera cada segmento
- * apenas termina de sonar.
+ * Motor de audio por streaming (celulares Y compu): buffer deslizante por
+ * segmentos pedidos por HTTP Range al servidor (ver README "Streaming
+ * progresivo"). Nunca descarga ni decodifica la cancion entera: cada pista
+ * mantiene unos `BUFFER_TARGET_SEC` segundos de audio futuro, mas los
+ * primeros segundos de cada marcador ("cues"), y libera cada segmento apenas
+ * termina de sonar.
  *
  * Encadenado gapless: cada segmento es un `AudioBufferSourceNode` de un solo
  * uso, programado con `start(cursor, offset)` donde `cursor` se calcula por
  * aritmetica de muestras (duracion exacta del segmento anterior), nunca por
- * temporizador — asi el empalme entre segmentos consecutivos no tiene huecos
- * ni superposicion.
+ * temporizador.
  *
  * Garantia dura: jamas se llama a `source.start()` para un segmento que
- * todavia no llego. Si al vencedor le toca sonar y no esta listo, se detiene
- * silenciosamente (nada de silencio sintetico) y se espera a que el buffer
- * junte `BUFFER_MIN_START_SEC` de nuevo; en ese momento se avisa por
- * `onRequiereResync` para que el llamador reingrese a sync con el mecanismo
- * YA EXISTENTE (`reingresarEnSync`), en vez de que este motor invente su
- * propio scheduling absoluto.
+ * todavia no llego. Si se agota el buffer, se espera a juntar
+ * `BUFFER_MIN_START_SEC` y se pide un reingreso a sync fresco por
+ * `onRequiereResync` (el llamador usa `reingresarEnSync`).
+ *
+ * Errores: una pista con un problema irrecuperable (404, formato ilegible)
+ * queda muda sin bloquear a las demas y se informa por `errorAudio()`; los
+ * errores de red se reintentan con espera creciente (nunca en un bucle
+ * cerrado que congele el celular).
  */
 export class StreamingEngine implements PlaybackEngine {
   private ctx: AudioContext
   private masterGain: GainNode
   private pistas = new Map<string, PistaStream>()
+  private ultimasPistas: Pista[] = []
+  private mezclaPersonal: MezclaPersonal = {}
 
   proyectoIdCargado: string | null = null
   private proyectoId: string | null = null
@@ -74,9 +93,9 @@ export class StreamingEngine implements PlaybackEngine {
   private posicionBaseSeg = 0
   private targetCtxTimeInicio = 0
   private indiceBase = 0
+  /** proximo indice a encadenar (reproduciendo) o a tener listo (en reposo) */
   private indiceSiguienteAEncadenar = 0
-  /** Se incrementa en cada 'play' (incluye seeks/marcadores): los fetches de una corrida vieja se descartan al llegar. */
-  private generacion = 0
+  private cueIndices = new Set<number>()
 
   private audioAnchorCtxTime: number | null = null
   private audioAnchorOffsetSec = 0
@@ -84,12 +103,13 @@ export class StreamingEngine implements PlaybackEngine {
   private correccionActual: CorreccionActiva | null = null
 
   private onResyncCb: (() => void) | null = null
+  private intervalo: ReturnType<typeof setInterval>
 
   constructor() {
     this.ctx = new AudioContext()
     this.masterGain = this.ctx.createGain()
     this.masterGain.connect(this.ctx.destination)
-    setInterval(() => this.tick(), INTERVALO_TICK_MS)
+    this.intervalo = setInterval(() => this.tick(), INTERVALO_TICK_MS)
   }
 
   async resumeSiHaceFalta(): Promise<void> {
@@ -97,41 +117,33 @@ export class StreamingEngine implements PlaybackEngine {
   }
 
   setVolumenGeneral(volumen0a100: number): void {
-    this.masterGain.gain.value = clamp(volumen0a100, 0, 100) / 100
+    const v = clamp(volumen0a100, 0, 100) / 100
+    this.masterGain.gain.setTargetAtTime(v * v, this.ctx.currentTime, 0.02)
   }
 
   setAjusteManualMs(ms: number): void {
     this.ajusteManualMs = ms
   }
 
+  setMezclaPersonal(mezcla: MezclaPersonal): void {
+    this.mezclaPersonal = mezcla
+    this.aplicarMezcla(this.ultimasPistas)
+  }
+
   onRequiereResync(cb: () => void): void {
     this.onResyncCb = cb
   }
 
-  /** No aplica: el receptor no retiene canciones completas en cache, asi que no hay nada que "proteger" de un desalojo. */
-  setProtegidos(_proyectoIds: string[]): void {
-    return
-  }
-
-  /** No aplica en este motor: nunca se precarga una cancion entera de antemano (ver README). No-op seguro por si algun llamador lo invoca igual. */
-  async precargarProyecto(proyecto: Proyecto, onEstado?: (p: PreparacionProyecto) => void): Promise<void> {
-    onEstado?.({ proyectoId: proyecto.id, estado: this.proyectoId === proyecto.id ? 'listo' : 'sin-preparar' })
-  }
-
-  /** "Listo" aca es metadata (pistas + nodos creados), no audio descargado: en streaming eso no existe como concepto previo. */
-  estaListo(proyectoId: string): boolean {
-    return this.proyectoId === proyectoId
-  }
-
-  async activarProyecto(proyecto: Proyecto, onEstado?: (p: PreparacionProyecto) => void): Promise<number> {
+  activarProyecto(proyecto: Proyecto, posicionMs: number): void {
     if (this.proyectoId !== proyecto.id) {
-      this.detenerTodoInmediato()
+      this.detener()
+      for (const p of this.pistas.values()) {
+        for (const c of p.enVuelo.values()) c.abort()
+        p.gainNode.disconnect()
+      }
       this.pistas.clear()
       this.proyectoId = proyecto.id
       this.proyectoIdCargado = proyecto.id
-      this.posicionBaseSeg = 0
-      this.indiceBase = 0
-      this.indiceSiguienteAEncadenar = 0
 
       for (const pista of proyecto.pistas) {
         const gainNode = this.ctx.createGain()
@@ -140,55 +152,86 @@ export class StreamingEngine implements PlaybackEngine {
         pannerNode.connect(this.masterGain)
         this.pistas.set(pista.id, {
           pistaId: pista.id,
+          nombre: pista.nombre,
           archivo: pista.archivo,
           gainNode,
           pannerNode,
           wavInfo: null,
           wavInfoPromise: null,
           segmentos: new Map(),
-          fetchEnCurso: new Set(),
+          cueSegmentos: new Map(),
+          enVuelo: new Map(),
           fuentesActivas: [],
           cursorCtxTime: null,
-          finEnIndice: null
+          finEnIndice: null,
+          error: null,
+          fallosSeguidos: 0,
+          esperarHasta: 0
         })
       }
     }
     this.aplicarMezcla(proyecto.pistas)
-    // no hay descarga que hacer: el "listo" de la precarga tradicional no aplica aca.
-    onEstado?.({ proyectoId: proyecto.id, estado: 'listo' })
-    return proyecto.duracionTotalMs
+    this.setCues(proyecto.marcadores.map((m) => m.tiempoMs))
+    if (!this.reproduciendo) this.prepararEn(posicionMs)
   }
 
   aplicarMezcla(pistasProyecto: Pista[]): void {
+    this.ultimasPistas = pistasProyecto
     const haySolo = pistasProyecto.some((p) => p.solo)
+    const t = this.ctx.currentTime
     for (const pista of pistasProyecto) {
       const stream = this.pistas.get(pista.id)
       if (!stream) continue
-      const silenciado = pista.mute || (haySolo && !pista.solo)
-      stream.gainNode.gain.value = silenciado ? 0 : clamp(pista.volumen, 0, 100) / 100
-      stream.pannerNode.pan.value = clamp(pista.pan, -100, 100) / 100
+      stream.nombre = pista.nombre
+      const personal = this.mezclaPersonal[clavePista(pista.nombre)]
+      const silenciado = pista.mute || (haySolo && !pista.solo) || !!personal?.mute
+      const v = clamp(pista.volumen, 0, 100) / 100
+      // curva de fader tipo audio (cuadratica): el recorrido del fader se siente parejo al oido
+      const ganancia = silenciado ? 0 : v * v * (personal ? clamp(personal.ganancia, 0, 2) : 1)
+      // rampa corta: sin "clicks" al mover un fader o mutear
+      stream.gainNode.gain.setTargetAtTime(ganancia, t, 0.015)
+      stream.pannerNode.pan.setTargetAtTime(clamp(pista.pan, -100, 100) / 100, t, 0.015)
+    }
+  }
+
+  setCues(tiemposMs: number[]): void {
+    const indices = new Set<number>()
+    const add = (ms: number): void => {
+      const base = Math.floor(ms / 1000 / SEGMENT_DURATION_SEC)
+      for (let k = 0; k < SEGMENTOS_POR_CUE; k++) indices.add(base + k)
+    }
+    add(0) // el principio de la cancion siempre
+    ;[...tiemposMs].sort((a, b) => a - b).slice(0, MAX_CUES).forEach(add)
+    this.cueIndices = indices
+    for (const pista of this.pistas.values()) {
+      for (const i of [...pista.cueSegmentos.keys()]) if (!indices.has(i)) pista.cueSegmentos.delete(i)
     }
   }
 
   /**
-   * Ejecuta un comando programado por el servidor. 'play' cubre tanto un
-   * arranque/resume normal como un seek o salto de marcador (el servidor los
-   * emite igual, ver socketHandlers.ts): siempre se interpreta como "arrancar
-   * a sonar en `positionMs`, en el instante `executeAtServerTime`", nunca
-   * como "seguir descargando desde donde estaba" — por eso se descarta la
-   * ventana vieja y se pide directamente la ventana alrededor de la nueva
-   * posicion, sin bajar nada del tramo intermedio.
+   * Ejecuta un comando programado por el servidor. 'play' cubre arranque,
+   * resume, seek, salto de marcador y "repetir seccion": siempre se
+   * interpreta como "sonar desde `positionMs` en el instante
+   * `executeAtServerTime`".
    */
   ejecutar(cmd: ComandoProgramado, clockOffsetMs: number): void {
-    if (this.pistas.size === 0) return // proyecto todavia no activado
+    if (this.pistas.size === 0) return
+
+    if (cmd.accion === 'seek') {
+      // solo se emite sin audio sonando: preparar el buffer donde va a arrancar
+      if (!this.reproduciendo) this.prepararEn(cmd.positionMs)
+      return
+    }
 
     const clienteObjetivoMs = cmd.executeAtServerTime - clockOffsetMs
     let delaySec = (clienteObjetivoMs - Date.now()) / 1000
     let offsetMs = cmd.positionMs
 
+    // compensa la latencia de salida propia de este dispositivo + el ajuste fino manual
     delaySec -= this.latenciaDeSalidaSec()
     delaySec -= this.ajusteManualMs / 1000
     if (delaySec < 0) {
+      // llego tarde: arranca ya, saltando lo que se perdio
       offsetMs += -delaySec * 1000
       delaySec = 0
     }
@@ -201,32 +244,16 @@ export class StreamingEngine implements PlaybackEngine {
       this.audioAnchorCtxTime = null
       this.correccionActivaHastaCtxTime = 0
       this.correccionActual = null
-      if (cmd.accion === 'stop') {
-        for (const pista of this.pistas.values()) {
-          pista.segmentos.clear()
-          pista.fetchEnCurso.clear()
-          pista.cursorCtxTime = null
-        }
-      }
+      this.prepararEn(cmd.accion === 'stop' ? 0 : cmd.positionMs)
       return
     }
 
-    // 'play' (incluye seek/marker:jump mientras suena): siempre reprograma desde cero.
+    // 'play': siempre reprograma desde cero en la nueva posicion
     this.detenerFuentes(targetTime)
-    this.generacion++
     const nuevaPosicionSeg = offsetMs / 1000
     const nuevoIndiceBase = Math.floor(nuevaPosicionSeg / SEGMENT_DURATION_SEC)
-
-    // libera lo que quedo antes de la nueva posicion; lo que ya estaba
-    // cacheado DESPUES de la nueva posicion se conserva (p.ej. un resync
-    // chico cerca de donde ya estabamos no vuelve a pedir nada).
-    for (const pista of this.pistas.values()) {
-      for (const indice of [...pista.segmentos.keys()]) {
-        if (indice < nuevoIndiceBase) pista.segmentos.delete(indice)
-      }
-      pista.fetchEnCurso.clear()
-      pista.cursorCtxTime = null
-    }
+    this.moverVentana(nuevoIndiceBase)
+    for (const pista of this.pistas.values()) pista.cursorCtxTime = null
 
     this.posicionBaseSeg = nuevaPosicionSeg
     this.targetCtxTimeInicio = targetTime
@@ -235,6 +262,15 @@ export class StreamingEngine implements PlaybackEngine {
     this.reproduciendo = true
     this.esperando = !this.listoParaArrancar(nuevoIndiceBase)
     this.tick()
+  }
+
+  detener(): void {
+    this.detenerFuentes(this.ctx.currentTime)
+    this.reproduciendo = false
+    this.esperando = false
+    this.audioAnchorCtxTime = null
+    this.correccionActivaHastaCtxTime = 0
+    this.correccionActual = null
   }
 
   posicionRealMs(): number | null {
@@ -247,7 +283,12 @@ export class StreamingEngine implements PlaybackEngine {
     return this.ctx.currentTime < this.correccionActivaHastaCtxTime
   }
 
-  /** Misma formula que AudioEngine.corregirDriftSuave (sin tocarla), aplicada a TODAS las fuentes activas y propagada a las que se encadenen despues mientras dure la rampa (ver `programarIndice`). */
+  /**
+   * Corrige un drift chico sin cortes: ajusta levemente la velocidad
+   * (`playbackRate`, desviacion fija de 0.4%, inaudible) el tiempo justo para
+   * absorberlo, en todas las fuentes activas y en las que se encadenen
+   * mientras dure la correccion.
+   */
   corregirDriftSuave(driftMs: number): void {
     if (this.audioAnchorCtxTime === null || this.pistas.size === 0) return
     const now = this.ctx.currentTime
@@ -263,53 +304,93 @@ export class StreamingEngine implements PlaybackEngine {
     for (const pista of this.pistas.values()) {
       for (const { source } of pista.fuentesActivas) this.aplicarCorreccionANodo(source, correccion)
     }
-
     this.audioAnchorOffsetSec -= driftSec
     this.correccionActivaHastaCtxTime = now + duracionSec
   }
 
-  /** Estado del buffer (min entre pistas) para pruebas/ajuste de los umbrales — no esta cableado a UI todavia. */
-  bufferSegundosDisponibles(): number {
-    return this.segundosDisponiblesDesde(this.indiceSiguienteAEncadenar)
+  estadoBuffer(): EstadoBuffer | null {
+    if (!this.reproduciendo) return null
+    if (this.esperando) return 'critico'
+    const porDelante = this.segundosYaEncadenadosPorDelante() + this.segundosDisponiblesDesde(this.indiceSiguienteAEncadenar)
+    if (porDelante >= BUFFER_TARGET_SEC * 0.6) return 'normal'
+    if (porDelante >= BUFFER_CRITICAL_SEC) return 'rellenando'
+    return 'critico'
   }
 
-  estadoBuffer(): 'normal' | 'rellenando' | 'critico' {
-    const disponibles = this.bufferSegundosDisponibles()
-    if (disponibles >= BUFFER_TARGET_SEC) return 'normal'
-    if (disponibles >= BUFFER_CRITICAL_SEC) return 'rellenando'
-    return 'critico'
+  errorAudio(): string | null {
+    for (const p of this.pistas.values()) if (p.error) return `${p.nombre}: ${p.error}`
+    return null
+  }
+
+  dispose(): void {
+    clearInterval(this.intervalo)
+    this.detener()
+    for (const p of this.pistas.values()) for (const c of p.enVuelo.values()) c.abort()
+    this.pistas.clear()
+    void this.ctx.close().catch(() => {})
+  }
+
+  // ---- ventana / prebuffer ----
+
+  /** En reposo: deja listos los primeros segundos desde `posicionMs` para que el proximo play arranque al instante. */
+  private prepararEn(posicionMs: number): void {
+    const indice = Math.floor(Math.max(0, posicionMs) / 1000 / SEGMENT_DURATION_SEC)
+    this.moverVentana(indice)
+    this.indiceSiguienteAEncadenar = indice
+    this.lanzarFetchsPendientes()
+  }
+
+  /**
+   * Reubica la ventana en `indiceBase`: descarta lo que queda fuera (y cancela
+   * los pedidos en vuelo que ya no sirven) y aprovecha lo que haya en los cues.
+   */
+  private moverVentana(indiceBase: number): void {
+    const hasta = indiceBase + this.cantidadIndicesVentana() + 1
+    for (const pista of this.pistas.values()) {
+      for (const indice of [...pista.segmentos.keys()]) {
+        if (indice < indiceBase || indice > hasta) pista.segmentos.delete(indice)
+      }
+      for (const [indice, ctrl] of pista.enVuelo) {
+        if ((indice < indiceBase || indice > hasta) && !this.cueIndices.has(indice)) {
+          ctrl.abort()
+          pista.enVuelo.delete(indice)
+        }
+      }
+      for (let i = indiceBase; i <= hasta; i++) {
+        const cue = pista.cueSegmentos.get(i)
+        if (cue && !pista.segmentos.has(i)) pista.segmentos.set(i, cue)
+      }
+    }
+  }
+
+  private cantidadIndicesVentana(): number {
+    return Math.ceil(BUFFER_TARGET_SEC / SEGMENT_DURATION_SEC) + 1
   }
 
   // ---- scheduling interno ----
 
   private tick(): void {
-    if (!this.reproduciendo) return
-
-    if (this.esperando) {
-      if (this.listoParaArrancar(this.indiceSiguienteAEncadenar)) {
-        this.esperando = false
-        this.onResyncCb?.() // pide un reingreso a sync FRESCO (mecanismo existente), no un arranque con el horario viejo
-        return
-      }
-      this.lanzarFetchsPendientes()
-      return
-    }
-
-    for (;;) {
-      if (this.todasTerminaronEn(this.indiceSiguienteAEncadenar)) break // fin de la cancion: nada mas que encadenar
-      if (this.segundosYaEncadenadosPorDelante() >= BUFFER_TARGET_SEC) break
-      if (!this.indiceListoEnTodas(this.indiceSiguienteAEncadenar)) {
-        if (this.estaPorAgotarse()) {
-          // no llego a tiempo: se corta aca, nada de silencio sintetico. onended
-          // de lo ya encadenado dejara sonar hasta el final real, despues nada.
-          this.esperando = true
+    if (this.reproduciendo) {
+      if (this.esperando) {
+        if (this.listoParaArrancar(this.indiceSiguienteAEncadenar)) {
+          this.esperando = false
+          this.onResyncCb?.() // reingreso a sync FRESCO (mecanismo existente), no un arranque con el horario viejo
+          return
         }
-        break
+      } else {
+        for (;;) {
+          if (this.todasTerminaronEn(this.indiceSiguienteAEncadenar)) break
+          if (this.segundosYaEncadenadosPorDelante() >= BUFFER_TARGET_SEC) break
+          if (!this.indiceListoEnTodas(this.indiceSiguienteAEncadenar)) {
+            // no llego a tiempo: se corta aca (nada de silencio sintetico) y se espera
+            if (this.estaPorAgotarse()) this.esperando = true
+            break
+          }
+          this.programarIndice(this.indiceSiguienteAEncadenar)
+          this.indiceSiguienteAEncadenar++
+        }
       }
-      this.programarIndice(this.indiceSiguienteAEncadenar)
-      this.indiceSiguienteAEncadenar++
     }
-
     this.lanzarFetchsPendientes()
   }
 
@@ -318,11 +399,15 @@ export class StreamingEngine implements PlaybackEngine {
     for (const pista of this.pistas.values()) {
       if (pista.finEnIndice !== null && indice >= pista.finEnIndice) continue
       const buffer = pista.segmentos.get(indice)
-      if (!buffer) continue // defensivo: no deberia pasar, `indiceListoEnTodas` ya lo garantiza
+      if (!buffer) continue
 
       const cursor = pista.cursorCtxTime ?? this.targetCtxTimeInicio
       const esPrimeraDeEstaPista = pista.cursorCtxTime === null
       const offsetDentro = esPrimeraDeEstaPista ? Math.max(0, this.posicionBaseSeg - indice * SEGMENT_DURATION_SEC) : 0
+      if (offsetDentro >= buffer.duration) {
+        pista.cursorCtxTime = cursor
+        continue
+      }
 
       const source = this.ctx.createBufferSource()
       source.buffer = buffer
@@ -336,7 +421,8 @@ export class StreamingEngine implements PlaybackEngine {
         // horario/offset invalido puntual: se ignora este segmento de esta pista
       }
       source.onended = () => {
-        pista.segmentos.delete(indice) // libera de memoria el segmento ya reproducido
+        // libera de memoria el segmento ya reproducido (los cues se conservan aparte)
+        if (pista.segmentos.get(indice) === buffer) pista.segmentos.delete(indice)
         pista.fuentesActivas = pista.fuentesActivas.filter((f) => f.source !== source)
       }
       pista.fuentesActivas.push({ indice, source })
@@ -351,84 +437,136 @@ export class StreamingEngine implements PlaybackEngine {
     }
   }
 
+  /** Pide lo que falta: primero la ventana actual (o la de reposo), despues los cues. */
   private lanzarFetchsPendientes(): void {
-    const cantidadIndices = Math.ceil(BUFFER_TARGET_SEC / SEGMENT_DURATION_SEC) + 1
+    if (this.pistas.size === 0) return
+    const ahora = Date.now()
+    const cantidad = this.reproduciendo
+      ? this.cantidadIndicesVentana()
+      : Math.ceil(BUFFER_MIN_START_SEC / SEGMENT_DURATION_SEC) + 1
     for (const pista of this.pistas.values()) {
-      for (let i = 0; i < cantidadIndices; i++) {
-        if (pista.fetchEnCurso.size >= MAX_FETCHES_CONCURRENTES_POR_PISTA) break
+      if (pista.error || ahora < pista.esperarHasta) continue
+      let ventanaCompleta = true
+      for (let i = 0; i < cantidad; i++) {
         const indice = this.indiceSiguienteAEncadenar + i
+        if (pista.finEnIndice !== null && indice >= pista.finEnIndice) break
+        if (pista.segmentos.has(indice)) continue
+        ventanaCompleta = false
+        if (pista.enVuelo.has(indice)) continue
+        if (pista.enVuelo.size >= MAX_FETCHES_POR_PISTA) break
+        this.pedirSegmento(pista, indice)
+      }
+      // cues: solo con la ventana ya cubierta, de a uno, para no competir con lo que esta por sonar
+      if (!ventanaCompleta || pista.enVuelo.size > 0) continue
+      for (const indice of this.cueIndices) {
         if (pista.finEnIndice !== null && indice >= pista.finEnIndice) continue
-        if (pista.segmentos.has(indice) || pista.fetchEnCurso.has(indice)) continue
-        pista.fetchEnCurso.add(indice)
-        void this.fetchSegmento(pista, indice, this.generacion)
+        if (pista.cueSegmentos.has(indice) || pista.enVuelo.has(indice)) continue
+        const enVentana = pista.segmentos.get(indice)
+        if (enVentana) {
+          pista.cueSegmentos.set(indice, enVentana)
+          continue
+        }
+        this.pedirSegmento(pista, indice)
+        break
       }
     }
   }
 
-  private async fetchSegmento(pista: PistaStream, indice: number, generacion: number): Promise<void> {
-    try {
-      const info = await this.obtenerWavInfo(pista)
-      if (generacion !== this.generacion) return // la ventana que pidio esto ya no existe (seek/cambio de proyecto)
+  private pedirSegmento(pista: PistaStream, indice: number): void {
+    const ctrl = new AbortController()
+    pista.enVuelo.set(indice, ctrl)
+    const proyectoId = this.proyectoId
+    void this.fetchSegmento(pista, indice, ctrl.signal)
+      .then((buffer) => {
+        if (proyectoId !== this.proyectoId || ctrl.signal.aborted) return
+        pista.fallosSeguidos = 0
+        if (buffer) this.guardarSegmento(pista, indice, buffer)
+        this.tick()
+      })
+      .catch((err: unknown) => {
+        if (ctrl.signal.aborted || proyectoId !== this.proyectoId) return
+        if (err instanceof ErrorFatal) {
+          pista.error = err.message
+          pista.finEnIndice = 0 // la pista queda muda; las demas siguen sonando
+          console.warn('[StreamingEngine] pista con error', pista.nombre, err.message)
+          this.tick()
+        } else {
+          // error de red: reintento con espera creciente (0.3s, 0.6s, ... hasta 4s)
+          pista.fallosSeguidos++
+          pista.esperarHasta = Date.now() + Math.min(4000, 300 * 2 ** (pista.fallosSeguidos - 1))
+          if (!pista.wavInfo) pista.wavInfoPromise = null
+        }
+      })
+      .finally(() => {
+        if (pista.enVuelo.get(indice) === ctrl) pista.enVuelo.delete(indice)
+      })
+  }
 
-      const bpf = bytesPorFrame(info)
-      const framesTotales = totalFrames(info)
-      const frameOffset = Math.round(indice * SEGMENT_DURATION_SEC * info.sampleRate)
-      if (frameOffset >= framesTotales) {
-        this.marcarFin(pista, indice)
-        return
-      }
-      const frameCountPedido = Math.min(Math.round(SEGMENT_DURATION_SEC * info.sampleRate), framesTotales - frameOffset)
-      const byteStart = info.dataOffset + frameOffset * bpf
-      const byteEnd = byteStart + frameCountPedido * bpf - 1
+  private guardarSegmento(pista: PistaStream, indice: number, buffer: AudioBuffer): void {
+    if (this.cueIndices.has(indice)) pista.cueSegmentos.set(indice, buffer)
+    const desde = this.indiceSiguienteAEncadenar
+    if (indice >= desde && indice <= desde + this.cantidadIndicesVentana() + 1) pista.segmentos.set(indice, buffer)
+  }
 
-      const bytes = await this.fetchRango(this.urlDe(pista), byteStart, byteEnd)
-      if (generacion !== this.generacion) return
-
-      const frameCountReal = Math.floor(bytes.byteLength / bpf)
-      if (frameCountReal <= 0) {
-        this.marcarFin(pista, indice)
-        return
-      }
-      const canales = decodePcmSegment(info, bytes)
-      const buffer = this.ctx.createBuffer(info.numChannels, frameCountReal, info.sampleRate)
-      for (let ch = 0; ch < info.numChannels; ch++) buffer.copyToChannel(canales[ch], ch)
-
-      pista.segmentos.set(indice, buffer)
-      if (frameCountReal < frameCountPedido) this.marcarFin(pista, indice + 1)
-    } catch (err) {
-      console.warn('[StreamingEngine] fallo al pedir segmento', pista.pistaId, indice, err)
-    } finally {
-      pista.fetchEnCurso.delete(indice)
-      if (generacion === this.generacion) this.tick()
+  /** Baja y decodifica un segmento. null = no hay audio en ese indice (fin de la pista). */
+  private async fetchSegmento(pista: PistaStream, indice: number, signal: AbortSignal): Promise<AudioBuffer | null> {
+    const info = await this.obtenerWavInfo(pista)
+    const bpf = bytesPorFrame(info)
+    const framesTotales = totalFrames(info)
+    const frameOffset = Math.round(indice * SEGMENT_DURATION_SEC * info.sampleRate)
+    if (frameOffset >= framesTotales) {
+      this.marcarFin(pista, indice)
+      return null
     }
+    const frameCountPedido = Math.min(Math.round(SEGMENT_DURATION_SEC * info.sampleRate), framesTotales - frameOffset)
+    const byteStart = info.dataOffset + frameOffset * bpf
+    const byteEnd = byteStart + frameCountPedido * bpf - 1
+
+    const bytes = await this.fetchRango(this.urlDe(pista), byteStart, byteEnd, signal)
+    const frameCountReal = Math.floor(bytes.byteLength / bpf)
+    if (frameCountReal <= 0) {
+      this.marcarFin(pista, indice)
+      return null
+    }
+    const canales = decodePcmSegment(info, bytes)
+    const buffer = this.ctx.createBuffer(info.numChannels, frameCountReal, info.sampleRate)
+    for (let ch = 0; ch < info.numChannels; ch++) buffer.copyToChannel(canales[ch], ch)
+    if (frameOffset + frameCountReal >= framesTotales) this.marcarFin(pista, indice + 1)
+    return buffer
   }
 
   private marcarFin(pista: PistaStream, indice: number): void {
     pista.finEnIndice = pista.finEnIndice === null ? indice : Math.min(pista.finEnIndice, indice)
   }
 
-  private async obtenerWavInfo(pista: PistaStream): Promise<WavInfo> {
-    if (pista.wavInfo) return pista.wavInfo
+  /** El encabezado no se cancela con el segmento que lo pidio: lo necesitan todos los de esa pista. */
+  private obtenerWavInfo(pista: PistaStream): Promise<WavInfo> {
+    if (pista.wavInfo) return Promise.resolve(pista.wavInfo)
     if (!pista.wavInfoPromise) {
       pista.wavInfoPromise = this.fetchRango(this.urlDe(pista), 0, WAV_HEADER_FETCH_BYTES - 1).then((bytes) => {
-        const info = parseWavHeader(bytes)
-        pista.wavInfo = info
-        return info
+        try {
+          const info = parseWavHeader(bytes)
+          if (![8, 16, 24, 32].includes(info.bitsPerSample)) throw new WavHeaderError('formato de audio no soportado')
+          pista.wavInfo = info
+          return info
+        } catch (err) {
+          throw new ErrorFatal(err instanceof WavHeaderError ? 'formato de audio no soportado' : String(err))
+        }
       })
     }
     return pista.wavInfoPromise
   }
 
-  private async fetchRango(url: string, start: number, end: number): Promise<ArrayBuffer> {
-    const resp = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } })
+  private async fetchRango(url: string, start: number, end: number, signal?: AbortSignal): Promise<ArrayBuffer> {
+    const resp = await fetch(url, { headers: { Range: `bytes=${start}-${end}` }, signal })
     if (resp.status === 206) return resp.arrayBuffer()
     if (resp.status === 200) {
-      // el servidor no respeto el Range (no deberia pasar con express.static): recortamos nosotros del archivo completo
       const completo = await resp.arrayBuffer()
       return completo.slice(start, end + 1)
     }
     if (resp.status === 416) return new ArrayBuffer(0) // rango fuera del archivo: fin de pista
-    throw new Error(`HTTP ${resp.status} pidiendo ${url}`)
+    if (resp.status === 404) throw new ErrorFatal('falta el archivo de audio en la computadora')
+    throw new Error(`HTTP ${resp.status}`)
   }
 
   private urlDe(pista: PistaStream): string {
@@ -449,16 +587,6 @@ export class StreamingEngine implements PlaybackEngine {
     }
   }
 
-  private detenerTodoInmediato(): void {
-    this.detenerFuentes(this.ctx.currentTime)
-    this.reproduciendo = false
-    this.esperando = false
-    this.audioAnchorCtxTime = null
-    this.correccionActivaHastaCtxTime = 0
-    this.correccionActual = null
-  }
-
-  /** Identico a AudioEngine.latenciaDeSalidaSec (duplicado a proposito: no se toca AudioEngine.ts). */
   private latenciaDeSalidaSec(): number {
     return this.ctx.outputLatency ?? this.ctx.baseLatency ?? 0
   }
@@ -472,7 +600,7 @@ export class StreamingEngine implements PlaybackEngine {
     p.linearRampToValueAtTime(1, c.now + c.duracionSec)
   }
 
-  /** true si, para CADA pista, hay `BUFFER_MIN_START_SEC` contiguos desde `indice` (o la pista ya termina antes de eso). */
+  /** true si, para CADA pista, hay `BUFFER_MIN_START_SEC` contiguos desde `indice` (o la pista termina antes). */
   private listoParaArrancar(indice: number): boolean {
     for (const pista of this.pistas.values()) {
       let idx = indice
@@ -488,7 +616,6 @@ export class StreamingEngine implements PlaybackEngine {
     return true
   }
 
-  /** min entre pistas de cuantos segundos contiguos hay disponibles desde `indice` (tope BUFFER_TARGET_SEC, no hace falta seguir contando mas alla). */
   private segundosDisponiblesDesde(indice: number): number {
     if (this.pistas.size === 0) return 0
     let minSegundos = Infinity
@@ -510,14 +637,16 @@ export class StreamingEngine implements PlaybackEngine {
     return minSegundos
   }
 
-  /** Seg de audio YA encadenado (source.start ya llamado) por delante del instante actual — min entre pistas. */
+  /** Seg de audio YA encadenado por delante del instante actual — min entre pistas que siguen sonando. */
   private segundosYaEncadenadosPorDelante(): number {
     if (this.pistas.size === 0) return 0
     let minCursor = Infinity
     for (const pista of this.pistas.values()) {
+      if (pista.finEnIndice !== null && this.indiceSiguienteAEncadenar >= pista.finEnIndice) continue
       const cursor = pista.cursorCtxTime ?? this.targetCtxTimeInicio
       minCursor = Math.min(minCursor, cursor)
     }
+    if (minCursor === Infinity) return BUFFER_TARGET_SEC
     return Math.max(0, minCursor - this.ctx.currentTime)
   }
 

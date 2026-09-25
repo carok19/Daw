@@ -127,3 +127,8 @@ function leerAscii(view: DataView, offset: number, length: number): string {
   for (let i = 0; i < length; i++) s += String.fromCharCode(view.getUint8(offset + i))
   return s
 }
+
+/** Duracion (ms) del audio segun el encabezado. */
+export function duracionMsDeWav(info: WavInfo): number {
+  return (totalFrames(info) / info.sampleRate) * 1000
+}

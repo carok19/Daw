@@ -1,58 +1,120 @@
-import type { DispositivoInfo, OrigenCliente, PreparacionProyecto } from '../shared/types'
+import type { DispositivoInfo, EstadoBuffer, OrigenCliente, SyncReportPayload } from '../shared/types'
 
-interface DispositivoInterno {
-  id: string
-  origen: OrigenCliente
-  etiqueta: string
-  conectado: boolean
-  driftMs: number | null
-  /** proyectoId -> estado de preparacion. Mapa interno; se serializa a array en `listar()`. */
-  preparaciones: Map<string, PreparacionProyecto>
+interface DispositivoInterno extends DispositivoInfo {
+  sockets: Set<string>
+  /** nombre elegido en el propio dispositivo (reemplaza la etiqueta automatica) */
+  nombre: string | null
+  numero: number
+}
+
+const ID_DISPOSITIVO_RE = /^[A-Za-z0-9_-]{8,64}$/
+const BUFFERS_VALIDOS: EstadoBuffer[] = ['normal', 'rellenando', 'critico']
+
+export function limpiarNombreDispositivo(nombre: unknown): string | null {
+  if (typeof nombre !== 'string') return null
+  const limpio = nombre.replace(/\s+/g, ' ').trim().slice(0, 24)
+  return limpio || null
 }
 
 /**
- * Roster de dispositivos conectados (secciones 26/27/21 del spec): un panel
- * en la compu para ver quien esta conectado, su calidad de sincronizacion y
- * (seccion "precarga") si ya tiene lista la proxima cancion del setlist. Un
- * dispositivo desconectado se marca `conectado: false` en vez de eliminarse,
- * para que el operador note si alguien se cayo a mitad de un culto en vez
- * de que la fila simplemente desaparezca.
+ * Roster de dispositivos: quien esta conectado, su sincronizacion y su buffer.
+ * Se identifica por un `deviceId` estable que cada dispositivo guarda en su
+ * localStorage: al reconectar (pantalla bloqueada, WiFi que se corta, recargar
+ * la pagina) vuelve a la MISMA fila con la misma etiqueta, en vez de sumar un
+ * "Celular N" nuevo y dejar el anterior en rojo para siempre. Un dispositivo
+ * desconectado queda visible (marcado) hasta que el operador lo olvide.
  */
 export class DeviceRegistry {
   private dispositivos = new Map<string, DispositivoInterno>()
+  private porSocket = new Map<string, string>()
   private siguienteNumeroCelular = 1
 
-  conectar(socketId: string, origen: OrigenCliente): DispositivoInfo {
-    const etiqueta = origen === 'compu' ? 'Computadora' : `Celular ${this.siguienteNumeroCelular++}`
-    const info: DispositivoInterno = {
-      id: socketId,
-      origen,
-      etiqueta,
-      conectado: true,
-      driftMs: null,
-      preparaciones: new Map()
+  conectar(socketId: string, origen: OrigenCliente, deviceId: unknown, nombre: unknown): DispositivoInfo {
+    const id = typeof deviceId === 'string' && ID_DISPOSITIVO_RE.test(deviceId) ? `${origen}:${deviceId}` : socketId
+    let info = this.dispositivos.get(id)
+    if (!info) {
+      info = {
+        id,
+        origen,
+        etiqueta: '',
+        nombre: null,
+        numero: origen === 'celular' ? this.siguienteNumeroCelular++ : 0,
+        conectado: true,
+        driftMs: null,
+        buffer: null,
+        error: null,
+        audio: origen === 'compu',
+        desconectadoDesde: null,
+        sockets: new Set()
+      }
+      this.dispositivos.set(id, info)
     }
-    this.dispositivos.set(socketId, info)
+    const nombreLimpio = limpiarNombreDispositivo(nombre)
+    if (nombreLimpio) info.nombre = nombreLimpio
+    info.sockets.add(socketId)
+    info.conectado = true
+    info.desconectadoDesde = null
+    this.porSocket.set(socketId, id)
+    this.actualizarEtiqueta(info)
     return this.aPublico(info)
   }
 
   desconectar(socketId: string): void {
-    const info = this.dispositivos.get(socketId)
-    if (info) info.conectado = false
+    const info = this.infoDeSocket(socketId)
+    this.porSocket.delete(socketId)
+    if (!info) return
+    info.sockets.delete(socketId)
+    if (info.sockets.size === 0) {
+      info.conectado = false
+      info.desconectadoDesde = Date.now()
+      info.driftMs = null
+      info.buffer = null
+      if (info.origen === 'celular') info.audio = false
+    }
   }
 
-  actualizarDrift(socketId: string, driftMs: number | null): void {
-    const info = this.dispositivos.get(socketId)
-    if (info) info.driftMs = driftMs
+  reportar(socketId: string, payload: SyncReportPayload): void {
+    const info = this.infoDeSocket(socketId)
+    if (!info || !payload) return
+    info.driftMs = typeof payload.driftMs === 'number' && Number.isFinite(payload.driftMs) ? payload.driftMs : null
+    if (payload.buffer !== undefined) info.buffer = BUFFERS_VALIDOS.includes(payload.buffer as EstadoBuffer) ? payload.buffer! : null
+    if (payload.error !== undefined) info.error = typeof payload.error === 'string' ? payload.error.slice(0, 200) : null
+    if (typeof payload.audio === 'boolean') info.audio = payload.audio
   }
 
-  actualizarPreparacion(socketId: string, preparacion: PreparacionProyecto): void {
-    const info = this.dispositivos.get(socketId)
-    if (info) info.preparaciones.set(preparacion.proyectoId, preparacion)
+  renombrar(socketId: string, nombre: unknown): boolean {
+    const info = this.infoDeSocket(socketId)
+    if (!info) return false
+    info.nombre = limpiarNombreDispositivo(nombre)
+    this.actualizarEtiqueta(info)
+    return true
+  }
+
+  /** Quita de la lista un dispositivo desconectado (el operador lo "olvida"). */
+  olvidar(id: string): boolean {
+    const info = this.dispositivos.get(id)
+    if (!info || info.conectado) return false
+    this.dispositivos.delete(id)
+    return true
+  }
+
+  olvidarDesconectados(): void {
+    for (const [id, info] of this.dispositivos) if (!info.conectado) this.dispositivos.delete(id)
   }
 
   listar(): DispositivoInfo[] {
-    return [...this.dispositivos.values()].map((info) => this.aPublico(info))
+    return [...this.dispositivos.values()]
+      .sort((a, b) => (a.origen === b.origen ? a.numero - b.numero : a.origen === 'compu' ? -1 : 1))
+      .map((info) => this.aPublico(info))
+  }
+
+  private infoDeSocket(socketId: string): DispositivoInterno | undefined {
+    const id = this.porSocket.get(socketId)
+    return id ? this.dispositivos.get(id) : undefined
+  }
+
+  private actualizarEtiqueta(info: DispositivoInterno): void {
+    info.etiqueta = info.nombre ?? (info.origen === 'compu' ? 'Computadora' : `Celular ${info.numero}`)
   }
 
   private aPublico(info: DispositivoInterno): DispositivoInfo {
@@ -62,7 +124,10 @@ export class DeviceRegistry {
       etiqueta: info.etiqueta,
       conectado: info.conectado,
       driftMs: info.driftMs,
-      preparaciones: [...info.preparaciones.values()]
+      buffer: info.buffer,
+      error: info.error,
+      audio: info.audio,
+      desconectadoDesde: info.desconectadoDesde
     }
   }
 }

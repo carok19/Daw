@@ -1,138 +1,203 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AppController } from '../App'
-import { TabsBar } from './TabsBar'
-import { Mixer } from './Mixer'
+import { FileArchive, FolderOpen, ListMusic, Smartphone } from 'lucide-react'
+import type { AppController } from '../app/useAppController'
+import { getPlayheadMs } from '../app/playheadStore'
+import { useConfirmar } from '../ui/Confirmar'
+import { Avisos } from '../ui/Avisos'
+import { TopBar } from './TopBar'
 import { Transport } from './Transport'
+import { Mixer } from './Mixer'
 import { MarkersPanel } from './MarkersPanel'
 import { ConnectionPanel } from './ConnectionPanel'
 import { ProjectsScreen } from './ProjectsScreen'
+import { ShortcutsModal } from './ShortcutsModal'
 
-function esCampoDeTexto(el: EventTarget | null): boolean {
-  const tag = (el as HTMLElement | null)?.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA'
+type Ventana = null | { tipo: 'canciones' | 'setlists' } | { tipo: 'conexion' } | { tipo: 'atajos' }
+
+/** Solo los campos donde se escribe texto "se comen" el teclado; faders, botones y casillas no. */
+function escribiendoTexto(el: EventTarget | null): boolean {
+  const h = el as HTMLElement | null
+  if (!h) return false
+  if (h.isContentEditable || h.tagName === 'TEXTAREA') return true
+  if (h.tagName !== 'INPUT') return false
+  const tipo = (h as HTMLInputElement).type
+  return ['text', 'search', 'number', 'email', 'password', 'url', ''].includes(tipo)
 }
 
 export function ComputerApp({ controller }: { controller: AppController }) {
   const { estado } = controller
-  const [pantalla, setPantalla] = useState<'ninguna' | 'proyectos' | 'conexion'>('ninguna')
-  const [cargando, setCargando] = useState(false)
-  const [errorCarga, setErrorCarga] = useState<string | null>(null)
+  const confirmar = useConfirmar()
+  const [ventana, setVentana] = useState<Ventana>(null)
+  const proyecto = estado?.proyectoActivo ?? null
+  const sonando = estado?.playbackActivo?.estado === 'playing'
 
-  useEffect(() => {
-    if (estado && estado.tabs.length === 0) setPantalla('proyectos')
-  }, [estado?.tabs.length])
-
-  // El controller se recrea en cada render (y playheadMs cambia ~60 veces por
-  // segundo), asi que el atajo de teclado NO depende de esos valores: se
-  // registra una sola vez y siempre lee el estado mas fresco a traves de este
-  // ref (si dependiera de `controller`/`estado`, el listener se sacaria y
-  // volvería a poner en cada frame).
-  const controllerRef = useRef(controller)
-  controllerRef.current = controller
+  // Los atajos se registran una sola vez y leen siempre lo mas nuevo por ref.
+  const ctx = useRef({ controller, ventana, proyecto })
+  ctx.current = { controller, ventana, proyecto }
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent): void {
-      // ignora la repeticion automatica al mantener apretada la tecla: sino
-      // cada repeticion vuelve a mandar "play", empujando el horario programado
-      // cada vez mas adelante y dando la sensacion de que "no arranca".
-      if (e.repeat) return
-      if (esCampoDeTexto(e.target)) return
-      const c = controllerRef.current
-      if (e.code === 'Space') {
+      const { controller: c, ventana: v, proyecto: p } = ctx.current
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+      if (escribiendoTexto(e.target)) return
+      if (e.key === '?') {
         e.preventDefault()
-        const playing = c.estado?.playbackActivo?.estado === 'playing'
-        if (playing) c.pause()
-        else c.play()
-      } else if (e.key === 'm' || e.key === 'M') {
-        if (c.estado?.proyectoActivo) {
-          e.preventDefault()
-          c.createMarker(c.playheadMs)
+        setVentana({ tipo: 'atajos' })
+        return
+      }
+      if (v || document.querySelector('[data-modal]')) return // con una ventana abierta, solo Esc (lo maneja el Modal)
+      if (!p) return
+      const accion = ((): (() => void) | null => {
+        switch (e.code) {
+          case 'Space':
+            return c.togglePlay
+          case 'Enter':
+          case 'NumpadEnter':
+            return c.stop
+          case 'ArrowLeft':
+            return () => c.saltarSeccion(-1)
+          case 'ArrowRight':
+            return () => c.saltarSeccion(1)
+          case 'PageDown':
+            return () => c.cancionRelativa(1)
+          case 'PageUp':
+            return () => c.cancionRelativa(-1)
+          case 'KeyM':
+            return () => c.createMarker(getPlayheadMs())
+          case 'KeyL':
+            return () => c.setLoop(!c.estado?.loop)
         }
+        const n = /^(Digit|Numpad)([1-9])$/.exec(e.code)
+        if (n) return () => c.irASeccion(Number(n[2]))
+        return null
+      })()
+      if (accion) {
+        e.preventDefault()
+        // que un boton con foco no reciba ademas el Espacio/Enter
+        ;(document.activeElement as HTMLElement | null)?.blur?.()
+        accion()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  async function cargarZip(): Promise<void> {
-    setCargando(true)
-    setErrorCarga(null)
-    const r = await controller.loadZip()
-    setCargando(false)
-    if (!r.ok && r.error) setErrorCarga(r.error)
-    if (r.ok) setPantalla('ninguna')
+  async function cerrarCancion(tabId: string): Promise<void> {
+    const tab = estado?.tabs.find((t) => t.tabId === tabId)
+    if (tab && tabId === estado?.activeTabId && sonando) {
+      const ok = await confirmar({
+        titulo: 'La canción está sonando',
+        mensaje: (
+          <>
+            Si quitás <b>{tab.nombre}</b> del setlist, se corta el audio en todos los celulares. (La canción sigue guardada.)
+          </>
+        ),
+        confirmar: 'Cortar y quitar',
+        peligro: true
+      })
+      if (!ok) return
+    }
+    controller.closeTab(tabId)
   }
 
-  const proyecto = estado?.proyectoActivo ?? null
+  const secciones = controller.secciones
 
   return (
     <div className="compu">
-      <TabsBar
+      <TopBar
         tabs={estado?.tabs ?? []}
         activeTabId={estado?.activeTabId ?? null}
+        sonando={sonando}
         onSwitch={controller.switchTab}
-        onClose={controller.closeTab}
-        onNuevo={() => setPantalla('proyectos')}
-        onConexion={() => setPantalla('conexion')}
+        onClose={cerrarCancion}
+        onReorder={controller.reorderTabs}
+        onNueva={() => setVentana({ tipo: 'canciones' })}
+        dispositivos={controller.dispositivos}
+        onDispositivos={() => setVentana({ tipo: 'conexion' })}
         locked={estado?.locked ?? false}
-        onToggleLock={(v) => controller.setLocked(v)}
+        onLocked={controller.setLocked}
+        sonidoLocal={controller.sonidoLocal}
+        onSonidoLocal={controller.setSonidoLocal}
+        onAyuda={() => setVentana({ tipo: 'atajos' })}
       />
 
-      {controller.ultimoError && (
-        <div className="banner-error" onClick={controller.limpiarError}>
-          {controller.ultimoError}
+      {!controller.conectado && estado && (
+        <div className="aviso aviso-error" style={{ borderRadius: 0, animation: 'none' }}>
+          Reconectando con el servidor…
         </div>
       )}
 
       {proyecto ? (
-        <div className="compu-body">
-          <Mixer proyecto={proyecto} onUpdatePista={controller.updateMixer} onReorder={controller.reorderPistas} />
-          <MarkersPanel
+        <>
+          <Transport
+            key={proyecto.id}
             proyecto={proyecto}
-            playheadMs={controller.playheadMs}
-            onJump={controller.jumpToMarker}
-            onCreate={controller.createMarker}
-            onUpdate={controller.updateMarker}
-            onDelete={controller.deleteMarker}
+            secciones={secciones}
+            playback={estado?.playbackActivo ?? null}
+            loop={estado?.loop ?? false}
+            siguienteProyecto={controller.siguienteProyecto}
+            driftMs={controller.driftMs}
+            sonidoLocal={controller.sonidoLocal}
+            onTogglePlay={controller.togglePlay}
+            onStop={controller.stop}
+            onSeek={controller.seek}
+            onSeccion={controller.saltarSeccion}
+            onLoop={controller.setLoop}
+            onSiguienteCancion={() => controller.cancionRelativa(1)}
+            onRenombrar={(n) => controller.renameProject(proyecto.id, n)}
+            onMoverMarcador={(id, ms) => controller.updateMarker(id, { tiempoMs: ms })}
           />
-        </div>
+          <main className="compu-main">
+            <Mixer proyecto={proyecto} onUpdate={controller.updateMixer} onReorder={controller.reorderPistas} />
+            <MarkersPanel
+              secciones={secciones}
+              onJump={controller.jumpToMarker}
+              onCreate={controller.createMarker}
+              onRename={(id, nombre) => controller.updateMarker(id, { nombre })}
+              onDelete={controller.deleteMarker}
+            />
+          </main>
+        </>
       ) : (
-        <div className="compu-vacio">Cargá una canción para empezar (botón &ldquo;+ Canción&rdquo; arriba).</div>
+        <div className="compu-vacio">
+          <div className="vacio-tarjeta">
+            <div className="icono-grande">
+              <ListMusic size={32} />
+            </div>
+            <h2>Armá el setlist</h2>
+            <p>
+              Importá una canción (un .zip con una pista por archivo) o abrí una ya guardada. El audio sale de los celulares:
+              conectalos con el código QR de <b>Celulares</b>.
+            </p>
+            <div className="vacio-acciones">
+              <button className="btn-primario" onClick={() => setVentana({ tipo: 'canciones' })}>
+                <FileArchive size={17} /> Importar o abrir canción
+              </button>
+              <button onClick={() => setVentana({ tipo: 'setlists' })}>
+                <FolderOpen size={17} /> Abrir un setlist
+              </button>
+              <button onClick={() => setVentana({ tipo: 'conexion' })}>
+                <Smartphone size={17} /> Conectar celulares
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
-      {proyecto && (
-        <Transport
-          proyecto={proyecto}
-          playback={estado?.playbackActivo ?? null}
-          playheadMs={controller.playheadMs}
-          driftMs={controller.driftMs}
-          onPlay={() => controller.play()}
-          onPause={controller.pause}
-          onStop={controller.stop}
-          onSeek={controller.seek}
-          onJumpMarker={controller.jumpToMarker}
-          onDragMarker={(id, tiempoMs) => controller.updateMarker(id, { tiempoMs })}
-        />
+      {ventana && (ventana.tipo === 'canciones' || ventana.tipo === 'setlists') && (
+        <ProjectsScreen controller={controller} vistaInicial={ventana.tipo} onCerrar={() => setVentana(null)} />
       )}
-
-      {pantalla === 'proyectos' && (
-        <ProjectsScreen
-          controller={controller}
-          cargando={cargando}
-          error={errorCarga}
-          onCargarZip={cargarZip}
-          onCerrar={() => estado && estado.tabs.length > 0 && setPantalla('ninguna')}
-          puedeCerrar={!!estado && estado.tabs.length > 0}
-        />
-      )}
-
-      {pantalla === 'conexion' && (
+      {ventana?.tipo === 'conexion' && (
         <ConnectionPanel
           dispositivos={controller.dispositivos}
-          siguienteProyecto={controller.siguienteProyecto}
-          onCerrar={() => setPantalla('ninguna')}
+          sonando={sonando}
+          onOlvidar={controller.forgetDevice}
+          onCerrar={() => setVentana(null)}
         />
       )}
+      {ventana?.tipo === 'atajos' && <ShortcutsModal onCerrar={() => setVentana(null)} />}
+
+      <Avisos avisos={controller.avisos} onCerrar={controller.cerrarAviso} />
     </div>
   )
 }

@@ -1,14 +1,13 @@
 import { useAppController } from './app/useAppController'
 import { ComputerApp } from './computer/ComputerApp'
 import { MobileApp } from './mobile/MobileApp'
+import { ConfirmarProvider } from './ui/Confirmar'
 
 export default function App() {
   const controller = useAppController()
-
-  if (controller.origen === 'compu') {
-    return <ComputerApp controller={controller} />
-  }
-  return <MobileApp controller={controller} />
+  return (
+    <ConfirmarProvider>
+      {controller.origen === 'compu' ? <ComputerApp controller={controller} /> : <MobileApp controller={controller} />}
+    </ConfirmarProvider>
+  )
 }
-
-export type AppController = ReturnType<typeof useAppController>

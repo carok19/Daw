@@ -3,322 +3,497 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import crypto from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import AdmZip from 'adm-zip'
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
-import { createServer } from './index'
-import type { EstadoCompleto, ClockSyncAck, ComandoProgramado, DispositivoInfo } from '../shared/types'
+import { createServer, type AppServer } from './index'
+import { rutaFfmpeg, leerInfoWav } from './audio'
+import { nombrePistaDesdeArchivo } from './zip'
+import type {
+  ClockSyncAck,
+  ComandoProgramado,
+  DispositivoInfo,
+  EstadoCompleto,
+  MixerActualizadoPayload,
+  ProyectoResumen,
+  SetlistResumen
+} from '../shared/types'
 
-function crearZipDePrueba(etiqueta = ''): string {
-  const zip = new AdmZip()
-  // wav header minimo valido (44 bytes, 0 frames) alcanza para probar el flujo de import
-  const wavVacio = Buffer.from(
-    'RIFF' + '\x24\x00\x00\x00' + 'WAVEfmt ' + '\x10\x00\x00\x00' + '\x01\x00\x01\x00' +
-      '\x44\xac\x00\x00' + '\x88\x58\x01\x00' + '\x02\x00\x10\x00' + 'data' + '\x00\x00\x00\x00',
-    'binary'
-  )
-  zip.addFile('voz_guia.wav', wavVacio)
-  zip.addFile('click.wav', wavVacio)
-  zip.addFile('notas.txt', Buffer.from('no es audio'))
-  zip.addFile('__MACOSX/._voz_guia.wav', wavVacio)
-  const sufijo = etiqueta ? `${etiqueta}-` : ''
-  const tmp = path.join(os.tmpdir(), `test-song-${sufijo}${Date.now()}-${Math.random().toString(36).slice(2)}.zip`)
-  zip.writeZip(tmp)
-  return tmp
+const TOKEN = 'token-de-prueba'
+
+// ---------- helpers ----------
+
+function tmpDir(prefijo: string): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefijo))
 }
 
-async function emitAck<T>(socket: ClientSocket, evento: string, payload: unknown): Promise<T> {
+/** Genera un archivo de audio con ffmpeg (tono). `canales`: 'mono' | 'dual' (estereo L==R) | 'estereo' (L != R). */
+function generarAudio(destino: string, segundos: number, canales: 'mono' | 'dual' | 'estereo' = 'estereo'): void {
+  const ffmpeg = rutaFfmpeg()
+  assert.ok(ffmpeg, 'se necesita ffmpeg para los tests')
+  const fuente =
+    canales === 'estereo'
+      ? ['-f', 'lavfi', '-i', `sine=frequency=440:duration=${segundos}`, '-f', 'lavfi', '-i', `sine=frequency=660:duration=${segundos}`, '-filter_complex', '[0:a][1:a]join=inputs=2:channel_layout=stereo']
+      : canales === 'dual'
+        ? ['-f', 'lavfi', '-i', `sine=frequency=440:duration=${segundos}`, '-ac', '2']
+        : ['-f', 'lavfi', '-i', `sine=frequency=440:duration=${segundos}`, '-ac', '1']
+  const r = spawnSync(ffmpeg!, ['-hide_banner', '-loglevel', 'error', '-y', ...fuente, destino])
+  assert.equal(r.status, 0, r.stderr?.toString())
+}
+
+function crearZip(nombre: string, archivos: Record<string, string | Buffer>): string {
+  const zip = new AdmZip()
+  for (const [n, contenido] of Object.entries(archivos)) {
+    zip.addFile(n, typeof contenido === 'string' ? fs.readFileSync(contenido) : contenido)
+  }
+  const destino = path.join(tmpDir('multitrack-zip-'), `${nombre}.zip`)
+  zip.writeZip(destino)
+  return destino
+}
+
+let audiosCache: { wav2s: string; wav4s: string; mp3Dual: string; wavEstereo: string } | null = null
+function audiosDePrueba() {
+  if (audiosCache) return audiosCache
+  const dir = tmpDir('multitrack-audio-')
+  audiosCache = {
+    wav2s: path.join(dir, 'a.wav'),
+    wav4s: path.join(dir, 'b.wav'),
+    mp3Dual: path.join(dir, 'c.mp3'),
+    wavEstereo: path.join(dir, 'd.wav')
+  }
+  generarAudio(audiosCache.wav2s, 2, 'mono')
+  generarAudio(audiosCache.wav4s, 4, 'mono')
+  generarAudio(audiosCache.mp3Dual, 2, 'dual')
+  generarAudio(audiosCache.wavEstereo, 2, 'estereo')
+  return audiosCache
+}
+
+interface Entorno {
+  server: AppServer
+  port: number
+  appDir: string
+  conectar(auth: Record<string, unknown>): Promise<ClientSocket>
+  cerrar(): Promise<void>
+}
+
+async function entorno(t: { after(fn: () => Promise<void> | void): void }, appDir = tmpDir('multitrack-test-')): Promise<Entorno> {
+  process.env.MULTITRACK_APP_DIR = appDir
+  const rendererDir = tmpDir('multitrack-renderer-')
+  fs.writeFileSync(path.join(rendererDir, 'index.html'), '<html></html>')
+  const server = createServer(rendererDir, { compuToken: TOKEN })
+  const port = await server.start(0)
+  const sockets: ClientSocket[] = []
+  let cerrado = false
+  const env: Entorno = {
+    server,
+    port,
+    appDir,
+    async conectar(auth) {
+      const s = ioClient(`http://localhost:${port}`, { auth, reconnection: false })
+      sockets.push(s)
+      await new Promise<void>((r, rej) => {
+        s.once('connect', () => r())
+        s.once('connect_error', rej)
+      })
+      return s
+    },
+    async cerrar() {
+      if (cerrado) return
+      cerrado = true
+      for (const s of sockets) s.close()
+      await server.close()
+      fs.rmSync(rendererDir, { recursive: true, force: true })
+    }
+  }
+  // aunque una asercion falle, el servidor y los sockets se cierran (sino el proceso de test queda colgado)
+  t.after(() => env.cerrar())
+  return env
+}
+
+const compuAuth = { origen: 'compu', token: TOKEN }
+
+async function emitAck<T>(socket: ClientSocket, evento: string, payload: unknown, ms = 15000): Promise<T> {
   return new Promise((resolve, reject) => {
-    socket.timeout(3000).emit(evento, payload, (err: unknown, res: T) => (err ? reject(err) : resolve(res)))
+    socket.timeout(ms).emit(evento, payload, (err: unknown, res: T) => (err ? reject(err) : resolve(res)))
   })
 }
 
-test('flujo completo: cargar zip, mixer, marcadores y sync de reproduccion', async () => {
-  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
-  process.env.MULTITRACK_APP_DIR = tmpAppDir
+function esperarEvento<T>(socket: ClientSocket, evento: string, filtro: (v: T) => boolean = () => true, ms = 6000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      socket.off(evento, handler)
+      reject(new Error(`timeout esperando ${evento}`))
+    }, ms)
+    function handler(v: T): void {
+      if (!filtro(v)) return
+      clearTimeout(t)
+      socket.off(evento, handler)
+      resolve(v)
+    }
+    socket.on(evento, handler)
+  })
+}
 
-  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
-  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+async function cargarZip(compu: ClientSocket, zip: string): Promise<EstadoCompleto> {
+  const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'project:load-from-zip', { filePath: zip }, 60000)
+  assert.equal(r.ok, true, r.error)
+  return emitAck<EstadoCompleto>(compu, 'state:request', {})
+}
 
-  const server = createServer(rendererDirFake)
-  const port = await server.start(0)
+// ---------- tests ----------
 
-  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
-  const celular = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
-  await Promise.all([
-    new Promise<void>((r) => compu.on('connect', r)),
-    new Promise<void>((r) => celular.on('connect', r))
-  ])
+test('nombres de pista: se quita el prefijo numerico de orden', () => {
+  assert.equal(nombrePistaDesdeArchivo('01_Click'), 'Click')
+  assert.equal(nombrePistaDesdeArchivo('02 - Guia'), 'Guia')
+  assert.equal(nombrePistaDesdeArchivo('10.Bajo_DI'), 'Bajo DI')
+  assert.equal(nombrePistaDesdeArchivo('Teclado_Pad'), 'Teclado Pad')
+  assert.equal(nombrePistaDesdeArchivo('808'), '808')
+})
 
-  // clock sync basico
+test('flujo completo: importar (con MP3), mixer liviano, marcadores y sync de reproduccion', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const celular = await env.conectar({ origen: 'celular', deviceId: 'celular-prueba-1' })
+
   const ack = await emitAck<ClockSyncAck>(compu, 'clock:sync', {})
   assert.ok(typeof ack.tServer === 'number')
 
-  // sin proyectos al inicio
-  const estadoInicial = await emitAck<EstadoCompleto>(compu, 'state:request', {})
-  assert.equal(estadoInicial.tabs.length, 0)
-
-  // cargar zip: solo filtra audio real (2 pistas), ignora .txt y basura de macOS
-  // (el listener del celular se registra ANTES de emitir, para no perder el broadcast
-  // que dispara el servidor ademas de la respuesta directa por ack)
-  const zipPath = crearZipDePrueba()
-  const celularVeZip = new Promise<EstadoCompleto>((resolve) => celular.once('estado:actualizado', resolve))
-  const resZip = await emitAck<{ ok: boolean; error?: string }>(compu, 'project:load-from-zip', { filePath: zipPath })
-  assert.equal(resZip.ok, true)
+  const zip = crearZip('01_Cuan_Grande', {
+    '01_Click.wav': a.wav2s,
+    '02_Guia.mp3': a.mp3Dual,
+    '03_Pad.wav': a.wavEstereo,
+    'notas.txt': Buffer.from('no es audio'),
+    '__MACOSX/._01_Click.wav': Buffer.from('basura')
+  })
+  const progresos: string[] = []
+  compu.on('import:progreso', (p: { etapa: string }) => progresos.push(p.etapa))
+  const celularVeZip = esperarEvento<EstadoCompleto>(celular, 'estado:actualizado')
+  const estado = await cargarZip(compu, zip)
   assert.equal((await celularVeZip).tabs.length, 1)
+  assert.ok(progresos.includes('convirtiendo') && progresos.includes('listo'))
 
-  const estado1 = await emitAck<EstadoCompleto>(compu, 'state:request', {})
-  assert.equal(estado1.tabs.length, 1)
-  assert.equal(estado1.proyectoActivo?.pistas.length, 2)
-  assert.deepEqual(
-    estado1.proyectoActivo?.pistas.map((p) => p.nombre).sort(),
-    ['click', 'voz guia']
-  )
+  const proyecto = estado.proyectoActivo!
+  assert.equal(proyecto.nombre, '01 Cuan Grande')
+  assert.deepEqual(proyecto.pistas.map((p) => p.nombre), ['Click', 'Guia', 'Pad'])
+  // todo queda en WAV (el MP3 tambien) y la duracion la calcula el servidor
+  assert.ok(proyecto.pistas.every((p) => p.archivo.endsWith('.wav')))
+  assert.ok(Math.abs(proyecto.duracionTotalMs - 2000) < 60, `duracion ${proyecto.duracionTotalMs}`)
+  // colores distintos por orden
+  assert.equal(new Set(proyecto.pistas.map((p) => p.color)).size, 3)
+  // el MP3 "dual mono" se guarda en mono; el estereo real sigue estereo
+  const dirProyecto = path.join(env.appDir, 'proyectos', proyecto.id)
+  assert.equal(leerInfoWav(path.join(dirProyecto, proyecto.pistas[1].archivo)).numChannels, 1)
+  assert.equal(leerInfoWav(path.join(dirProyecto, proyecto.pistas[2].archivo)).numChannels, 2)
+  assert.equal(leerInfoWav(path.join(dirProyecto, proyecto.pistas[2].archivo)).bitsPerSample, 16)
+
+  // el audio se sirve con soporte de Range (lo que usa el streaming de los celulares)
+  const resp = await fetch(`http://localhost:${env.port}/media/${proyecto.id}/${proyecto.pistas[0].archivo}`, {
+    headers: { Range: 'bytes=0-99' }
+  })
+  assert.equal(resp.status, 206)
+  assert.equal((await resp.arrayBuffer()).byteLength, 100)
 
   // el celular no puede crear marcadores
   celular.emit('marker:create', { tiempoMs: 1000, nombre: 'Intento celular' })
-  const rechazo = await new Promise<{ mensaje: string }>((resolve) => celular.once('accion:rechazada', resolve))
+  const rechazo = await esperarEvento<{ mensaje: string }>(celular, 'accion:rechazada')
   assert.match(rechazo.mensaje, /computadora/)
 
-  // la compu si puede (se espera tambien la copia del celular para no dejarla
-  // pendiente y que "contamine" el siguiente listener 'once' de la prueba)
-  const [estadoTrasMarcador] = await Promise.all([
-    new Promise<EstadoCompleto>((resolve) => compu.once('estado:actualizado', resolve)),
-    new Promise<EstadoCompleto>((resolve) => celular.once('estado:actualizado', resolve)),
-    compu.emit('marker:create', { tiempoMs: 5000, nombre: 'Coro 1' })
+  const [trasMarcador] = await Promise.all([
+    esperarEvento<EstadoCompleto>(celular, 'estado:actualizado'),
+    compu.emit('marker:create', { tiempoMs: 500, nombre: 'Coro 1' })
   ])
-  assert.equal(estadoTrasMarcador.proyectoActivo?.marcadores.length, 1)
-  assert.equal(estadoTrasMarcador.proyectoActivo?.marcadores[0].nombre, 'Coro 1')
+  assert.equal(trasMarcador.proyectoActivo?.marcadores[0].nombre, 'Coro 1')
 
-  // mixer: actualizar volumen/pan se refleja para todos (celular tambien lo recibe)
-  const pistaId = estadoTrasMarcador.proyectoActivo!.pistas[0].id
-  const [, estadoCelular] = await Promise.all([
-    new Promise((resolve) => compu.once('estado:actualizado', resolve)),
-    new Promise<EstadoCompleto>((resolve) => celular.once('estado:actualizado', resolve)),
-    compu.emit('mixer:update', { pistaId, patch: { volumen: 42, pan: -50 } })
+  // mixer: broadcast liviano con SOLO la pista que cambio
+  const pistaId = proyecto.pistas[0].id
+  const [mix] = await Promise.all([
+    esperarEvento<MixerActualizadoPayload>(celular, 'mixer:actualizado'),
+    compu.emit('mixer:update', { pistaId, patch: { volumen: 42, pan: -50, color: '#123456' } })
   ])
-  const pistaActualizada = estadoCelular.proyectoActivo?.pistas.find((p) => p.id === pistaId)
-  assert.equal(pistaActualizada?.volumen, 42)
-  assert.equal(pistaActualizada?.pan, -50)
+  assert.equal(mix.proyectoId, proyecto.id)
+  assert.equal(mix.pista.volumen, 42)
+  assert.equal(mix.pista.pan, -50)
+  assert.equal(mix.pista.color, '#123456')
 
-  // transporte: play programa una accion a futuro (~1500ms) para todos los clientes
+  // transporte: play programa a futuro (~1500ms, hay un celular) e incluye el estado autoritativo
   const antes = Date.now()
   const [cmdCompu, cmdCelular] = await Promise.all([
-    new Promise<ComandoProgramado>((resolve) => compu.once('playback:scheduled', resolve)),
-    new Promise<ComandoProgramado>((resolve) => celular.once('playback:scheduled', resolve)),
+    esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'),
+    esperarEvento<ComandoProgramado>(celular, 'playback:scheduled'),
     compu.emit('transport:play', {})
   ])
   assert.equal(cmdCompu.accion, 'play')
   assert.deepEqual(cmdCompu, cmdCelular)
+  assert.equal(cmdCompu.playback.estado, 'playing')
   assert.ok(cmdCompu.executeAtServerTime - antes >= 1400 && cmdCompu.executeAtServerTime - antes <= 1700)
 
-  // bloqueo: con lock activado, el celular no puede saltar marcadores
-  await Promise.all([
-    new Promise((resolve) => compu.once('estado:actualizado', resolve)),
-    new Promise((resolve) => celular.once('estado:actualizado', resolve)),
-    compu.emit('lock:set', { locked: true })
+  // un salto mientras suena conserva el tramo previo (lo que realmente suena hasta el salto)
+  const salto = await Promise.all([
+    esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'),
+    compu.emit('transport:seek', { positionMs: 1000 })
   ])
-  celular.emit('marker:jump', { marcadorId: estadoTrasMarcador.proyectoActivo!.marcadores[0].id })
-  const rechazo2 = await new Promise<{ mensaje: string }>((resolve) => celular.once('accion:rechazada', resolve))
+  assert.equal(salto[0].playback.previo?.estado, 'playing')
+
+  // bloqueo: el celular no puede saltar marcadores
+  await Promise.all([esperarEvento(celular, 'estado:actualizado'), compu.emit('lock:set', { locked: true })])
+  celular.emit('marker:jump', { marcadorId: trasMarcador.proyectoActivo!.marcadores[0].id })
+  const rechazo2 = await esperarEvento<{ mensaje: string }>(celular, 'accion:rechazada')
   assert.match(rechazo2.mensaje, /bloqueado/)
 
-  compu.close()
-  celular.close()
-  server.httpServer.close()
-  fs.rmSync(tmpAppDir, { recursive: true, force: true })
-  fs.rmSync(rendererDirFake, { recursive: true, force: true })
-  fs.rmSync(zipPath, { force: true })
+  await env.cerrar()
 })
 
-test('zip sin audio no crea proyecto', async () => {
-  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
-  process.env.MULTITRACK_APP_DIR = tmpAppDir
-  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
-  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+test('seguridad: sin token no se es "la compu", y los ids no permiten salir de la carpeta', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  // un celular que DICE ser la compu (sin el token correcto)
+  const impostor = await env.conectar({ origen: 'compu', token: 'adivinando' })
 
-  const server = createServer(rendererDirFake)
-  const port = await server.start(0)
-  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
-  await new Promise<void>((r) => compu.on('connect', r))
+  const victima = path.join(env.appDir, 'carpeta_victima')
+  fs.mkdirSync(victima)
+  fs.writeFileSync(path.join(victima, 'archivo.txt'), 'importante')
 
-  const zip = new AdmZip()
-  zip.addFile('readme.txt', Buffer.from('nada de audio aca'))
-  const tmp = path.join(os.tmpdir(), `test-song-vacio-${Date.now()}.zip`)
-  zip.writeZip(tmp)
+  const r1 = await emitAck<{ ok: boolean }>(impostor, 'projects:delete', { id: '../carpeta_victima' })
+  assert.equal(r1.ok, false)
+  // ni siquiera la compu verdadera puede usar un id que no sea UUID
+  const r2 = await emitAck<{ ok: boolean }>(compu, 'projects:delete', { id: '../carpeta_victima' })
+  assert.equal(r2.ok, false)
+  assert.ok(fs.existsSync(path.join(victima, 'archivo.txt')), 'la carpeta de afuera no se toca')
 
-  const res = await emitAck<{ ok: boolean; error?: string }>(compu, 'project:load-from-zip', { filePath: tmp })
+  const r3 = await emitAck<{ ok: boolean; error?: string }>(impostor, 'project:load-from-zip', { filePath: '/etc/passwd' })
+  assert.equal(r3.ok, false)
+  const r4 = await emitAck<{ ok: boolean; error?: string }>(compu, 'project:load-from-zip', { filePath: '/etc/passwd' })
+  assert.equal(r4.ok, false)
+  const r5 = await emitAck<{ ok: boolean }>(compu, 'projects:open', { id: '../../etc' })
+  assert.equal(r5.ok, false)
+
+  impostor.emit('mixer:update', { pistaId: 'x', patch: { volumen: 0 } })
+  const rechazo = await esperarEvento<{ mensaje: string }>(impostor, 'accion:rechazada')
+  assert.match(rechazo.mensaje, /computadora/)
+
+  const lista = await emitAck<unknown>(compu, 'state:request', {})
+  assert.ok(!JSON.stringify(lista).includes(TOKEN), 'el token nunca viaja en el estado')
+
+  await env.cerrar()
+})
+
+test('zip sin audio o dañado no crea proyecto', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+
+  const vacio = crearZip('vacio', { 'readme.txt': Buffer.from('nada de audio aca') })
+  const res = await emitAck<{ ok: boolean; error?: string }>(compu, 'project:load-from-zip', { filePath: vacio })
   assert.equal(res.ok, false)
   assert.match(res.error ?? '', /No se encontraron pistas/)
 
+  const roto = path.join(tmpDir('multitrack-zip-'), 'roto.zip')
+  fs.writeFileSync(roto, 'esto no es un zip')
+  const res2 = await emitAck<{ ok: boolean; error?: string }>(compu, 'project:load-from-zip', { filePath: roto })
+  assert.equal(res2.ok, false)
+  assert.match(res2.error ?? '', /zip/)
+
+  // un "audio" corrupto adentro: error claro y nada a medias en disco
+  const corrupto = crearZip('corrupto', { 'click.mp3': Buffer.from('no es un mp3 de verdad') })
+  const res3 = await emitAck<{ ok: boolean; error?: string }>(compu, 'project:load-from-zip', { filePath: corrupto })
+  assert.equal(res3.ok, false)
+  assert.match(res3.error ?? '', /click/)
+
   const estado = await emitAck<EstadoCompleto>(compu, 'state:request', {})
   assert.equal(estado.tabs.length, 0)
+  const lista = await emitAck<ProyectoResumen[]>(compu, 'projects:list', {})
+  assert.equal(lista.length, 0)
 
-  compu.close()
-  server.httpServer.close()
-  fs.rmSync(tmpAppDir, { recursive: true, force: true })
-  fs.rmSync(rendererDirFake, { recursive: true, force: true })
-  fs.rmSync(tmp, { force: true })
+  await env.cerrar()
 })
 
-test('margen de sincronizacion: instantaneo sin celulares, completo apenas se conecta uno', async () => {
-  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
-  process.env.MULTITRACK_APP_DIR = tmpAppDir
-  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
-  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+test('margen de sincronizacion: instantaneo sin celulares, completo apenas se conecta uno', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  await cargarZip(compu, crearZip('margen', { 'click.wav': a.wav4s }))
 
-  const server = createServer(rendererDirFake)
-  const port = await server.start(0)
-
-  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
-  await new Promise<void>((r) => compu.on('connect', r))
-
-  const zipPath = crearZipDePrueba()
-  await emitAck<{ ok: boolean }>(compu, 'project:load-from-zip', { filePath: zipPath })
-
-  // sin celulares conectados: el "play" se programa casi de inmediato
   const antesSolo = Date.now()
-  const cmdSolo = await new Promise<ComandoProgramado>((resolve) => {
-    compu.once('playback:scheduled', resolve)
-    compu.emit('transport:play', {})
-  })
-  const margenSolo = cmdSolo.executeAtServerTime - antesSolo
-  assert.ok(margenSolo < 200, `esperaba un margen chico sin celulares, dio ${margenSolo}ms`)
+  const [cmdSolo] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  assert.ok(cmdSolo.executeAtServerTime - antesSolo < 200)
 
-  await new Promise((resolve) => {
-    compu.once('playback:scheduled', resolve)
-    compu.emit('transport:stop')
-  })
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
 
-  // se conecta un celular: ahora el margen vuelve a ser el completo (~1.5s)
-  const celular = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
-  await new Promise<void>((r) => celular.on('connect', r))
+  await env.conectar({ origen: 'celular' })
+  const antes = Date.now()
+  const [cmd] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  const margen = cmd.executeAtServerTime - antes
+  assert.ok(margen >= 1400 && margen <= 1700, `margen ${margen}`)
 
-  const antesConCelular = Date.now()
-  const cmdConCelular = await new Promise<ComandoProgramado>((resolve) => {
-    compu.once('playback:scheduled', resolve)
-    compu.emit('transport:play', {})
-  })
-  const margenConCelular = cmdConCelular.executeAtServerTime - antesConCelular
-  assert.ok(
-    margenConCelular >= 1400 && margenConCelular <= 1700,
-    `esperaba ~1500ms con un celular conectado, dio ${margenConCelular}ms`
-  )
-
-  compu.close()
-  celular.close()
-  server.httpServer.close()
-  fs.rmSync(tmpAppDir, { recursive: true, force: true })
-  fs.rmSync(rendererDirFake, { recursive: true, force: true })
-  fs.rmSync(zipPath, { force: true })
+  await env.cerrar()
 })
 
-test('registro de dispositivos: etiquetas, sync:report y desconexion queda visible', async () => {
-  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
-  process.env.MULTITRACK_APP_DIR = tmpAppDir
-  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
-  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+test('fin de cancion y repetir seccion los maneja el servidor', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const estado = await cargarZip(compu, crearZip('loop', { 'click.wav': a.wav4s }))
+  assert.ok(Math.abs(estado.proyectoActivo!.duracionTotalMs - 4000) < 60)
 
-  const server = createServer(rendererDirFake)
-  const port = await server.start(0)
+  await Promise.all([esperarEvento(compu, 'estado:actualizado'), compu.emit('marker:create', { tiempoMs: 500, nombre: 'Verso' })])
+  await Promise.all([esperarEvento(compu, 'estado:actualizado'), compu.emit('marker:create', { tiempoMs: 2000, nombre: 'Coro' })])
+  await Promise.all([esperarEvento(compu, 'estado:actualizado'), compu.emit('loop:set', { activo: true })])
 
-  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
-  const listaAlConectarCompu = new Promise<DispositivoInfo[]>((resolve) => compu.once('dispositivos:actualizado', resolve))
-  await new Promise<void>((r) => compu.on('connect', r))
-  const listaCompu = await listaAlConectarCompu
-  assert.equal(listaCompu.length, 1)
-  assert.equal(listaCompu[0].origen, 'compu')
-  assert.equal(listaCompu[0].etiqueta, 'Computadora')
-  assert.equal(listaCompu[0].conectado, true)
-
-  const celular1 = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
-  const [listaTrasCelular1] = await Promise.all([
-    new Promise<DispositivoInfo[]>((resolve) => compu.once('dispositivos:actualizado', resolve)),
-    new Promise<void>((r) => celular1.on('connect', r))
+  // play desde 0.6s (seccion "Verso" 0.5s-2s): a los ~1.4s tiene que volver a 0.5s
+  const [inicio] = await Promise.all([
+    esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'),
+    compu.emit('transport:play', { positionMs: 600 })
   ])
-  assert.equal(listaTrasCelular1.length, 2)
-  const celular1Info = listaTrasCelular1.find((d) => d.origen === 'celular')
-  assert.equal(celular1Info?.etiqueta, 'Celular 1')
+  const loop = await esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', (c) => c.accion === 'play', 4000)
+  assert.equal(loop.positionMs, 500)
+  const esperado = inicio.executeAtServerTime + (2000 - 600)
+  assert.ok(Math.abs(loop.executeAtServerTime - esperado) < 5, `salto en ${loop.executeAtServerTime - esperado}ms del esperado`)
+  assert.equal(loop.playback.previo?.estado, 'playing')
 
-  const celular2 = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
-  const [listaTrasCelular2] = await Promise.all([
-    new Promise<DispositivoInfo[]>((resolve) => compu.once('dispositivos:actualizado', resolve)),
-    new Promise<void>((r) => celular2.on('connect', r))
-  ])
-  const celular2Info = listaTrasCelular2.find((d) => d.etiqueta === 'Celular 2')
-  assert.ok(celular2Info, 'esperaba que el segundo celular se etiquete "Celular 2"')
+  // sin loop, sigue hasta el final y el servidor emite stop solo
+  await Promise.all([esperarEvento(compu, 'estado:actualizado'), compu.emit('loop:set', { activo: false })])
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:seek', { positionMs: 3000 })])
+  const stop = await esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', (c) => c.accion === 'stop', 3000)
+  assert.equal(stop.playback.estado, 'stopped')
+  assert.equal(stop.positionMs, 0)
 
-  // sync:report actualiza el drift de ESE dispositivo y se ve en el broadcast
-  const listaConDrift = await new Promise<DispositivoInfo[]>((resolve) => {
-    compu.once('dispositivos:actualizado', resolve)
-    celular1.emit('sync:report', { driftMs: 42 })
-  })
-  const celular1ConDrift = listaConDrift.find((d) => d.etiqueta === 'Celular 1')
-  assert.equal(celular1ConDrift?.driftMs, 42)
-
-  // desconectar no lo borra de la lista: queda marcado, para que el operador lo note
-  const listaTrasDesconexion = await new Promise<DispositivoInfo[]>((resolve) => {
-    compu.once('dispositivos:actualizado', resolve)
-    celular1.close()
-  })
-  assert.equal(listaTrasDesconexion.length, 3)
-  const celular1Desconectado = listaTrasDesconexion.find((d) => d.etiqueta === 'Celular 1')
-  assert.equal(celular1Desconectado?.conectado, false)
-
-  compu.close()
-  celular2.close()
-  server.httpServer.close()
-  fs.rmSync(tmpAppDir, { recursive: true, force: true })
-  fs.rmSync(rendererDirFake, { recursive: true, force: true })
+  await env.cerrar()
 })
 
-test('protocolo de precarga: proyectos de todas las pestanas + preparacion:reportar', async () => {
-  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
-  process.env.MULTITRACK_APP_DIR = tmpAppDir
-  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
-  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+test('cerrar la pestaña que suena (o borrar su cancion) corta el audio en todos', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const celular = await env.conectar({ origen: 'celular' })
+  const estado = await cargarZip(compu, crearZip('unica', { 'click.wav': a.wav4s }))
 
-  const server = createServer(rendererDirFake)
-  const port = await server.start(0)
+  await Promise.all([esperarEvento(celular, 'playback:scheduled'), compu.emit('transport:play', {})])
+  const [stop, nuevoEstado] = await Promise.all([
+    esperarEvento<ComandoProgramado>(celular, 'playback:scheduled'),
+    esperarEvento<EstadoCompleto>(celular, 'estado:actualizado'),
+    compu.emit('tabs:close', { tabId: estado.activeTabId })
+  ])
+  assert.equal(stop.accion, 'stop')
+  assert.ok(stop.executeAtServerTime <= Date.now() + 5, 'sin margen: corta ya')
+  assert.equal(nuevoEstado.proyectoActivo, null)
 
-  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
-  const celular = ioClient(`http://localhost:${port}`, { auth: { origen: 'celular' } })
+  await env.cerrar()
+})
+
+test('dispositivos: id estable al reconectar, nombre propio y olvidar', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+
+  const cel = await env.conectar({ origen: 'celular', deviceId: 'dispositivo-aaaa-1111' })
+  // renombrar desde el celular
+  const [trasRenombrar] = await Promise.all([
+    esperarEvento<DispositivoInfo[]>(compu, 'dispositivos:actualizado'),
+    cel.emit('device:rename', { nombre: '  Batería  ' })
+  ])
+  const bateria = trasRenombrar.find((d) => d.origen === 'celular')!
+  assert.equal(bateria.etiqueta, 'Batería')
+
+  // reporte de drift + buffer + error
+  const [conReporte] = await Promise.all([
+    esperarEvento<DispositivoInfo[]>(compu, 'dispositivos:actualizado'),
+    cel.emit('sync:report', { driftMs: 12, buffer: 'critico', error: 'pista X' })
+  ])
+  const r = conReporte.find((d) => d.id === bateria.id)!
+  assert.equal(r.driftMs, 12)
+  assert.equal(r.buffer, 'critico')
+  assert.equal(r.error, 'pista X')
+
+  // se desconecta y vuelve: MISMA fila, mismo nombre, sin duplicados
+  const [trasCaida] = await Promise.all([esperarEvento<DispositivoInfo[]>(compu, 'dispositivos:actualizado'), cel.close()])
+  assert.equal(trasCaida.find((d) => d.id === bateria.id)?.conectado, false)
+  const [trasVolver] = await Promise.all([
+    esperarEvento<DispositivoInfo[]>(compu, 'dispositivos:actualizado', (l) => l.some((d) => d.id === bateria.id && d.conectado)),
+    env.conectar({ origen: 'celular', deviceId: 'dispositivo-aaaa-1111' })
+  ])
+  assert.equal(trasVolver.filter((d) => d.origen === 'celular').length, 1)
+  assert.equal(trasVolver.find((d) => d.id === bateria.id)?.etiqueta, 'Batería')
+
+  // otro celular sin nombre -> "Celular 2"; al irse, la compu lo puede olvidar
+  const otro = await env.conectar({ origen: 'celular', deviceId: 'dispositivo-bbbb-2222' })
+  const [trasIrse] = await Promise.all([esperarEvento<DispositivoInfo[]>(compu, 'dispositivos:actualizado'), otro.close()])
+  const segundo = trasIrse.find((d) => d.etiqueta === 'Celular 2')
+  assert.ok(segundo && !segundo.conectado, JSON.stringify(trasIrse))
+  const [trasOlvidar] = await Promise.all([
+    esperarEvento<DispositivoInfo[]>(compu, 'dispositivos:actualizado'),
+    compu.emit('devices:forget', { id: segundo!.id })
+  ])
+  assert.equal(trasOlvidar.find((d) => d.id === segundo!.id), undefined)
+
+  await env.cerrar()
+})
+
+test('sesion y setlists: las canciones abiertas vuelven al reabrir la app', async (t) => {
+  const a = audiosDePrueba()
+  const appDir = tmpDir('multitrack-test-')
+  const env = await entorno(t, appDir)
+  const compu = await env.conectar(compuAuth)
+  await cargarZip(compu, crearZip('Primera', { 'click.wav': a.wav2s }))
+  const estado = await cargarZip(compu, crearZip('Segunda', { 'click.wav': a.wav2s }))
+  assert.deepEqual(estado.tabs.map((t) => t.nombre), ['Primera', 'Segunda'])
+
+  // reordenar el setlist
   await Promise.all([
-    new Promise<void>((r) => compu.on('connect', r)),
-    new Promise<void>((r) => celular.on('connect', r))
+    esperarEvento(compu, 'estado:actualizado'),
+    compu.emit('tabs:reorder', { orden: [estado.tabs[1].tabId, estado.tabs[0].tabId] })
   ])
+  const guardado = await emitAck<{ ok: boolean }>(compu, 'setlists:save', { nombre: 'Domingo' })
+  assert.equal(guardado.ok, true)
+  await env.cerrar()
 
-  const zipA = crearZipDePrueba('A')
-  const zipB = crearZipDePrueba('B')
-  await emitAck<{ ok: boolean }>(compu, 'project:load-from-zip', { filePath: zipA })
-  await emitAck<{ ok: boolean }>(compu, 'project:load-from-zip', { filePath: zipB })
+  // "reabrir la app": servidor nuevo sobre la misma carpeta
+  const env2 = await entorno(t, appDir)
+  await env2.server.restaurarSesion()
+  const compu2 = await env2.conectar(compuAuth)
+  const restaurado = await emitAck<EstadoCompleto>(compu2, 'state:request', {})
+  assert.deepEqual(restaurado.tabs.map((t) => t.nombre), ['Segunda', 'Primera'])
 
+  // abrir el setlist guardado reemplaza las pestanas
+  await Promise.all([esperarEvento(compu2, 'estado:actualizado'), compu2.emit('tabs:close', { tabId: restaurado.tabs[0].tabId })])
+  const setlists = await emitAck<SetlistResumen[]>(compu2, 'setlists:list', {})
+  assert.equal(setlists[0].nombre, 'Domingo')
+  assert.deepEqual(setlists[0].canciones, ['Segunda', 'Primera'])
+  const abierto = await emitAck<{ ok: boolean }>(compu2, 'setlists:open', { id: setlists[0].id })
+  assert.equal(abierto.ok, true)
+  const trasAbrir = await emitAck<EstadoCompleto>(compu2, 'state:request', {})
+  assert.deepEqual(trasAbrir.tabs.map((t) => t.nombre), ['Segunda', 'Primera'])
+  assert.equal(trasAbrir.activeTabId, trasAbrir.tabs[0].tabId)
+
+  await env2.cerrar()
+})
+
+test('migracion: una cancion vieja guardada con MP3 se convierte a WAV al abrirla', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t)
+  const id = crypto.randomUUID()
+  const dir = path.join(env.appDir, 'proyectos', id)
+  fs.mkdirSync(path.join(dir, 'audio'), { recursive: true })
+  fs.copyFileSync(a.mp3Dual, path.join(dir, 'audio', 'guia.mp3'))
+  fs.writeFileSync(
+    path.join(dir, 'proyecto.json'),
+    JSON.stringify({
+      id,
+      nombre: 'Vieja',
+      creadoEn: new Date().toISOString(),
+      pistas: [{ id: crypto.randomUUID(), nombre: 'guia', archivo: 'audio/guia.mp3', volumen: 80, pan: 0, mute: false, solo: false }],
+      marcadores: [],
+      duracionTotalMs: 0
+    })
+  )
+  const compu = await env.conectar(compuAuth)
+  const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'projects:open', { id }, 30000)
+  assert.equal(r.ok, true, r.error)
   const estado = await emitAck<EstadoCompleto>(compu, 'state:request', {})
-  // dos pestanas abiertas, la B (cargada despues) es la activa
-  assert.equal(estado.tabs.length, 2)
-  assert.equal(estado.proyectos.length, 2)
-  // `proyectos` viaja en el MISMO orden/indice que `tabs`: el primero es la
-  // pestana NO activa (A), el segundo es la activa (B) — no solo esta ultima.
-  assert.notEqual(estado.proyectos[0].id, estado.proyectoActivo?.id)
-  assert.equal(estado.proyectos[1].id, estado.proyectoActivo?.id)
-  assert.equal(estado.tabs[0].tabId === estado.activeTabId, false)
-  assert.equal(estado.tabs[1].tabId === estado.activeTabId, true)
-  // la pestana inactiva (A) tambien trae sus pistas completas, no solo nombre/id
-  assert.ok(estado.proyectos[0].pistas.length > 0, 'se esperaban pistas completas para la pestana no activa')
+  const p = estado.proyectoActivo!
+  assert.equal(p.pistas[0].archivo, 'audio/guia.wav')
+  assert.ok(p.pistas[0].color)
+  assert.ok(Math.abs(p.duracionTotalMs - 2000) < 80, `duracion ${p.duracionTotalMs}`)
+  assert.ok(!fs.existsSync(path.join(dir, 'audio', 'guia.mp3')))
 
-  // el celular reporta que ya tiene lista la cancion A (la "anterior", no la activa)
-  const proyectoAId = estado.proyectos[0].id
-  const listaConPreparacion = await new Promise<DispositivoInfo[]>((resolve) => {
-    compu.once('dispositivos:actualizado', resolve)
-    celular.emit('preparacion:reportar', { proyectoId: proyectoAId, estado: 'listo' })
-  })
-  const celularInfo = listaConPreparacion.find((d) => d.origen === 'celular')
-  const prepReportada = celularInfo?.preparaciones.find((p) => p.proyectoId === proyectoAId)
-  assert.equal(prepReportada?.estado, 'listo')
-
-  compu.close()
-  celular.close()
-  server.httpServer.close()
-  fs.rmSync(tmpAppDir, { recursive: true, force: true })
-  fs.rmSync(rendererDirFake, { recursive: true, force: true })
-  fs.rmSync(zipA, { force: true })
-  fs.rmSync(zipB, { force: true })
+  await env.cerrar()
 })

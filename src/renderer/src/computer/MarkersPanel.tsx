@@ -1,104 +1,156 @@
 import { useState } from 'react'
-import type { Marcador, Proyecto } from '@shared/types'
+import { Flag, Pencil, Trash2 } from 'lucide-react'
+import type { Marcador } from '@shared/types'
+import type { Seccion } from '@shared/playback'
+import { seccionEn } from '@shared/playback'
+import { usePlayheadPaso } from '../app/playheadStore'
 import { formatMmSs } from '../format'
+import { colorDeSeccion } from '../secciones'
 
 interface Props {
-  proyecto: Proyecto
-  playheadMs: number
+  secciones: Seccion[]
   onJump: (marcadorId: string) => void
   onCreate: (tiempoMs: number, nombre?: string) => void
-  onUpdate: (marcadorId: string, patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs'>>) => void
-  onDelete: (marcadorId: string) => void
+  onRename: (marcadorId: string, nombre: string) => void
+  onDelete: (marcador: Marcador) => void
 }
 
-export function MarkersPanel({ proyecto, playheadMs, onJump, onCreate, onUpdate, onDelete }: Props) {
+export function MarkersPanel({ secciones, onJump, onCreate, onRename, onDelete }: Props) {
   const [nombreNuevo, setNombreNuevo] = useState('')
-  const ordenados = [...proyecto.marcadores].sort((a, b) => a.tiempoMs - b.tiempoMs)
+  const pos = usePlayheadPaso(100)
+  const actual = seccionEn(secciones, pos)
+  const conMarcador = secciones.filter((s) => s.marcador)
 
   function agregar(): void {
-    onCreate(playheadMs, nombreNuevo.trim() || undefined)
+    onCreate(pos, nombreNuevo.trim() || undefined)
     setNombreNuevo('')
   }
 
   return (
-    <div className="markers-panel">
-      <h3>Marcadores</h3>
-      <p className="markers-ayuda">
-        Con la canción sonando, presioná <kbd>M</kbd> para marcar el punto exacto, o escribí un nombre acá y tocá el
-        botón. También podés arrastrar los banderines amarillos sobre la barra de progreso para reacomodarlos.
-      </p>
-      <div className="markers-nuevo">
-        <input
-          placeholder="Nombre (opcional)"
-          value={nombreNuevo}
-          onChange={(e) => setNombreNuevo(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && agregar()}
-        />
-        <button onClick={agregar} title="Agregar marcador en la posición actual (tecla M)">
-          + En {formatMmSs(playheadMs)}
-        </button>
+    <aside className="secciones">
+      <div className="secciones-cabecera">
+        <h3>
+          Secciones <span className="num">{conMarcador.length}</span>
+        </h3>
+        <div className="secciones-nueva">
+          <input
+            placeholder="Nombre (Intro, Coro…)"
+            value={nombreNuevo}
+            maxLength={60}
+            onChange={(e) => setNombreNuevo(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && agregar()}
+          />
+          <button className="btn-primario" onClick={agregar} title="Marcar una sección en la posición actual (M)">
+            <Flag size={15} />
+            <span className="num">{formatMmSs(pos)}</span>
+          </button>
+        </div>
       </div>
-      <ul className="markers-lista">
-        {ordenados.map((m) => (
-          <MarkerRow key={m.id} marcador={m} onJump={onJump} onUpdate={onUpdate} onDelete={onDelete} />
+
+      <ul className="secciones-lista">
+        {conMarcador.length === 0 && (
+          <li className="vacio">
+            Todavía no hay secciones.
+            <br />
+            Con la canción sonando, presioná <kbd>M</kbd> en cada parte.
+          </li>
+        )}
+        {conMarcador.map((s, i) => (
+          <FilaSeccion
+            key={s.marcador!.id}
+            seccion={s}
+            numero={i + 1}
+            actual={actual?.indice === s.indice}
+            onJump={() => onJump(s.marcador!.id)}
+            onRename={(n) => onRename(s.marcador!.id, n)}
+            onDelete={() => onDelete(s.marcador!)}
+          />
         ))}
-        {ordenados.length === 0 && <li className="markers-vacio">Sin marcadores todavía.</li>}
       </ul>
-    </div>
+
+      <div className="secciones-pie">
+        <kbd>1</kbd>…<kbd>9</kbd> saltar a una sección · <kbd>←</kbd> <kbd>→</kbd> anterior / siguiente · arrastrá los
+        triángulos de la línea de tiempo para mover una sección.
+      </div>
+    </aside>
   )
 }
 
-function MarkerRow({
-  marcador,
+function FilaSeccion({
+  seccion,
+  numero,
+  actual,
   onJump,
-  onUpdate,
+  onRename,
   onDelete
 }: {
-  marcador: Marcador
-  onJump: (id: string) => void
-  onUpdate: (id: string, patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs'>>) => void
-  onDelete: (id: string) => void
+  seccion: Seccion
+  numero: number
+  actual: boolean
+  onJump: () => void
+  onRename: (nombre: string) => void
+  onDelete: () => void
 }) {
   const [editando, setEditando] = useState(false)
-  const [nombreTmp, setNombreTmp] = useState(marcador.nombre)
+  const [nombre, setNombre] = useState(seccion.nombre)
 
-  function empezarEdicion(): void {
-    setNombreTmp(marcador.nombre)
+  function empezar(): void {
+    setNombre(seccion.nombre)
     setEditando(true)
   }
-
   function confirmar(): void {
     setEditando(false)
-    if (nombreTmp.trim() && nombreTmp.trim() !== marcador.nombre) onUpdate(marcador.id, { nombre: nombreTmp.trim() })
+    if (nombre.trim() && nombre.trim() !== seccion.nombre) onRename(nombre.trim())
   }
 
   return (
-    <li className="marker-row">
-      <button className="marker-tiempo" onClick={() => onJump(marcador.id)}>
-        {formatMmSs(marcador.tiempoMs)}
-      </button>
+    <li className={`seccion-fila ${actual ? 'actual' : ''}`} onClick={() => !editando && onJump()} title="Click para ir a esta sección">
+      <span className="seccion-numero num">{numero <= 9 ? numero : ''}</span>
+      <span className="seccion-color" style={{ background: colorDeSeccion(seccion) }} />
+      <span className="seccion-tiempo num">{formatMmSs(seccion.inicioMs)}</span>
       {editando ? (
         <input
-          className="marker-nombre-input"
+          className="seccion-nombre-input"
           autoFocus
-          value={nombreTmp}
-          onChange={(e) => setNombreTmp(e.target.value)}
+          value={nombre}
+          maxLength={60}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => setNombre(e.target.value)}
           onBlur={confirmar}
-          onKeyDown={(e) => e.key === 'Enter' && confirmar()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') confirmar()
+            if (e.key === 'Escape') setEditando(false)
+          }}
         />
       ) : (
-        <span className="marker-nombre" onDoubleClick={empezarEdicion}>
-          {marcador.nombre}
+        <span className="seccion-nombre" onDoubleClick={(e) => (e.stopPropagation(), empezar())}>
+          {seccion.nombre}
         </span>
       )}
       {!editando && (
-        <button className="marker-renombrar" onClick={empezarEdicion} title="Cambiar nombre">
-          ✎
-        </button>
+        <span className="seccion-acciones">
+          <button
+            title="Renombrar"
+            aria-label={`Renombrar ${seccion.nombre}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              empezar()
+            }}
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            title="Borrar (se puede deshacer)"
+            aria-label={`Borrar ${seccion.nombre}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+          >
+            <Trash2 size={14} />
+          </button>
+        </span>
       )}
-      <button className="marker-borrar" onClick={() => onDelete(marcador.id)} title="Eliminar">
-        🗑
-      </button>
     </li>
   )
 }
