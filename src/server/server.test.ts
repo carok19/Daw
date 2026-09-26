@@ -34,7 +34,8 @@ import type {
   Pista,
   Proyecto,
   ProyectoResumen,
-  SetlistResumen
+  DatosListas,
+  ListaResumen
 } from '../shared/types'
 
 const TOKEN = 'token-de-prueba'
@@ -1099,43 +1100,118 @@ test('dispositivos: id estable al reconectar, nombre propio y olvidar', async (t
   await env.cerrar()
 })
 
-test('sesion y setlists: las canciones abiertas vuelven al reabrir la app', async (t) => {
+test('listas por día: carpetas, la lista de arriba se guarda sola, editarla cambia las pestañas; al reabrir la app, sigue (si fue recién) o muestra las listas', async (t) => {
   const a = audiosDePrueba()
   const appDir = tmpDir('multitrack-test-')
   const env = await entorno(t, appDir)
   const compu = await env.conectar(compuAuth)
-  await cargarZip(compu, crearZip('Primera', { 'click.wav': a.wav2s }))
-  const estado = await cargarZip(compu, crearZip('Segunda', { 'click.wav': a.wav2s }))
-  assert.deepEqual(estado.tabs.map((t) => t.nombre), ['Primera', 'Segunda'])
+  for (const nombre of ['Primera', 'Segunda', 'Tercera']) await cargarZip(compu, crearZip(nombre, { 'click.wav': a.wav2s }))
+  const idDe = (nombre: string): string => env.server.state.listaProyectos().find((p) => p.nombre === nombre)!.id
+  const [A, B, C] = ['Primera', 'Segunda', 'Tercera'].map(idDe)
+  const pestanas = async (): Promise<string[]> => (await emitAck<EstadoCompleto>(compu, 'state:request', {})).tabs.map((x) => x.nombre)
+  const datos = (): Promise<DatosListas> => emitAck<DatosListas>(compu, 'listas:obtener', {})
+  const lista = async (nombre: string): Promise<ListaResumen> => (await datos()).listas.find((l) => l.nombre === nombre)!
 
-  // reordenar el setlist
-  await Promise.all([
-    esperarEvento(compu, 'estado:actualizado'),
-    compu.emit('tabs:reorder', { orden: [estado.tabs[1].tabId, estado.tabs[0].tabId] })
+  // lo de arriba se guarda como la lista del sabado, en una carpeta nueva
+  const [cambio, sab] = await Promise.all([
+    esperarEvento(compu, 'listas:cambio'),
+    emitAck<{ ok: boolean; id: string }>(compu, 'listas:crear', { nombre: 'Sábado 17/10 · 19 hs', carpeta: ' Congreso ', fecha: '2026-10-17', desdeActual: true })
   ])
-  const guardado = await emitAck<{ ok: boolean }>(compu, 'setlists:save', { nombre: 'Domingo' })
-  assert.equal(guardado.ok, true)
+  assert.ok(cambio && sab.ok)
+  const e1 = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.deepEqual(e1.lista, { id: sab.id, nombre: 'Sábado 17/10 · 19 hs', carpeta: 'Congreso' })
+  let d = await datos()
+  assert.deepEqual(d.carpetas, ['Congreso'])
+  assert.equal(d.activa, sab.id)
+  assert.deepEqual((await lista('Sábado 17/10 · 19 hs')).canciones.map((c) => c.nombre), ['Primera', 'Segunda', 'Tercera'])
+  assert.equal((await lista('Sábado 17/10 · 19 hs')).fecha, '2026-10-17')
+
+  // lo que se cambia arriba (sacar, ordenar) queda guardado en la lista
+  const tabB = e1.tabs.find((x) => x.nombre === 'Segunda')!
+  await Promise.all([esperarEvento(compu, 'listas:cambio'), compu.emit('tabs:close', { tabId: tabB.tabId })])
+  const e2 = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  await Promise.all([esperarEvento(compu, 'listas:cambio'), compu.emit('tabs:reorder', { orden: [e2.tabs[1].tabId, e2.tabs[0].tabId] })])
+  assert.deepEqual((await lista('Sábado 17/10 · 19 hs')).canciones.map((c) => c.nombre), ['Tercera', 'Primera'])
+
+  // otra lista en la misma carpeta (el nombre se escribio distinto), sin tocar lo de arriba; despues se usa
+  const dom = await emitAck<{ ok: boolean; id: string }>(compu, 'listas:crear', { nombre: 'Domingo', carpeta: 'congreso', fecha: '2026-02-30', proyectos: [B, A, 'no-es-un-id'] })
+  d = await datos()
+  assert.deepEqual(d.carpetas, ['Congreso'])
+  const domingo = d.listas.find((l) => l.id === dom.id)!
+  assert.equal(domingo.carpeta, 'Congreso')
+  assert.equal(domingo.fecha, null, 'fecha inválida: sin fecha')
+  assert.deepEqual(await pestanas(), ['Tercera', 'Primera'])
+  assert.deepEqual(await emitAck(compu, 'listas:usar', { id: dom.id }), { ok: true })
+  assert.deepEqual(await pestanas(), ['Segunda', 'Primera'])
+  assert.deepEqual((await lista('Sábado 17/10 · 19 hs')).canciones.map((c) => c.nombre), ['Tercera', 'Primera'], 'cambiar de lista no toca la anterior')
+
+  // editar la lista que esta arriba (desde el editor) cambia las pestanas
+  assert.deepEqual(await emitAck(compu, 'listas:guardar', { id: dom.id, nombre: 'Domingo 18/10', proyectos: [A, C] }), { ok: true })
+  let e3 = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.deepEqual(e3.tabs.map((x) => x.nombre), ['Primera', 'Tercera'])
+  assert.equal(e3.lista!.nombre, 'Domingo 18/10')
+  // la que suena no se puede sacar
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  const sonando = e3.proyectoActivo!.nombre
+  const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'listas:guardar', { id: dom.id, proyectos: [sonando === 'Primera' ? C : A] })
+  assert.equal(r.ok, false)
+  assert.match(r.error!, /está sonando/)
+  assert.deepEqual(await pestanas(), ['Primera', 'Tercera'])
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop', {})])
+
+  // carpetas: renombrar (se mueven sus listas), una vacia, borrar (las listas quedan sin carpeta)
+  await emitAck(compu, 'carpetas:renombrar', { de: 'Congreso', a: 'Congreso Juvenil 2026' })
+  await emitAck(compu, 'carpetas:crear', { nombre: 'Domingos' })
+  d = await datos()
+  assert.deepEqual(d.carpetas, ['Congreso Juvenil 2026', 'Domingos'])
+  assert.ok(d.listas.every((l) => l.carpeta === 'Congreso Juvenil 2026'))
+  assert.equal((await emitAck<EstadoCompleto>(compu, 'state:request', {})).lista!.carpeta, 'Congreso Juvenil 2026')
+  await emitAck(compu, 'carpetas:borrar', { nombre: 'Domingos' })
+  assert.deepEqual((await datos()).carpetas, ['Congreso Juvenil 2026'])
+
+  // duplicar; borrar la lista de arriba deja las canciones sueltas
+  const copia = await emitAck<{ ok: boolean; id: string }>(compu, 'listas:duplicar', { id: dom.id })
+  assert.deepEqual((await datos()).listas.find((l) => l.id === copia.id)!.canciones.map((c) => c.nombre), ['Primera', 'Tercera'])
+  await emitAck(compu, 'listas:borrar', { id: copia.id })
+  assert.equal((await emitAck(compu, 'listas:usar', { id: sab.id }) as { ok: boolean }).ok, true)
+  assert.deepEqual(await pestanas(), ['Tercera', 'Primera'])
+  // un setlist guardado con una version anterior se ve como lista sin carpeta
+  const viejo = crypto.randomUUID()
+  fs.writeFileSync(path.join(appDir, 'setlists', `${viejo}.json`), JSON.stringify({ id: viejo, nombre: 'Viejo', creadoEn: '2025-01-01T00:00:00.000Z', proyectos: [C] }))
+  const lv = (await datos()).listas.find((l) => l.id === viejo)!
+  assert.deepEqual([lv.carpeta, lv.fecha, lv.canciones.map((c) => c.nombre)], ['', null, ['Tercera']])
   await env.cerrar()
 
-  // "reabrir la app": servidor nuevo sobre la misma carpeta
+  // reabrir la app recien (se corto a mitad del culto): todo vuelve como estaba, con su lista
   const env2 = await entorno(t, appDir)
   await env2.server.restaurarSesion()
   const compu2 = await env2.conectar(compuAuth)
-  const restaurado = await emitAck<EstadoCompleto>(compu2, 'state:request', {})
-  assert.deepEqual(restaurado.tabs.map((t) => t.nombre), ['Segunda', 'Primera'])
-
-  // abrir el setlist guardado reemplaza las pestanas
-  await Promise.all([esperarEvento(compu2, 'estado:actualizado'), compu2.emit('tabs:close', { tabId: restaurado.tabs[0].tabId })])
-  const setlists = await emitAck<SetlistResumen[]>(compu2, 'setlists:list', {})
-  assert.equal(setlists[0].nombre, 'Domingo')
-  assert.deepEqual(setlists[0].canciones, ['Segunda', 'Primera'])
-  const abierto = await emitAck<{ ok: boolean }>(compu2, 'setlists:open', { id: setlists[0].id })
-  assert.equal(abierto.ok, true)
-  const trasAbrir = await emitAck<EstadoCompleto>(compu2, 'state:request', {})
-  assert.deepEqual(trasAbrir.tabs.map((t) => t.nombre), ['Segunda', 'Primera'])
-  assert.equal(trasAbrir.activeTabId, trasAbrir.tabs[0].tabId)
-
+  const e4 = await emitAck<EstadoCompleto>(compu2, 'state:request', {})
+  assert.deepEqual(e4.tabs.map((x) => x.nombre), ['Tercera', 'Primera'])
+  assert.equal(e4.lista!.id, sab.id)
   await env2.cerrar()
+
+  // reabrirla despues de 3 horas: arranca sin canciones (pantalla de listas) y ofrece seguir donde quedo
+  const rutaSesion = path.join(appDir, 'sesion.json')
+  const sesion = JSON.parse(fs.readFileSync(rutaSesion, 'utf-8'))
+  fs.writeFileSync(rutaSesion, JSON.stringify({ ...sesion, activo: 1, ultimaVez: Date.now() - 3 * 3600_000 }))
+  const env3 = await entorno(t, appDir)
+  await env3.server.restaurarSesion()
+  const compu3 = await env3.conectar(compuAuth)
+  assert.deepEqual((await emitAck<EstadoCompleto>(compu3, 'state:request', {})).tabs, [])
+  const d3 = await emitAck<DatosListas>(compu3, 'listas:obtener', {})
+  assert.deepEqual(d3.sesionAnterior, { lista: 'Sábado 17/10 · 19 hs', canciones: 2, actual: 2, nombreActual: 'Primera' })
+  assert.deepEqual(await emitAck(compu3, 'sesion:seguir', {}), { ok: true })
+  e3 = await emitAck<EstadoCompleto>(compu3, 'state:request', {})
+  assert.deepEqual(e3.tabs.map((x) => x.nombre), ['Tercera', 'Primera'])
+  assert.equal(e3.proyectoActivo!.nombre, 'Primera')
+  assert.equal(e3.lista!.id, sab.id)
+  assert.equal((await emitAck<DatosListas>(compu3, 'listas:obtener', {})).sesionAnterior, null)
+  // los celulares no manejan listas
+  const cel = await env3.conectar({ origen: 'celular', deviceId: 'cel-listas-1' })
+  assert.equal(await emitAck(cel, 'listas:obtener', {}), null)
+  assert.equal((await emitAck<{ ok: boolean }>(cel, 'listas:usar', { id: dom.id })).ok, false)
+  await env3.cerrar()
 })
 
 test('migracion: una cancion vieja guardada con MP3 se convierte a WAV al abrirla', async (t) => {

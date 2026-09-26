@@ -23,7 +23,7 @@ import type {
   PlaybackState,
   Proyecto,
   ProyectoResumen,
-  SetlistResumen
+  DatosListas
 } from '@shared/types'
 import { calcularSecciones, estaSonando, posicionActualMs, seccionEn } from '@shared/playback'
 import { SocketClient } from '../sync/SocketClient'
@@ -138,6 +138,8 @@ export function useAppController() {
   const [progresoAnalisis, setProgresoAnalisis] = useState<Record<string, { hechos: number; total: number }>>({})
   /** sube cada vez que el servidor avisa que cambio alguna cancion guardada (para refrescar listas) */
   const [versionProyectos, setVersionProyectos] = useState(0)
+  /** cambia cuando cambia alguna lista del dia o carpeta (para recargar la pantalla de listas) */
+  const [versionListas, setVersionListas] = useState(0)
   const [ajustarCompas, setAjustarCompasState] = useState<boolean>(() => leerPref('ajustar-compas', true))
 
   // preferencias de ESTE dispositivo
@@ -353,6 +355,7 @@ export function useAppController() {
       ),
       socket.on<{ tipo: 'info' | 'error'; texto: string; grupo?: string }>('aviso', (a) => avisarAgrupado(a)),
       socket.on('proyectos:cambio', () => setVersionProyectos((v) => v + 1)),
+      socket.on('listas:cambio', () => setVersionListas((v) => v + 1)),
       socket.onCodigo((motivo) => setPedidoCodigo((prev) => ({ motivo, n: (prev?.n ?? 0) + 1 }))),
       socket.onLicencia((limite, prueba) => {
         setPedidoCodigo(null)
@@ -687,7 +690,7 @@ export function useAppController() {
         emit('lock:set', { locked })
       },
 
-      // ---- canciones y setlists guardados ----
+      // ---- canciones guardadas ----
       async loadZip(): Promise<{ ok: boolean; error?: string; activada?: boolean }> {
         if (!window.electronAPI) return { ok: false, error: 'Solo disponible en la computadora' }
         const filePath = await window.electronAPI.pickZipFile()
@@ -710,17 +713,50 @@ export function useAppController() {
       async deleteSavedProject(id: string): Promise<{ ok: boolean }> {
         return socket.emitAck('projects:delete', { id })
       },
-      async listSetlists(): Promise<SetlistResumen[]> {
-        return socket.emitAck('setlists:list', {})
+
+      // ---- listas por dia y carpetas (compu) ----
+      async obtenerListas(): Promise<DatosListas | null> {
+        return socket.emitAck('listas:obtener', {})
       },
-      async saveSetlist(nombre: string): Promise<{ ok: boolean; error?: string }> {
-        return socket.emitAck('setlists:save', { nombre })
+      async crearLista(datos: {
+        nombre: string
+        carpeta?: string
+        fecha?: string | null
+        proyectos?: string[]
+        desdeActual?: boolean
+      }): Promise<{ ok: boolean; error?: string; id?: string }> {
+        return socket.emitAck('listas:crear', datos)
       },
-      async openSetlist(id: string): Promise<{ ok: boolean; error?: string }> {
-        return socket.emitAck('setlists:open', { id }, 5 * 60 * 1000)
+      async guardarLista(datos: {
+        id: string
+        nombre?: string
+        carpeta?: string
+        fecha?: string | null
+        proyectos?: string[]
+      }): Promise<{ ok: boolean; error?: string }> {
+        return socket.emitAck('listas:guardar', datos, 5 * 60 * 1000)
       },
-      async deleteSetlist(id: string): Promise<{ ok: boolean }> {
-        return socket.emitAck('setlists:delete', { id })
+      async duplicarLista(id: string): Promise<{ ok: boolean; id?: string }> {
+        return socket.emitAck('listas:duplicar', { id })
+      },
+      async borrarLista(id: string): Promise<{ ok: boolean }> {
+        return socket.emitAck('listas:borrar', { id })
+      },
+      /** carga la lista en la barra de arriba (reemplaza lo que habia) */
+      async usarLista(id: string): Promise<{ ok: boolean; error?: string }> {
+        return socket.emitAck('listas:usar', { id }, 5 * 60 * 1000)
+      },
+      async seguirSesion(): Promise<{ ok: boolean }> {
+        return socket.emitAck('sesion:seguir', {}, 5 * 60 * 1000)
+      },
+      async crearCarpeta(nombre: string): Promise<{ ok: boolean; nombre?: string; error?: string }> {
+        return socket.emitAck('carpetas:crear', { nombre })
+      },
+      async renombrarCarpeta(de: string, a: string): Promise<{ ok: boolean; error?: string }> {
+        return socket.emitAck('carpetas:renombrar', { de, a })
+      },
+      async borrarCarpeta(nombre: string): Promise<{ ok: boolean }> {
+        return socket.emitAck('carpetas:borrar', { nombre })
       },
 
       // ---- dispositivos ----
@@ -825,6 +861,7 @@ export function useAppController() {
     biblioteca,
     progresoAnalisis,
     versionProyectos,
+    versionListas,
     ajustarCompas,
     driftMs,
     bufferEstado,

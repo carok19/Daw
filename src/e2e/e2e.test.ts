@@ -1070,3 +1070,113 @@ test('licencias: el generador (sin internet) hace licencias que la app acepta; s
     assert.deepEqual(errores, [])
   })
 })
+
+test('listas por día: al abrir aparecen las listas; se arma la del sábado en una carpeta, se usa, y lo de arriba se guarda solo', { timeout: 4 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-listas-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const zips = ['Primera', 'Segunda', 'Tercera'].map((n, i) => generarZip(tmp, n, [['Click', 900 + i * 50], ['Bajo', 90 + i * 10]], 6, 'wav'))
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch()
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+    g.__zip = null
+    g.electronAPI = {
+      isElectron: true,
+      compuToken: 'e2e',
+      pickZipFile: async () => g.__zip,
+      getConnectionInfo: async () => ({ url: 'http://192.168.0.10:4848', ip: '192.168.0.10', port: 4848 }),
+      elegirCarpeta: async () => null,
+      abrirCarpeta: async () => {}
+    }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(base)
+  const pestanas = (): Promise<string[]> => compu.locator('.setlist-nombre').allTextContents()
+
+  await t.test('al abrir (sin canciones) aparecen las listas, no una canción', async () => {
+    await compu.getByRole('heading', { name: 'Todas las listas' }).waitFor()
+    assert.equal(await compu.locator('.chip-lista').textContent(), 'Listas')
+  })
+
+  await t.test('canciones sueltas: se importan desde las listas y quedan arriba', async () => {
+    for (const zip of zips) {
+      await compu.evaluate((z) => ((globalThis as unknown as { __zip: string }).__zip = z), zip)
+      const vacio = compu.getByRole('button', { name: /Importar o abrir canción/ })
+      if (await vacio.isVisible()) await vacio.click()
+      else await compu.locator('.boton-nueva').click()
+      await compu.getByRole('button', { name: /Importar \.zip/ }).click()
+      await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
+    }
+    assert.deepEqual(await pestanas(), ['Primera', 'Segunda', 'Tercera'])
+    assert.equal(await compu.locator('.cancion-titulo').count(), 1, 'con canciones arriba se ve el escenario')
+  })
+
+  await t.test('se arma la lista del sábado en una carpeta nueva (sin tocar lo de arriba)', async () => {
+    await compu.locator('.chip-lista').click()
+    await compu.getByRole('button', { name: 'Nueva carpeta' }).click()
+    await compu.getByLabel('Nombre de la carpeta nueva').fill('Congreso')
+    await compu.getByLabel('Nombre de la carpeta nueva').press('Enter')
+    await compu.getByRole('heading', { name: 'Congreso' }).waitFor()
+    await compu.getByRole('button', { name: 'Nueva lista' }).first().click()
+    await compu.getByLabel('Nombre de la lista').fill('Sábado · 19 hs')
+    assert.equal(await compu.getByLabel('Carpeta de la lista').inputValue(), 'Congreso')
+    await compu.getByRole('button', { name: 'Sumar Tercera a la lista' }).click()
+    await compu.getByRole('button', { name: 'Sumar Primera a la lista' }).click()
+    await compu.getByRole('button', { name: 'Bajar Tercera' }).click()
+    await compu.waitForFunction(() => Array.from(document.querySelectorAll('.lista-orden .lista-titulo'), (e) => e.textContent).join() === 'Primera,Tercera')
+    await esperar(900) // el nombre se guarda medio segundo despues de escribir
+    assert.deepEqual(await pestanas(), ['Primera', 'Segunda', 'Tercera'], 'armar una lista no cambia lo de arriba')
+    // usarla: lo de arriba eran canciones sueltas, pide confirmar
+    await compu.locator('.lista-editor-pie').getByRole('button', { name: 'Usar esta lista' }).click()
+    await compu.locator('.modal').getByRole('button', { name: 'Usar esta lista' }).click()
+    await compu.waitForFunction(() => Array.from(document.querySelectorAll('.setlist-nombre'), (e) => e.textContent).join() === 'Primera,Tercera')
+    assert.equal(await compu.locator('.chip-lista').textContent(), 'Sábado · 19 hs')
+    assert.match((await compu.locator('.chip-lista').getAttribute('title'))!, /Congreso/)
+    assert.equal(await compu.locator('.cancion-titulo').textContent(), 'Primera')
+  })
+
+  await t.test('el celular ve el nombre de la lista y su orden', async () => {
+    const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+    ctx.setDefaultTimeout(15000)
+    const cel = await ctx.newPage()
+    await cel.goto(base)
+    await cel.getByRole('button', { name: /Tocá para empezar/ }).click()
+    await cel.getByRole('button', { name: 'Canciones del setlist' }).click()
+    await cel.getByRole('heading', { name: /Canciones · Sábado · 19 hs/ }).waitFor()
+    assert.deepEqual(await cel.locator('.m-canciones-nombre').allTextContents(), ['Primera', 'Tercera'])
+    await ctx.close()
+  })
+
+  await t.test('lo que se cambia arriba se guarda solo en la lista; editar la lista de arriba cambia las canciones de arriba', async () => {
+    // sumar "Segunda" con "+ Canción"
+    await compu.locator('.boton-nueva').click()
+    await compu.locator('.modal .lista-fila', { hasText: 'Segunda' }).getByRole('button', { name: /Agregar/ }).click()
+    await compu.waitForSelector('.modal', { state: 'detached' })
+    assert.deepEqual(await pestanas(), ['Primera', 'Tercera', 'Segunda'])
+    await compu.locator('.chip-lista').click()
+    const tarjeta = compu.locator('.tarjeta-lista', { hasText: 'Sábado · 19 hs' })
+    await tarjeta.filter({ hasText: '3 canciones' }).waitFor()
+    assert.match((await tarjeta.textContent())!, /HOY.*ARRIBA/)
+    // editar la de arriba: sacar "Tercera"
+    await tarjeta.getByRole('button', { name: 'Editar' }).click()
+    await compu.getByRole('button', { name: 'Sacar Tercera de la lista' }).click()
+    await compu.waitForFunction(() => Array.from(document.querySelectorAll('.setlist-nombre'), (e) => e.textContent).join() === 'Primera,Segunda')
+    await compu.getByRole('button', { name: 'Listo' }).click()
+    await compu.locator('.tarjeta-lista', { hasText: 'Sábado · 19 hs' }).filter({ hasText: '2 canciones' }).waitFor()
+    // volver al escenario desde el chip ("Agregar" deja activa la cancion sumada)
+    await compu.locator('.chip-lista').click()
+    assert.equal(await compu.locator('.cancion-titulo').textContent(), 'Segunda')
+    assert.deepEqual(errores, [])
+  })
+})

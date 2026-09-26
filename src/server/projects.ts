@@ -1,8 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import crypto from 'node:crypto'
-import type { Proyecto, ProyectoResumen, SetlistResumen } from '../shared/types'
+import type { Proyecto, ProyectoResumen } from '../shared/types'
 import { FORMATO_PROYECTO_ACTUAL } from '../shared/types'
 import { aplicarPaneoAutomatico } from '../shared/mezcla'
 import { enParalelo, normalizarAWav } from './audio'
@@ -10,7 +9,7 @@ import { enParalelo, normalizarAWav } from './audio'
 /**
  * ~/MultitrackApp/
  *   proyectos/<id>/proyecto.json + audio/
- *   setlists/<id>.json
+ *   setlists/<id>.json   (listas por dia, ver listas.ts) + carpetas.json
  *   sesion.json          (pestanas abiertas, para recuperarlas si la app se cierra a mitad de un culto)
  * Se puede sobreescribir con MULTITRACK_APP_DIR (usado por los tests del servidor).
  */
@@ -22,7 +21,7 @@ export function projectsBaseDir(): string {
   return path.join(appBaseDir(), 'proyectos')
 }
 
-function setlistsDir(): string {
+export function setlistsDir(): string {
   return path.join(appBaseDir(), 'setlists')
 }
 
@@ -59,7 +58,7 @@ export function ensureBaseDir(): void {
 }
 
 /** Escritura atomica (archivo temporal + rename): un corte de luz a mitad de guardado no deja un JSON roto. */
-function escribirJson(ruta: string, datos: unknown): void {
+export function escribirJson(ruta: string, datos: unknown): void {
   const tmp = `${ruta}.${process.pid}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(datos, null, 2), 'utf-8')
   fs.renameSync(tmp, ruta)
@@ -208,73 +207,15 @@ export async function migrarProyecto(proyecto: Proyecto): Promise<Proyecto> {
   return proyecto
 }
 
-// ---- Setlists ----
-
-interface SetlistArchivo {
-  id: string
-  nombre: string
-  creadoEn: string
-  proyectos: string[]
-}
-
-function setlistPath(id: string): string {
-  if (!esIdValido(id)) throw new Error('id de setlist invalido')
-  return path.join(setlistsDir(), `${id}.json`)
-}
-
-export function guardarSetlist(nombre: string, proyectos: string[]): SetlistResumen {
-  ensureBaseDir()
-  const setlist: SetlistArchivo = {
-    id: crypto.randomUUID(),
-    nombre,
-    creadoEn: new Date().toISOString(),
-    proyectos: proyectos.filter(esIdValido)
-  }
-  escribirJson(setlistPath(setlist.id), setlist)
-  return aResumen(setlist)
-}
-
-function aResumen(s: SetlistArchivo): SetlistResumen {
-  const canciones: string[] = []
-  for (const id of s.proyectos) {
-    try {
-      canciones.push(loadProyecto(id).nombre)
-    } catch {
-      // cancion borrada despues de guardar el setlist
-    }
-  }
-  return { id: s.id, nombre: s.nombre, creadoEn: s.creadoEn, canciones }
-}
-
-export function cargarSetlist(id: string): SetlistArchivo {
-  return JSON.parse(fs.readFileSync(setlistPath(id), 'utf-8')) as SetlistArchivo
-}
-
-export function listarSetlists(): SetlistResumen[] {
-  ensureBaseDir()
-  const lista: SetlistResumen[] = []
-  for (const archivo of fs.readdirSync(setlistsDir())) {
-    const id = archivo.replace(/\.json$/, '')
-    if (!esIdValido(id)) continue
-    try {
-      lista.push(aResumen(cargarSetlist(id)))
-    } catch {
-      // archivo roto: se ignora
-    }
-  }
-  lista.sort((a, b) => b.creadoEn.localeCompare(a.creadoEn))
-  return lista
-}
-
-export function borrarSetlist(id: string): void {
-  fs.rmSync(setlistPath(id), { force: true })
-}
-
 // ---- Sesion (pestanas abiertas) ----
 
 export interface SesionGuardada {
   proyectos: string[]
   activo: number
+  /** la lista del dia que estaba cargada */
+  listaId?: string | null
+  /** Date.now() de la ultima vez que la app estaba abierta (se actualiza cada minuto) */
+  ultimaVez?: number
 }
 
 export function guardarSesion(sesion: SesionGuardada): void {
@@ -290,7 +231,12 @@ export function leerSesion(): SesionGuardada | null {
   try {
     const s = JSON.parse(fs.readFileSync(sesionPath(), 'utf-8')) as SesionGuardada
     if (!Array.isArray(s.proyectos)) return null
-    return { proyectos: s.proyectos.filter(esIdValido), activo: Number(s.activo) || 0 }
+    return {
+      proyectos: s.proyectos.filter(esIdValido),
+      activo: Number(s.activo) || 0,
+      listaId: esIdValido(s.listaId) ? s.listaId : null,
+      ultimaVez: typeof s.ultimaVez === 'number' && Number.isFinite(s.ultimaVez) ? s.ultimaVez : undefined
+    }
   } catch {
     return null
   }

@@ -87,6 +87,11 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
   const httpServer = http.createServer(app)
   const io = new SocketIOServer(httpServer, { cors: { origin: '*' }, pingInterval: 5000, pingTimeout: 8000 })
   const state = new AppState()
+  // cada minuto se anota que la app sigue abierta: al reabrirla se sabe si se corto recien (vuelve todo) o no (pantalla de listas)
+  const latido = setInterval(() => {
+    if (state.listaTabs().length) state.guardarSesionAhora()
+  }, 60_000)
+  latido.unref()
   const devices = new DeviceRegistry()
   const ajustes = leerAjustes()
   const licencias = new Licencias(opciones.clavePublicaLicencias)
@@ -251,6 +256,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
   }
 
   async function close(): Promise<void> {
+    clearInterval(latido)
     descubrimiento?.detener()
     servidorCorto?.close()
     biblioteca.apagar()

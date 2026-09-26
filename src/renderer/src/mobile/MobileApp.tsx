@@ -447,7 +447,7 @@ function HojaCanciones({ controller, onCerrar }: { controller: AppController; on
   }
 
   return (
-    <Hoja titulo="Canciones" onCerrar={onCerrar}>
+    <Hoja titulo={estado?.lista ? `Canciones · ${estado.lista.nombre}` : 'Canciones'} onCerrar={onCerrar}>
       {locked && (
         <p className="ayuda">
           <Lock size={14} /> El control lo tiene la computadora.

@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { HelpCircle, KeyRound, Lock, LockOpen, Plus, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
-import type { DispositivoInfo, EstadoLicencia, TabResumen } from '@shared/types'
+import { HelpCircle, KeyRound, ListMusic, Lock, LockOpen, Plus, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
+import type { DispositivoInfo, EstadoLicencia, ListaActiva, TabResumen } from '@shared/types'
 import { Toggle } from '../ui/Toggle'
 
 interface Props {
@@ -20,6 +20,10 @@ interface Props {
   onAyuda: () => void
   licencia: EstadoLicencia | null
   onLicencia: () => void
+  /** la lista del dia cargada arriba */
+  lista: ListaActiva | null
+  viendoListas: boolean
+  onListas: () => void
 }
 
 /** Resumen de salud de los celulares para el chip de la barra: verde / amarillo / rojo. */
@@ -69,6 +73,21 @@ export function TopBar(p: Props) {
         <span className="marca-punto" />
         AirTracks
       </div>
+
+      <button
+        className={`chip-lista ${p.viendoListas ? 'activo' : ''}`}
+        onClick={p.onListas}
+        title={
+          p.viendoListas
+            ? 'Volver a la canción'
+            : p.lista
+              ? `Lista en uso: ${p.lista.nombre}${p.lista.carpeta ? ` (${p.lista.carpeta})` : ''}. Tocá para ver todas las listas.`
+              : 'Listas por día: elegir, armar o cambiar la lista'
+        }
+      >
+        <ListMusic size={16} />
+        <span className="chip-lista-nombre">{p.lista ? p.lista.nombre : 'Listas'}</span>
+      </button>
 
       <nav className="setlist" aria-label="Setlist">
         {p.tabs.map((t, i) => {

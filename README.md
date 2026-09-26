@@ -51,8 +51,9 @@ así en la iglesia no hay que descargar nada. Si no se incluye, la app ofrece
 bajarlo una sola vez desde el panel de secciones.
 
 Datos guardados: `~/MultitrackApp/` → `proyectos/` (una carpeta por canción
-con sus pistas en WAV y `proyecto.json`), `setlists/` y `sesion.json` (las
-canciones abiertas, para recuperarlas si la app se cierra a mitad de un
+con sus pistas en WAV y `proyecto.json`), `setlists/` (las **listas por
+día**, una por archivo, y `carpetas.json`) y `sesion.json` (las canciones de
+arriba y su lista, para recuperarlas si la app se cierra a mitad de un
 culto). `MULTITRACK_APP_DIR` cambia esa carpeta (lo usan los tests).
 `~/MultitrackApp/modelos/` guarda el reconocedor de voz si se bajó desde la
 app. La **carpeta de canciones** (biblioteca) es, por defecto,
@@ -108,13 +109,29 @@ cambian a propósito.
    Windows pregunta al abrirla, marcá **las dos casillas** (redes privadas y
    públicas: la WiFi de una iglesia suele quedar como "pública") y aceptá; si
    no, los celulares no pueden conectarse.
-3. Abrí la app: si se había cerrado, **el setlist vuelve solo**. Si no, armalo
-   con **+ Canción** (importar `.zip`/`.rar` o abrir una guardada) o abrí un setlist
-   guardado. Lo más cómodo: copiar los `.zip` o `.rar` en la **carpeta de canciones**
-   (con subcarpetas por categoría) antes del culto; se importan y se analizan
-   solos, y en **+ Canción** aparecen ordenados por categoría, recientes o A–Z.
-   Conviene abrir cada canción nueva una vez antes, para revisar sus
-   secciones.
+3. Abrí la app: aparecen las **listas por día**. Tocá **Usar** en la de hoy
+   (se destaca sola por la fecha) y sus canciones se cargan arriba, en orden.
+   Si la app se cerró hace menos de 2 horas (se cortó a mitad del culto),
+   **vuelve sola** donde estaba; si no, abajo está **“Seguir donde quedé”**.
+   - **Carpetas:** una por evento o por mes (“Congreso Juvenil 2026”,
+     “Domingos”), con una lista por día adentro (“Sábado 17/10 · 19 hs”). Una
+     lista puede no tener carpeta.
+   - **Armar una lista:** *Nueva lista* (queda con la fecha de hoy) → a la
+     izquierda la biblioteca, se suman canciones con **+**; a la derecha la
+     lista, se ordena arrastrando (o con ↑ ↓) y se saca con ✕. Nombre, fecha
+     y carpeta arriba. Se guarda sola. *Duplicar* sirve para usar una lista
+     de base otro día. Sacar una canción de una lista o borrar la lista no
+     borra la canción.
+   - **La lista en uso** se ve en el botón de la izquierda de la barra
+     (tocándolo se va a las listas y se vuelve). Lo que se cambie arriba
+     (sumar con **+ Canción**, sacar, ordenar) queda guardado en esa lista, y
+     editar esa lista cambia las canciones de arriba (la que suena no se
+     puede sacar). Se pueden armar las listas de otros días con la música
+     sonando: arriba aparece “Sonando” con *Parar* y *Volver al escenario*.
+   - Lo más cómodo para las canciones: copiar los `.zip` o `.rar` en la
+     **carpeta de canciones** (con subcarpetas por categoría) antes del
+     culto; se importan y se analizan solos. Conviene abrir cada canción
+     nueva una vez antes, para revisar sus secciones.
 4. **Celulares:** botón **Celulares** (arriba a la derecha) → escanear el QR →
    **“Tocá para empezar”** → conectar auriculares. En ⚙ cada músico puede
    ponerle nombre a su celular (“Batería”, “Bajo”…). Para no escanear en cada
@@ -211,9 +228,10 @@ mismo en ⚙ → Estado.
   reproducción, dispositivos.
   - `socketHandlers.ts` — protocolo y permisos. `transport.ts` — play/pausa/
     stop/saltos y los eventos que dependen del tiempo (fin de canción,
-    repetir sección). `state.ts` — setlist en memoria. `devices.ts` —
-    celulares conectados. `projects.ts` — disco, setlists, sesión,
-    migración. `zip.ts` + `audio.ts` — importación con ffmpeg.
+    repetir sección). `state.ts` — canciones de arriba en memoria (y su
+    lista del día, que se guarda sola). `listas.ts` — listas por día y
+    carpetas. `devices.ts` — celulares conectados. `projects.ts` — disco,
+    sesión, migración. `zip.ts` + `audio.ts` — importación con ffmpeg.
 - `src/main` / `src/preload` — Electron: arranca el servidor, abre la
   ventana y le pasa (por IPC, nunca por la red) el token que la identifica
   como "la compu".

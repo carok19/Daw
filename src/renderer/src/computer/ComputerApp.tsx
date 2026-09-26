@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileArchive, FolderOpen, ListMusic, Smartphone } from 'lucide-react'
+import { ArrowLeft, AudioLines, Square } from 'lucide-react'
 import type { AppController } from '../app/useAppController'
 import { getPlayheadMs } from '../app/playheadStore'
 import { useConfirmar } from '../ui/Confirmar'
@@ -12,8 +12,11 @@ import { ConnectionPanel } from './ConnectionPanel'
 import { LicenciaPanel } from './LicenciaPanel'
 import { ProjectsScreen } from './ProjectsScreen'
 import { ShortcutsModal } from './ShortcutsModal'
+import { ListaEditor, ListasScreen } from './Listas'
 
-type Ventana = null | { tipo: 'canciones' | 'setlists' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' }
+type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' }
+/** escenario = la cancion (mixer, secciones); listas = las listas por dia; editar = armar una lista */
+type Vista = { tipo: 'escenario' } | { tipo: 'listas' } | { tipo: 'editar'; listaId: string }
 
 /** Solo los campos donde se escribe texto "se comen" el teclado; faders, botones y casillas no. */
 function escribiendoTexto(el: EventTarget | null): boolean {
@@ -29,17 +32,20 @@ export function ComputerApp({ controller }: { controller: AppController }) {
   const { estado } = controller
   const confirmar = useConfirmar()
   const [ventana, setVentana] = useState<Ventana>(null)
+  const [vistaElegida, setVista] = useState<Vista>({ tipo: 'escenario' })
   const proyecto = estado?.proyectoActivo ?? null
   const sonando = estado?.playbackActivo?.estado === 'playing'
+  // sin canciones arriba (al abrir el programa, o si se cerraron todas): las listas
+  const vista: Vista = vistaElegida.tipo === 'escenario' && estado && estado.tabs.length === 0 ? { tipo: 'listas' } : vistaElegida
 
   // Los atajos se registran una sola vez y leen siempre lo mas nuevo por ref.
-  const ctx = useRef({ controller, ventana, proyecto })
-  ctx.current = { controller, ventana, proyecto }
+  const ctx = useRef({ controller, ventana, proyecto, vista })
+  ctx.current = { controller, ventana, proyecto, vista }
   const cancionRelativaRef = useRef<(delta: number) => void>(() => {})
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent): void {
-      const { controller: c, ventana: v, proyecto: p } = ctx.current
+      const { controller: c, ventana: v, proyecto: p, vista: vi } = ctx.current
       if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
       if (escribiendoTexto(e.target)) return
       if (e.key === '?') {
@@ -48,7 +54,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         return
       }
       if (v || document.querySelector('[data-modal]')) return // con una ventana abierta, solo Esc (lo maneja el Modal)
-      if (!p) return
+      if (!p || vi.tipo !== 'escenario') return // armando listas: las teclas no tocan la musica
       const accion = ((): (() => void) | null => {
         switch (e.code) {
           case 'Space':
@@ -178,6 +184,9 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         onAyuda={() => setVentana({ tipo: 'atajos' })}
         licencia={controller.licencia}
         onLicencia={() => setVentana({ tipo: 'licencia' })}
+        lista={estado?.lista ?? null}
+        viendoListas={vista.tipo !== 'escenario'}
+        onListas={() => setVista(vista.tipo === 'escenario' ? { tipo: 'listas' } : { tipo: 'escenario' })}
       />
 
       {!controller.conectado && estado && (
@@ -186,7 +195,38 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         </div>
       )}
 
-      {proyecto ? (
+      {vista.tipo !== 'escenario' && sonando && proyecto && (
+        <div className="barra-sonando">
+          <AudioLines size={16} />
+          <span>
+            Sonando: <b>{proyecto.nombre}</b>
+          </span>
+          <button className="btn-chico" onClick={controller.stop}>
+            <Square size={13} /> Parar
+          </button>
+          <button className="btn-chico" onClick={() => setVista({ tipo: 'escenario' })}>
+            <ArrowLeft size={13} /> Volver al escenario
+          </button>
+        </div>
+      )}
+
+      {vista.tipo === 'listas' ? (
+        <ListasScreen
+          controller={controller}
+          onUsada={() => setVista({ tipo: 'escenario' })}
+          onEditar={(listaId) => setVista({ tipo: 'editar', listaId })}
+          onCanciones={() => setVentana({ tipo: 'canciones' })}
+          onVolver={proyecto ? () => setVista({ tipo: 'escenario' }) : null}
+        />
+      ) : vista.tipo === 'editar' ? (
+        <ListaEditor
+          key={vista.listaId}
+          controller={controller}
+          listaId={vista.listaId}
+          onListo={() => setVista({ tipo: 'listas' })}
+          onUsada={() => setVista({ tipo: 'escenario' })}
+        />
+      ) : proyecto ? (
         <>
           <Transport
             key={proyecto.id}
@@ -232,35 +272,9 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             />
           </main>
         </>
-      ) : (
-        <div className="compu-vacio">
-          <div className="vacio-tarjeta">
-            <div className="icono-grande">
-              <ListMusic size={32} />
-            </div>
-            <h2>Armá el setlist</h2>
-            <p>
-              Importá una canción (un .zip o .rar con una pista por archivo) o abrí una ya guardada. El audio sale de los celulares:
-              conectalos con el código QR de <b>Celulares</b>.
-            </p>
-            <div className="vacio-acciones">
-              <button className="btn-primario" onClick={() => setVentana({ tipo: 'canciones' })}>
-                <FileArchive size={17} /> Importar o abrir canción
-              </button>
-              <button onClick={() => setVentana({ tipo: 'setlists' })}>
-                <FolderOpen size={17} /> Abrir un setlist
-              </button>
-              <button onClick={() => setVentana({ tipo: 'conexion' })}>
-                <Smartphone size={17} /> Conectar celulares
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      ) : null}
 
-      {ventana && (ventana.tipo === 'canciones' || ventana.tipo === 'setlists') && (
-        <ProjectsScreen controller={controller} vistaInicial={ventana.tipo} onCerrar={() => setVentana(null)} />
-      )}
+      {ventana?.tipo === 'canciones' && <ProjectsScreen controller={controller} onCerrar={() => setVentana(null)} />}
       {ventana?.tipo === 'conexion' && (
         <ConnectionPanel
           controller={controller}

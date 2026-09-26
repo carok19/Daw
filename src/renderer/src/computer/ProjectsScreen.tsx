@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { FileArchive, FolderOpen, FolderSync, ListMusic, LoaderCircle, Music, Plus, RefreshCw, Save, Trash2 } from 'lucide-react'
-import type { EstadoAnalisis, EstadoBiblioteca, ImportProgreso, ProyectoResumen, SetlistResumen } from '@shared/types'
+import { FileArchive, FolderOpen, FolderSync, LoaderCircle, Music, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import type { EstadoAnalisis, EstadoBiblioteca, ImportProgreso, ProyectoResumen } from '@shared/types'
 import type { AppController } from '../app/useAppController'
 import { Modal } from '../ui/Modal'
 import { useConfirmar } from '../ui/Confirmar'
@@ -8,7 +8,6 @@ import { formatDuracion, formatFecha } from '../format'
 
 interface Props {
   controller: AppController
-  vistaInicial?: 'canciones' | 'setlists'
   onCerrar: () => void
 }
 
@@ -45,15 +44,13 @@ function nombreCategoria(c: string): string {
   return c ? c.split('/').join(' › ') : 'Sin categoría'
 }
 
-export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerrar }: Props) {
+/** Biblioteca: todas las canciones de la compu (importar, sumar arriba, borrar). */
+export function ProjectsScreen({ controller, onCerrar }: Props) {
   const confirmar = useConfirmar()
-  const [vista, setVista] = useState(vistaInicial)
   const [proyectos, setProyectos] = useState<ProyectoResumen[] | null>(null)
-  const [setlists, setSetlists] = useState<SetlistResumen[] | null>(null)
   const [busqueda, setBusqueda] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [ocupado, setOcupado] = useState<string | null>(null)
-  const [nombreSetlist, setNombreSetlist] = useState('')
   const [categoria, setCategoria] = useState<string>(TODAS)
   const [orden, setOrdenEstado] = useState<Orden>(leerOrden)
   function setOrden(o: Orden): void {
@@ -65,12 +62,10 @@ export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerra
     }
   }
   const abiertos = new Set(controller.estado?.tabs.map((t) => t.proyectoId))
-  const hayCanciones = (controller.estado?.tabs.length ?? 0) > 0
+  const lista = controller.estado?.lista ?? null
 
   async function recargar(): Promise<void> {
-    const [p, s] = await Promise.all([controller.listSavedProjects(), controller.listSetlists()])
-    setProyectos(p)
-    setSetlists(s)
+    setProyectos(await controller.listSavedProjects())
   }
 
   // se recarga sola cuando cambia algo (importacion de la biblioteca, analisis terminado...)
@@ -124,7 +119,7 @@ export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerra
 
   function avisarSiNoSeActivo(activada: boolean | undefined): void {
     if (activada === false) {
-      controller.avisar({ tipo: 'info', texto: 'Se agregó al final del setlist sin cortar la canción que está sonando.' })
+      controller.avisar({ tipo: 'info', texto: `Se agregó al final ${lista ? `de “${lista.nombre}”` : 'de la lista'} sin cortar la canción que está sonando.` })
     }
   }
 
@@ -144,68 +139,10 @@ export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerra
     void recargar()
   }
 
-  async function guardarSetlist(): Promise<void> {
-    setError(null)
-    const r = await controller.saveSetlist(nombreSetlist)
-    if (!r.ok) {
-      setError(r.error ?? 'No se pudo guardar')
-      return
-    }
-    setNombreSetlist('')
-    void recargar()
-    controller.avisar({ tipo: 'info', texto: 'Setlist guardado' })
-  }
-
-  async function abrirSetlist(s: SetlistResumen): Promise<void> {
-    if (hayCanciones) {
-      const ok = await confirmar({
-        titulo: 'Abrir setlist',
-        mensaje: (
-          <>
-            Se van a reemplazar las canciones abiertas por las de <b>{s.nombre}</b>. Si algo está sonando, se detiene.
-          </>
-        ),
-        confirmar: 'Abrir setlist'
-      })
-      if (!ok) return
-    }
-    setOcupado(s.id)
-    const r = await controller.openSetlist(s.id)
-    setOcupado(null)
-    if (r.ok) {
-      if (r.error) controller.avisar({ tipo: 'error', texto: r.error })
-      onCerrar()
-    } else setError(r.error ?? 'No se pudo abrir el setlist')
-  }
-
-  async function borrarSetlist(s: SetlistResumen): Promise<void> {
-    const ok = await confirmar({
-      titulo: 'Borrar setlist',
-      mensaje: (
-        <>
-          Se borra el setlist <b>{s.nombre}</b> (las canciones no se tocan).
-        </>
-      ),
-      confirmar: 'Borrar',
-      peligro: true
-    })
-    if (!ok) return
-    await controller.deleteSetlist(s.id)
-    void recargar()
-  }
-
   return (
     <Modal
-      titulo={
-        <div className="segmentado">
-          <button className={vista === 'canciones' ? 'activo' : ''} onClick={() => setVista('canciones')}>
-            <Music size={15} /> Canciones
-          </button>
-          <button className={vista === 'setlists' ? 'activo' : ''} onClick={() => setVista('setlists')}>
-            <ListMusic size={15} /> Setlists
-          </button>
-        </div>
-      }
+      titulo={lista ? `Canciones · sumar a “${lista.nombre}”` : 'Canciones'}
+      icono={<Music size={20} color="var(--accent)" />}
       tamano="ancho"
       onCerrar={onCerrar}
     >
@@ -222,150 +159,101 @@ export function ProjectsScreen({ controller, vistaInicial = 'canciones', onCerra
         </div>
       )}
 
-      {vista === 'canciones' ? (
-        <>
-          <BarraBiblioteca
-            biblioteca={controller.biblioteca}
-            onAbrir={controller.abrirCarpetaBiblioteca}
-            onCambiar={async () => {
-              const r = await controller.elegirCarpetaBiblioteca()
-              if (!r.ok && r.error) setError(r.error)
-            }}
-            onEscanear={controller.escanearBiblioteca}
-          />
-          <div className="barra-busqueda">
-            <button className="btn-primario" onClick={importar} disabled={!!ocupado}>
-              <FileArchive size={16} /> {ocupado === 'importar' ? 'Importando…' : 'Importar .zip / .rar'}
+      <BarraBiblioteca
+        biblioteca={controller.biblioteca}
+        onAbrir={controller.abrirCarpetaBiblioteca}
+        onCambiar={async () => {
+          const r = await controller.elegirCarpetaBiblioteca()
+          if (!r.ok && r.error) setError(r.error)
+        }}
+        onEscanear={controller.escanearBiblioteca}
+      />
+      <div className="barra-busqueda">
+        <button className="btn-primario" onClick={importar} disabled={!!ocupado}>
+          <FileArchive size={16} /> {ocupado === 'importar' ? 'Importando…' : 'Importar .zip / .rar'}
+        </button>
+        <input
+          type="search"
+          placeholder="Buscar canción…"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          aria-label="Buscar canción"
+        />
+        <div className="segmentado segmentado-chico" role="group" aria-label="Orden">
+          <button className={orden === 'recientes' ? 'activo' : ''} onClick={() => setOrden('recientes')} title="Las últimas usadas primero">
+            Recientes
+          </button>
+          <button className={orden === 'az' ? 'activo' : ''} onClick={() => setOrden('az')} title="Por nombre">
+            A–Z
+          </button>
+        </div>
+      </div>
+      {hayCategorias && (
+        <div className="categorias" role="tablist" aria-label="Categorías">
+          <button
+            role="tab"
+            aria-selected={categoriaActiva === TODAS}
+            className={categoriaActiva === TODAS ? 'activo' : ''}
+            onClick={() => setCategoria(TODAS)}
+          >
+            Todas <span className="num">{proyectos?.length ?? 0}</span>
+          </button>
+          {categorias.map(([c, n]) => (
+            <button
+              key={c || '-'}
+              role="tab"
+              aria-selected={categoriaActiva === c}
+              className={categoriaActiva === c ? 'activo' : ''}
+              onClick={() => setCategoria(c)}
+            >
+              {nombreCategoria(c)} <span className="num">{n}</span>
             </button>
-            <input
-              type="search"
-              placeholder="Buscar canción…"
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-              aria-label="Buscar canción"
-            />
-            <div className="segmentado segmentado-chico" role="group" aria-label="Orden">
-              <button className={orden === 'recientes' ? 'activo' : ''} onClick={() => setOrden('recientes')} title="Las últimas usadas primero">
-                Recientes
-              </button>
-              <button className={orden === 'az' ? 'activo' : ''} onClick={() => setOrden('az')} title="Por nombre">
-                A–Z
-              </button>
-            </div>
-          </div>
-          {hayCategorias && (
-            <div className="categorias" role="tablist" aria-label="Categorías">
-              <button
-                role="tab"
-                aria-selected={categoriaActiva === TODAS}
-                className={categoriaActiva === TODAS ? 'activo' : ''}
-                onClick={() => setCategoria(TODAS)}
-              >
-                Todas <span className="num">{proyectos?.length ?? 0}</span>
-              </button>
-              {categorias.map(([c, n]) => (
-                <button
-                  key={c || '-'}
-                  role="tab"
-                  aria-selected={categoriaActiva === c}
-                  className={categoriaActiva === c ? 'activo' : ''}
-                  onClick={() => setCategoria(c)}
-                >
-                  {nombreCategoria(c)} <span className="num">{n}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {error && <p className="error-texto">{error}</p>}
-          {proyectos === null ? (
-            <p className="vacio">Cargando…</p>
-          ) : filtrados.length === 0 ? (
-            <p className="vacio">
-              {busqueda
-                ? 'No hay canciones con ese nombre.'
-                : 'Todavía no hay canciones. Importá un .zip o .rar, o copialo en la carpeta de la biblioteca.'}
-            </p>
-          ) : (
-            <ul className="lista">
-              {filtrados.map((p) => (
-                <li key={p.id} className="lista-fila clic" onClick={() => !ocupado && abrir(p.id)}>
-                  <div className="lista-principal">
-                    <span className="lista-titulo">{p.nombre}</span>
-                    <span className="lista-meta num">
-                      {formatDuracion(p.duracionTotalMs)} · {p.cantidadPistas} pistas · {p.cantidadMarcadores} secciones
-                      {p.bpm ? ` · ${Math.round(p.bpm)} BPM ${textoCompas(p.compas ?? 4)}` : ''}
-                      {categoriaActiva === TODAS && p.categoria ? ` · ${nombreCategoria(p.categoria)}` : ''}
-                      {' · '}
-                      {p.usadoEn ? `usada ${formatFecha(p.usadoEn)}` : formatFecha(p.creadoEn)}
-                    </span>
-                  </div>
-                  {p.analisis && ETIQUETA_ANALISIS[p.analisis] && (
-                    <span className={`lista-etiqueta ${p.analisis === 'error' ? 'etiqueta-error' : 'etiqueta-suave'}`}>
-                      {ETIQUETA_ANALISIS[p.analisis]}
-                    </span>
-                  )}
-                  {abiertos.has(p.id) && <span className="lista-etiqueta">En el setlist</span>}
-                  <button className="btn-chico" disabled={!!ocupado} onClick={(e) => (e.stopPropagation(), abrir(p.id))}>
-                    {ocupado === p.id ? 'Abriendo…' : abiertos.has(p.id) ? 'Ir' : <><Plus size={14} /> Agregar</>}
-                  </button>
-                  <button
-                    className="btn-fantasma btn-icono"
-                    title="Borrar canción"
-                    aria-label={`Borrar ${p.nombre}`}
-                    onClick={(e) => (e.stopPropagation(), borrar(p))}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+          ))}
+        </div>
+      )}
+      {error && <p className="error-texto">{error}</p>}
+      {proyectos === null ? (
+        <p className="vacio">Cargando…</p>
+      ) : filtrados.length === 0 ? (
+        <p className="vacio">
+          {busqueda
+            ? 'No hay canciones con ese nombre.'
+            : 'Todavía no hay canciones. Importá un .zip o .rar, o copialo en la carpeta de la biblioteca.'}
+        </p>
       ) : (
-        <>
-          <div className="barra-busqueda">
-            <input
-              placeholder="Nombre para guardar el setlist actual (ej: Domingo 10 hs)"
-              value={nombreSetlist}
-              maxLength={60}
-              onChange={(e) => setNombreSetlist(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && guardarSetlist()}
-            />
-            <button className="btn-primario" onClick={guardarSetlist} disabled={!hayCanciones || !nombreSetlist.trim()}>
-              <Save size={16} /> Guardar actual
-            </button>
-          </div>
-          {error && <p className="error-texto">{error}</p>}
-          {setlists === null ? (
-            <p className="vacio">Cargando…</p>
-          ) : setlists.length === 0 ? (
-            <p className="vacio">Todavía no hay setlists. Armá el orden de canciones arriba y guardalo con un nombre.</p>
-          ) : (
-            <ul className="lista">
-              {setlists.map((s) => (
-                <li key={s.id} className="lista-fila clic" onClick={() => !ocupado && abrirSetlist(s)}>
-                  <div className="lista-principal">
-                    <span className="lista-titulo">{s.nombre}</span>
-                    <span className="lista-meta">
-                      {s.canciones.length} canciones · {s.canciones.join(' → ')}
-                    </span>
-                  </div>
-                  <button className="btn-chico" disabled={!!ocupado} onClick={(e) => (e.stopPropagation(), abrirSetlist(s))}>
-                    {ocupado === s.id ? 'Abriendo…' : 'Abrir'}
-                  </button>
-                  <button
-                    className="btn-fantasma btn-icono"
-                    title="Borrar setlist"
-                    aria-label={`Borrar setlist ${s.nombre}`}
-                    onClick={(e) => (e.stopPropagation(), borrarSetlist(s))}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+        <ul className="lista">
+          {filtrados.map((p) => (
+            <li key={p.id} className="lista-fila clic" onClick={() => !ocupado && abrir(p.id)}>
+              <div className="lista-principal">
+                <span className="lista-titulo">{p.nombre}</span>
+                <span className="lista-meta num">
+                  {formatDuracion(p.duracionTotalMs)} · {p.cantidadPistas} pistas · {p.cantidadMarcadores} secciones
+                  {p.bpm ? ` · ${Math.round(p.bpm)} BPM ${textoCompas(p.compas ?? 4)}` : ''}
+                  {categoriaActiva === TODAS && p.categoria ? ` · ${nombreCategoria(p.categoria)}` : ''}
+                  {' · '}
+                  {p.usadoEn ? `usada ${formatFecha(p.usadoEn)}` : formatFecha(p.creadoEn)}
+                </span>
+              </div>
+              {p.analisis && ETIQUETA_ANALISIS[p.analisis] && (
+                <span className={`lista-etiqueta ${p.analisis === 'error' ? 'etiqueta-error' : 'etiqueta-suave'}`}>
+                  {ETIQUETA_ANALISIS[p.analisis]}
+                </span>
+              )}
+              {abiertos.has(p.id) && <span className="lista-etiqueta">{lista ? 'En la lista' : 'Arriba'}</span>}
+              <button className="btn-chico" disabled={!!ocupado} onClick={(e) => (e.stopPropagation(), abrir(p.id))}>
+                {ocupado === p.id ? 'Abriendo…' : abiertos.has(p.id) ? 'Ir' : <><Plus size={14} /> Agregar</>}
+              </button>
+              <button
+                className="btn-fantasma btn-icono"
+                title="Borrar canción"
+                aria-label={`Borrar ${p.nombre}`}
+                onClick={(e) => (e.stopPropagation(), borrar(p))}
+              >
+                <Trash2 size={16} />
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </Modal>
   )

@@ -30,25 +30,28 @@ import type {
   DatosInvitacion,
   DiagnosticoServidor,
   EstadoLicencia,
-  MotivoCodigo
+  DatosListas,
+  MotivoCodigo,
+  SesionAnterior
 } from '../shared/types'
 import type { AppState } from './state'
 import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ImportError, ZipSinPistasError } from './zip'
 import { primerVolumen } from './comprimidos'
+import { deleteProyecto, esIdValido, listProyectos, loadProyecto, migrarProyecto, proyectoExiste, saveProyecto, type SesionGuardada } from './projects'
 import {
-  borrarSetlist,
-  cargarSetlist,
-  deleteProyecto,
-  esIdValido,
-  guardarSetlist,
-  listarSetlists,
-  listProyectos,
-  loadProyecto,
-  migrarProyecto,
-  proyectoExiste,
-  saveProyecto
-} from './projects'
+  agregarCarpeta,
+  borrarCarpeta,
+  borrarLista,
+  crearLista,
+  guardarLista,
+  leerLista,
+  limpiarFecha,
+  limpiarNombre,
+  listarCarpetas,
+  listarListas,
+  renombrarCarpeta
+} from './listas'
 import type { DeviceRegistry } from './devices'
 import { Transporte } from './transport'
 import { Analizador } from './analisis'
@@ -337,6 +340,93 @@ export function registerSocketHandlers(
     const activa = state.getActiveTab()
     if (activa && activa.tabId !== tabId) transporte.detenerInmediato(activa)
     if (state.setActiveTab(tabId)) transporte.reprogramarTimers()
+  }
+
+  // ---- listas por dia ----
+
+  /** Las operaciones de listas van de a una (cargar una lista abre canciones y puede tardar). */
+  let colaListas: Promise<unknown> = Promise.resolve()
+  function enCola<T>(fn: () => Promise<T>): Promise<T> {
+    const p = colaListas.then(fn, fn)
+    colaListas = p.catch(() => undefined)
+    return p
+  }
+
+  function listasCambiaron(): void {
+    aCompus('listas:cambio', {})
+  }
+  // lo que se cambia en las pestanas se guarda solo en la lista del dia: las pantallas de listas se actualizan
+  state.onListaGuardada = listasCambiaron
+
+  function datosListas(): DatosListas {
+    const s = state.sesionAnterior
+    let sesionAnterior: SesionAnterior | null = null
+    const existentes = s ? s.proyectos.filter((id) => proyectoExiste(id)) : []
+    if (s && existentes.length) {
+      const actualId = s.proyectos[Math.min(Math.max(0, s.activo), s.proyectos.length - 1)]
+      sesionAnterior = {
+        lista: s.listaId ? (leerLista(s.listaId)?.nombre ?? null) : null,
+        canciones: existentes.length,
+        actual: Math.max(1, existentes.indexOf(actualId) + 1),
+        nombreActual: proyectoExiste(actualId) ? loadProyecto(actualId).nombre : null
+      }
+    }
+    return { listas: listarListas(), carpetas: listarCarpetas(), activa: state.listaActiva?.id ?? null, sesionAnterior }
+  }
+
+  function actualizarListaActiva(): void {
+    if (!state.listaActiva) return
+    const l = leerLista(state.listaActiva.id)
+    state.listaActiva = l ? { id: l.id, nombre: l.nombre, carpeta: l.carpeta ?? '' } : null
+    emitirEstado()
+  }
+
+  /** Carga una lista en las pestanas (reemplaza lo que habia; si algo sonaba, se para). */
+  async function usarLista(id: unknown): Promise<{ ok: boolean; error?: string }> {
+    const lista = leerLista(id)
+    if (!lista) return { ok: false, error: 'Esa lista ya no existe' }
+    const activa = state.getActiveTab()
+    if (activa) transporte.detenerInmediato(activa)
+    let faltantes = 0
+    await state.lote(async () => {
+      state.listaActiva = null // cerrar las canciones de antes no tiene que tocar ninguna lista
+      state.cerrarTodo()
+      for (const pid of lista.proyectos) {
+        if (!proyectoExiste(pid)) faltantes++
+        else await abrirProyectoGuardado(pid, false)
+      }
+      const primera = state.listaTabs()[0]
+      if (primera) state.setActiveTab(primera.tabId)
+      state.listaActiva = { id: lista.id, nombre: lista.nombre, carpeta: lista.carpeta ?? '' }
+      state.sesionAnterior = null
+    })
+    transporte.reprogramarTimers()
+    emitirEstado()
+    listasCambiaron()
+    return { ok: true, error: faltantes ? `${faltantes} canción(es) de la lista ya no están en la compu` : undefined }
+  }
+
+  /** Si la cancion que suena quedaria afuera de la lista cargada arriba: no se puede sacar sonando. */
+  function cancionSonandoFuera(proyectos: string[]): string | null {
+    const activa = state.getActiveTab()
+    if (activa && algoSuena() && !proyectos.includes(activa.proyecto.id)) return `“${activa.proyecto.nombre}” está sonando: pará la música para sacarla de la lista`
+    return null
+  }
+
+  /** La lista cargada arriba se edito: las pestanas pasan a ser las de la lista, en su orden. */
+  async function sincronizarPestanas(proyectos: string[]): Promise<void> {
+    await state.lote(async () => {
+      for (const t of state.listaTabs()) {
+        if (proyectos.includes(t.proyectoId)) continue
+        const tab = state.getTab(t.tabId)
+        if (tab && tab.tabId === state.activeTabId) transporte.detenerInmediato(tab)
+        state.cerrarTab(t.tabId)
+      }
+      for (const pid of proyectos) if (!state.tabDeProyecto(pid) && proyectoExiste(pid)) await abrirProyectoGuardado(pid, false)
+      state.reordenarTabs(proyectos.map((pid) => state.tabDeProyecto(pid)?.tabId).filter((x): x is string => !!x))
+    }, true)
+    transporte.reprogramarTimers()
+    emitirEstado()
   }
 
   io.on('connection', (socket: Socket) => {
@@ -688,47 +778,161 @@ export function registerSocketHandlers(
       ack?.({ ok: true })
     })
 
-    // ---- Setlists ----
+    // ---- Listas por dia (y sus carpetas) ----
 
-    socket.on('setlists:list', (_payload: unknown, ack?: Ack<ReturnType<typeof listarSetlists>>) => {
-      ack?.(listarSetlists())
+    socket.on('listas:obtener', (_payload: unknown, ack?: Ack<DatosListas | null>) => {
+      if (!soloCompu(socket)) return ack?.(null)
+      ack?.(datosListas())
     })
 
-    socket.on('setlists:save', (payload: { nombre?: string }, ack?: Ack<{ ok: boolean; error?: string }>) => {
-      if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede guardar setlists' })
-      const nombre = typeof payload?.nombre === 'string' ? payload.nombre.replace(/\s+/g, ' ').trim().slice(0, 60) : ''
-      const proyectos = state.listaProyectos().map((p: Proyecto) => p.id)
-      if (!nombre) return ack?.({ ok: false, error: 'Poné un nombre para el setlist' })
-      if (proyectos.length === 0) return ack?.({ ok: false, error: 'No hay canciones abiertas para guardar' })
-      guardarSetlist(nombre, proyectos)
+    socket.on(
+      'listas:crear',
+      (
+        payload: { nombre?: unknown; carpeta?: unknown; fecha?: unknown; proyectos?: unknown; desdeActual?: unknown },
+        ack?: Ack<{ ok: boolean; error?: string; id?: string }>
+      ) => {
+        if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede armar listas' })
+        const nombre = limpiarNombre(payload?.nombre)
+        if (!nombre) return ack?.({ ok: false, error: 'Poné un nombre para la lista' })
+        const desdeActual = payload?.desdeActual === true
+        if (desdeActual && state.listaTabs().length === 0) return ack?.({ ok: false, error: 'No hay canciones arriba para guardar' })
+        const proyectos = desdeActual
+          ? state.listaProyectos().map((p) => p.id)
+          : Array.isArray(payload?.proyectos)
+            ? payload.proyectos.filter(esIdValido)
+            : []
+        const lista = crearLista({
+          nombre,
+          carpeta: typeof payload?.carpeta === 'string' && payload.carpeta.trim() ? agregarCarpeta(payload.carpeta) : '',
+          fecha: limpiarFecha(payload?.fecha) ?? null,
+          proyectos
+        })
+        if (desdeActual) {
+          // lo de arriba pasa a ser esta lista: lo que se cambie ahi se sigue guardando en ella
+          state.listaActiva = { id: lista.id, nombre: lista.nombre, carpeta: lista.carpeta ?? '' }
+          state.sesionAnterior = null
+          state.guardarSesionAhora()
+          emitirEstado()
+        }
+        listasCambiaron()
+        ack?.({ ok: true, id: lista.id })
+      }
+    )
+
+    socket.on(
+      'listas:guardar',
+      (
+        payload: { id?: unknown; nombre?: unknown; carpeta?: unknown; fecha?: unknown; proyectos?: unknown },
+        ack?: Ack<{ ok: boolean; error?: string }>
+      ) => {
+        if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede editar listas' })
+        void enCola(async () => {
+          const lista = leerLista(payload?.id)
+          if (!lista) return ack?.({ ok: false, error: 'Esa lista ya no existe' })
+          if (payload.nombre !== undefined) {
+            const nombre = limpiarNombre(payload.nombre)
+            if (!nombre) return ack?.({ ok: false, error: 'Poné un nombre para la lista' })
+            lista.nombre = nombre
+          }
+          if (payload.carpeta !== undefined) lista.carpeta = typeof payload.carpeta === 'string' && payload.carpeta.trim() ? agregarCarpeta(payload.carpeta) : ''
+          const fecha = limpiarFecha(payload.fecha)
+          if (fecha !== undefined) lista.fecha = fecha
+          const esActiva = state.listaActiva?.id === lista.id
+          let error: string | null = null
+          const proyectos = Array.isArray(payload.proyectos) ? [...new Set(payload.proyectos.filter(esIdValido))] : null
+          if (proyectos) {
+            error = esActiva ? cancionSonandoFuera(proyectos) : null
+            if (!error) lista.proyectos = proyectos
+          }
+          guardarLista(lista)
+          if (esActiva) {
+            state.listaActiva = { id: lista.id, nombre: lista.nombre, carpeta: lista.carpeta ?? '' }
+            // es la que esta arriba: las pestanas pasan a ser las de la lista
+            if (proyectos && !error) await sincronizarPestanas(lista.proyectos)
+            else emitirEstado()
+          }
+          listasCambiaron()
+          ack?.(error ? { ok: false, error } : { ok: true })
+        })
+      }
+    )
+
+    socket.on('listas:duplicar', (payload: { id?: unknown }, ack?: Ack<{ ok: boolean; id?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      const lista = leerLista(payload?.id)
+      if (!lista) return ack?.({ ok: false })
+      const copia = crearLista({ nombre: `${lista.nombre} (copia)`.slice(0, 60), carpeta: lista.carpeta ?? '', fecha: null, proyectos: lista.proyectos })
+      listasCambiaron()
+      ack?.({ ok: true, id: copia.id })
+    })
+
+    socket.on('listas:borrar', (payload: { id?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket) || !esIdValido(payload?.id)) return ack?.({ ok: false })
+      borrarLista(payload.id)
+      if (state.listaActiva?.id === payload.id) {
+        // las canciones de arriba quedan como estan, sueltas
+        state.listaActiva = null
+        state.guardarSesionAhora()
+        emitirEstado()
+      }
+      listasCambiaron()
       ack?.({ ok: true })
     })
 
-    socket.on('setlists:open', async (payload: { id?: string }, ack?: Ack<{ ok: boolean; error?: string }>) => {
-      if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede abrir setlists' })
-      if (!esIdValido(payload?.id)) return ack?.({ ok: false, error: 'Setlist inválido' })
-      try {
-        const setlist = cargarSetlist(payload.id)
+    socket.on('listas:usar', (payload: { id?: unknown }, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede cambiar de lista' })
+      void enCola(async () => {
+        try {
+          ack?.(await usarLista(payload?.id))
+        } catch (err) {
+          console.error('[listas:usar]', err)
+          ack?.({ ok: false, error: 'No se pudo cargar la lista' })
+        }
+      })
+    })
+
+    socket.on('sesion:seguir', (_payload: unknown, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      void enCola(async () => {
+        const sesion = state.sesionAnterior
+        if (!sesion) return ack?.({ ok: false })
         const activa = state.getActiveTab()
         if (activa) transporte.detenerInmediato(activa)
-        state.cerrarTodo()
-        let faltantes = 0
-        for (const id of setlist.proyectos) {
-          if (!proyectoExiste(id)) {
-            faltantes++
-            continue
-          }
-          await abrirProyectoGuardado(id, false)
-        }
-        const primera = state.listaTabs()[0]
-        if (primera) state.setActiveTab(primera.tabId)
+        await state.lote(() => {
+          state.listaActiva = null
+          state.cerrarTodo()
+        })
+        await abrirSesion(state, sesion)
         transporte.reprogramarTimers()
         emitirEstado()
-        ack?.({ ok: true, error: faltantes ? `${faltantes} canción(es) del setlist ya no existen` : undefined })
-      } catch (err) {
-        console.error('[setlists:open]', err)
-        ack?.({ ok: false, error: 'No se pudo abrir el setlist' })
-      }
+        listasCambiaron()
+        ack?.({ ok: true })
+      })
+    })
+
+    socket.on('carpetas:crear', (payload: { nombre?: unknown }, ack?: Ack<{ ok: boolean; nombre?: string; error?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      const nombre = limpiarNombre(payload?.nombre)
+      if (!nombre) return ack?.({ ok: false, error: 'Poné un nombre para la carpeta' })
+      const final = agregarCarpeta(nombre)
+      listasCambiaron()
+      ack?.({ ok: true, nombre: final })
+    })
+
+    socket.on('carpetas:renombrar', (payload: { de?: unknown; a?: unknown }, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!soloCompu(socket) || typeof payload?.de !== 'string') return ack?.({ ok: false })
+      if (!renombrarCarpeta(payload.de, typeof payload.a === 'string' ? payload.a : '')) return ack?.({ ok: false, error: 'Poné un nombre para la carpeta' })
+      actualizarListaActiva()
+      listasCambiaron()
+      ack?.({ ok: true })
+    })
+
+    socket.on('carpetas:borrar', (payload: { nombre?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket) || typeof payload?.nombre !== 'string') return ack?.({ ok: false })
+      borrarCarpeta(payload.nombre)
+      actualizarListaActiva()
+      listasCambiaron()
+      ack?.({ ok: true })
     })
 
     // ---- Analisis automatico (tempo, secciones por la voz guia) ----
@@ -779,31 +983,44 @@ export function registerSocketHandlers(
       if (soloCompu(socket)) biblioteca.escanear()
     })
 
-    socket.on('setlists:delete', (payload: { id?: string }, ack?: Ack<{ ok: boolean }>) => {
-      if (!soloCompu(socket) || !esIdValido(payload?.id)) return ack?.({ ok: false })
-      borrarSetlist(payload.id)
-      ack?.({ ok: true })
-    })
   })
 
   return { transporte, analizador, biblioteca }
 }
 
-/** Reabre las canciones que estaban abiertas la ultima vez (si la app se cerro a mitad de un culto). */
-export async function restaurarSesion(
-  state: AppState,
-  sesion: { proyectos: string[]; activo: number } | null
-): Promise<void> {
-  if (!sesion) return
-  for (const id of sesion.proyectos) {
-    if (!proyectoExiste(id) || state.tabDeProyecto(id)) continue
-    try {
-      state.abrirProyecto(await migrarProyecto(loadProyecto(id)), false)
-    } catch (err) {
-      console.error('[sesion] no se pudo reabrir', id, err)
-    }
+/** Si la app se cerro hace menos que esto (se corto a mitad de un culto), al abrirla vuelve todo como estaba. */
+export const SEGUIR_DIRECTO_MS = 2 * 60 * 60 * 1000
+
+/**
+ * Al abrir la app: si se cerro hace poco (menos de 2 horas: se corto a mitad
+ * de un culto), vuelve todo como estaba. Si no, arranca en la pantalla de
+ * listas y lo de la ultima vez queda para "Seguir donde quede".
+ */
+export async function restaurarSesion(state: AppState, sesion: SesionGuardada | null, ahora = Date.now()): Promise<void> {
+  if (!sesion || sesion.proyectos.length === 0) return
+  if (sesion.ultimaVez === undefined || ahora - sesion.ultimaVez > SEGUIR_DIRECTO_MS) {
+    state.sesionAnterior = sesion
+    return
   }
-  const tabs = state.listaTabs()
-  const activa = tabs[Math.min(Math.max(0, sesion.activo), tabs.length - 1)]
-  if (activa) state.setActiveTab(activa.tabId)
+  await abrirSesion(state, sesion)
+}
+
+/** Abre las canciones de una sesion guardada (con su lista del dia, si tenia). */
+export async function abrirSesion(state: AppState, sesion: SesionGuardada): Promise<void> {
+  await state.lote(async () => {
+    for (const id of sesion.proyectos) {
+      if (!proyectoExiste(id) || state.tabDeProyecto(id)) continue
+      try {
+        state.abrirProyecto(await migrarProyecto(loadProyecto(id)), false)
+      } catch (err) {
+        console.error('[sesion] no se pudo reabrir', id, err)
+      }
+    }
+    const tabs = state.listaTabs()
+    const activa = tabs[Math.min(Math.max(0, sesion.activo), tabs.length - 1)]
+    if (activa) state.setActiveTab(activa.tabId)
+    const lista = sesion.listaId ? leerLista(sesion.listaId) : null
+    state.listaActiva = lista ? { id: lista.id, nombre: lista.nombre, carpeta: lista.carpeta ?? '' } : null
+    state.sesionAnterior = null
+  })
 }

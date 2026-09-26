@@ -153,12 +153,46 @@ export interface PedidoVoz {
   cues: CueVoz[]
 }
 
-export interface SetlistResumen {
+/**
+ * Una lista de canciones para un dia o evento ("Sabado 17/10 · 19 hs"),
+ * opcionalmente dentro de una carpeta ("Congreso Juvenil 2026").
+ */
+export interface ListaResumen {
   id: string
   nombre: string
+  /** '' = sin carpeta */
+  carpeta: string
+  /** AAAA-MM-DD, si se le puso fecha */
+  fecha: string | null
   creadoEn: string
-  /** nombres de las canciones, en orden (las que ya no existen en disco no se listan) */
-  canciones: string[]
+  actualizadoEn: string
+  /** en orden (las que ya no existen en la compu no se listan) */
+  canciones: { id: string; nombre: string; duracionMs: number; bpm: number | null; categoria: string }[]
+  /** canciones de la lista que ya no estan en la compu */
+  faltantes: number
+}
+
+/** La lista cargada en la barra de arriba (lo que se cambie ahi se guarda en ella). */
+export interface ListaActiva {
+  id: string
+  nombre: string
+  carpeta: string
+}
+
+/** Lo que estaba abierto la ultima vez, si la app se abrio despues de mas de 2 horas ("Seguir donde quede"). */
+export interface SesionAnterior {
+  lista: string | null
+  canciones: number
+  /** 1 = la primera */
+  actual: number
+  nombreActual: string | null
+}
+
+export interface DatosListas {
+  listas: ListaResumen[]
+  carpetas: string[]
+  activa: string | null
+  sesionAnterior: SesionAnterior | null
 }
 
 export type EstadoTransporte = 'stopped' | 'paused' | 'playing'
@@ -226,6 +260,8 @@ export interface EstadoCompleto {
   playbackActivo: PlaybackState | null
   modoSalto: ModoSalto
   saltoPendiente: SaltoPendiente | null
+  /** la lista del dia cargada arriba (null = canciones sueltas) */
+  lista: ListaActiva | null
   serverTime: number
 }
 

@@ -1,7 +1,8 @@
 import crypto from 'node:crypto'
-import type { Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
+import type { ListaActiva, Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
 import { posicionActualMs } from '../shared/playback'
-import { guardarSesion, saveProyecto } from './projects'
+import { guardarSesion, saveProyecto, type SesionGuardada } from './projects'
+import { guardarLista, leerLista } from './listas'
 
 export interface Tab {
   tabId: string
@@ -33,6 +34,9 @@ function numeroFinito(v: unknown): v is number {
  * bloqueo de control, repetir seccion y el estado de reproduccion de cada
  * pestana. Solo la pestana activa puede estar "playing".
  *
+ * Si hay una lista del dia cargada (`listaActiva`), lo que se cambie en las
+ * pestanas (sumar, sacar, ordenar canciones) se guarda solo en esa lista.
+ *
  * Los cambios del mixer se guardan a disco con debounce (mover un fader genera
  * decenas de cambios por segundo); todo lo demas se guarda al instante.
  */
@@ -45,7 +49,15 @@ export class AppState {
   modoSalto: ModoSalto = 'seccion'
   /** salto elegido que espera su limite (lo maneja Transporte); se cancela al cambiar de cancion */
   saltoPendiente: (SaltoPendiente & { tabId: string }) | null = null
+  /** la lista del dia cargada en las pestanas (null = canciones sueltas) */
+  listaActiva: ListaActiva | null = null
+  /** lo que estaba abierto la ultima vez, si la app se abrio despues de mucho ("Seguir donde quede") */
+  sesionAnterior: SesionGuardada | null = null
   private guardadosPendientes = new Map<string, NodeJS.Timeout>()
+  /** >0 mientras se cargan/sincronizan varias pestanas de una: la lista no se toca en los pasos intermedios */
+  private enLote = 0
+  /** se guardo solo la lista del dia (por un cambio en las pestanas) */
+  onListaGuardada: (() => void) | null = null
 
   abrirProyecto(proyecto: Proyecto, activar = true): string {
     const tabId = crypto.randomUUID()
@@ -294,9 +306,47 @@ export class AppState {
     }
   }
 
-  private persistirSesion(): void {
+  /**
+   * Varios cambios de pestanas juntos (cargar una lista, sincronizarla): la
+   * lista del dia no se guarda en los pasos intermedios. `guardarLista`: al
+   * final, guardar las pestanas en la lista activa (si no, solo la sesion).
+   */
+  async lote<T>(fn: () => Promise<T> | T, guardarListaAlFinal = false): Promise<T> {
+    this.enLote++
+    try {
+      return await fn()
+    } finally {
+      this.enLote--
+      if (this.enLote === 0) this.persistirSesion(guardarListaAlFinal)
+    }
+  }
+
+  /** Solo la sesion (cada minuto, para saber cuando se cerro la app). */
+  guardarSesionAhora(): void {
+    if (this.enLote) return
+    guardarSesion({
+      proyectos: this.listaProyectos().map((p) => p.id),
+      activo: Math.max(0, this.orden.indexOf(this.activeTabId ?? '')),
+      listaId: this.listaActiva?.id ?? null,
+      ultimaVez: Date.now()
+    })
+  }
+
+  private persistirSesion(guardarEnLista = true): void {
+    if (this.enLote) return
+    this.guardarSesionAhora()
+    if (!guardarEnLista || !this.listaActiva) return
+    // lo que se cambio en las pestanas queda guardado en la lista del dia
+    const lista = leerLista(this.listaActiva.id)
+    if (!lista) {
+      this.listaActiva = null // la borraron
+      return
+    }
     const proyectos = this.listaProyectos().map((p) => p.id)
-    guardarSesion({ proyectos, activo: Math.max(0, this.orden.indexOf(this.activeTabId ?? '')) })
+    if (proyectos.join() !== lista.proyectos.join()) {
+      guardarLista({ ...lista, proyectos })
+      this.onListaGuardada?.()
+    }
   }
 }
 

@@ -21,6 +21,7 @@ export function buildEstadoCompleto(state: AppState): EstadoCompleto {
             tSalto: state.saltoPendiente.tSalto
           }
         : null,
+    lista: state.listaActiva,
     serverTime: Date.now()
   }
 }
