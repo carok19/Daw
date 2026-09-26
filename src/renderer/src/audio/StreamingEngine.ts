@@ -179,11 +179,6 @@ export class StreamingEngine implements PlaybackEngine {
    */
   private inicioCorridaCtx = 0
   private cueIndices = new Set<number>()
-  /**
-   * Cuanto se adelanto el arranque en esta corrida (latencia de salida + ajuste
-   * fino): el nodo de audio va ESE tiempo por delante de lo que se escucha.
-   */
-  private compensacionSec = 0
 
   private onResyncCb: (() => void) | null = null
   /** diagnostico: en el ultimo salto sonando, cuanto se corrio el corte para empalmar parejo (null = no aplico) */
@@ -435,19 +430,13 @@ export class StreamingEngine implements PlaybackEngine {
     }
 
     const clienteObjetivoMs = cmd.executeAtServerTime - clockOffsetMs
-    let delaySec = (clienteObjetivoMs - Date.now()) / 1000
     let offsetMs = cmd.positionMs
 
-    // compensa la latencia de salida propia de este dispositivo + el ajuste fino manual
-    const compensacionSec = this.latenciaDeSalidaSec() + this.ajusteManualMs / 1000
-    delaySec -= compensacionSec
-    if (delaySec < 0) {
-      // llego tarde: arranca ya, saltando lo que se perdio
-      offsetMs += -delaySec * 1000
-      delaySec = 0
-    }
-    let targetTime = this.ctx.currentTime + delaySec
-    // nunca en el pasado ni "ya mismo": se programa un instante despues, en la posicion que corresponde a ese instante
+    // el instante del AudioContext que se va a ESCUCHAR a la hora pedida (reloj de salida del
+    // parlante, menos el ajuste fino manual): ahi arranca el audio
+    let targetTime = this.ctxEscuchadoAhora() + (clienteObjetivoMs - Date.now()) / 1000
+    // nunca en el pasado ni "ya mismo" (si llego tarde, arranca enseguida saltando lo que se perdio):
+    // se programa un instante despues, en la posicion que corresponde a ese instante
     const minimo = this.ctx.currentTime + 0.02
     if (targetTime < minimo) {
       offsetMs += (minimo - targetTime) * 1000
@@ -473,7 +462,6 @@ export class StreamingEngine implements PlaybackEngine {
     const indice = Math.floor(posicion / SEGMENT_DURATION_SEC)
     this.siguiente = { indice, posInicio: posicion, inicioCtx: inicio }
     this.moverVentana(indice)
-    this.compensacionSec = compensacionSec
     this.inicioCorridaCtx = inicio
     this.correccionPendiente = 0 // arranque fresco: en la posicion exacta que dice el servidor
     this.reproduciendo = true
@@ -545,13 +533,44 @@ export class StreamingEngine implements PlaybackEngine {
   }
 
   /**
-   * Posicion que se ESCUCHA ahora: la del nodo hace `compensacion` segundos (el
-   * nodo va por delante de lo que sale por el parlante). Sale de los tramos
-   * programados: es la posicion real, tambien durante una correccion.
+   * Posicion que se ESCUCHA ahora: la del instante que esta saliendo por el
+   * parlante (el nodo va por delante). Sale de los tramos programados: es la
+   * posicion real, tambien durante una correccion.
    */
   posicionRealMs(): number | null {
-    const p = this.posicionNodoEn(this.ctx.currentTime - this.compensacionSec)
+    const p = this.posicionNodoEn(this.ctxEscuchadoAhora())
     return p === null ? null : p * 1000
+  }
+
+  /**
+   * Instante del AudioContext que esta saliendo por el parlante AHORA, segun
+   * el propio navegador (getOutputTimestamp: a que hora sale cada muestra).
+   * Es mucho mas fino que currentTime, que se actualiza "a saltos" (10-40 ms
+   * en celulares): con eso cada play arrancaba corrido distinto (hasta 40 ms)
+   * y el monitor lo media con el mismo error. null = el navegador no lo da (o
+   * da algo sin sentido): se usa currentTime menos la latencia, como antes.
+   */
+  private ctxSaliendoAhora(): number | null {
+    if (typeof this.ctx.getOutputTimestamp !== 'function' || this.ctx.state !== 'running') return null
+    const ts = this.ctx.getOutputTimestamp()
+    const c = ts.contextTime ?? 0
+    const p = ts.performanceTime ?? 0
+    if (!(c > 0) || !(p > 0)) return null
+    const t = c + (performance.now() - p) / 1000
+    // cordura: lo que sale va un poco por detras de lo que se esta programando (la latencia de salida)
+    if (Math.abs(t - (this.ctx.currentTime - this.latenciaDeSalidaSec())) > 0.3) return null
+    return t
+  }
+
+  /** true si este navegador da la hora exacta de salida (sync mas fino: se corrige desde menos ms). */
+  relojPreciso(): boolean {
+    return this.ctxSaliendoAhora() !== null
+  }
+
+  /** Instante del AudioContext que se ESCUCHA ahora: el que sale por el parlante, menos el ajuste fino manual. */
+  private ctxEscuchadoAhora(): number {
+    const saliendo = this.ctxSaliendoAhora() ?? this.ctx.currentTime - this.latenciaDeSalidaSec()
+    return saliendo - this.ajusteManualMs / 1000
   }
 
   /**
@@ -561,8 +580,8 @@ export class StreamingEngine implements PlaybackEngine {
    */
   enCorreccionSuave(): boolean {
     if (this.correccionPendiente !== 0) return true
-    if (this.reproduciendo && this.inicioCorridaCtx + this.compensacionSec > this.ctx.currentTime) return true
-    const escuchado = this.ctx.currentTime - this.compensacionSec
+    const escuchado = this.ctxEscuchadoAhora()
+    if (this.reproduciendo && this.inicioCorridaCtx > escuchado) return true
     return this.tramos.some((tr) => tr.absorbido !== 0 && tr.inicioCtx + tr.duracionCtx > escuchado)
   }
 
@@ -654,7 +673,7 @@ export class StreamingEngine implements PlaybackEngine {
       errores: d.errores,
       latenciaMs: d.recibidos.length ? Math.round(durTotal / d.recibidos.length) : null,
       memoriaMB: redondear(this.bytesEnMemoria() / 1e6, 1),
-      salidaMs: Math.round(this.latenciaDeSalidaSec() * 1000)
+      salidaMs: Math.round((this.ctx.currentTime - (this.ctxSaliendoAhora() ?? this.ctx.currentTime - this.latenciaDeSalidaSec())) * 1000)
     }
   }
 

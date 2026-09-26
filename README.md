@@ -391,12 +391,17 @@ cada segmento se libera apenas termina.
    sonando lo anterior; el estado lo describe (`previo`, una cadena corta si
    hay dos comandos seguidos), así la interfaz, el monitor de drift y un
    celular que se une en ese momento ven lo que realmente suena.
-4. **Latencia de salida:** cada dispositivo adelanta su arranque según la
-   latencia que informa su sistema (`outputLatency`) más el ajuste fino
-   manual. El drift se mide sobre lo que *se escucha*, descontando esa
-   compensación (si no, el monitor la "corregiría" y la desharía).
-5. **Drift continuo** (cada 2 s): < 15 ms nada; 15–150 ms corrección suave;
-   ≥ 150 ms resincronización dura de ese dispositivo. La corrección suave hace
+4. **Reloj de salida:** para arrancar (y para medir el drift) cada
+   dispositivo usa la hora exacta en que su parlante saca cada muestra
+   (`getOutputTimestamp`), más el ajuste fino manual. Antes usaba
+   `currentTime` + `outputLatency`: `currentTime` se actualiza “a saltos”
+   (10 ms en la compu, 20–40 ms en muchos celulares), así que cada play
+   —al empezar, después de una pausa o de cambiar de canción— arrancaba
+   corrido distinto en cada dispositivo, y el monitor lo medía con el mismo
+   error. Si el navegador no da esa hora, se usa el método anterior.
+5. **Drift continuo** (cada 2 s): con el reloj de salida, < 5 ms nada (sin
+   él, < 15 ms); de ahí a 150 ms corrección suave; ≥ 150 ms resincronización
+   dura de ese dispositivo. La corrección suave hace
    sonar los próximos tramos un 0,4 % más lentos o rápidos (inaudible) y
    calcula cuánto duran de verdad, así el siguiente arranca donde termina el
    anterior. (Antes la velocidad se cambiaba sobre lo ya programado y cada
@@ -410,6 +415,11 @@ cada segmento se libera apenas termina.
    (AudioWorklet) con una pista que codifica en cada muestra en qué segundo de
    la canción está, y lo compara con la posición que calcula el motor durante
    una corrección, un cambio de mezcla y un salto: coinciden a menos de 1 ms.
+   Otra graba a la vez la compu (con sonido) y dos celulares y compara lo que
+   sale de cada uno al dar play después de cambiar de canción, en pausa → play
+   y al cambiar con la música sonando: arrancan a menos de 5 ms entre sí (con
+   el método anterior se separaban hasta ~10 ms en la prueba, y más en
+   celulares reales).
 8. **Pantalla bloqueada / segundo plano:** la pantalla se mantiene encendida
    (NoSleep.js: Wake Lock si está disponible, si no un video mudo; la app se
    sirve por `http://` y ahí el Wake Lock nativo no existe), Media Session

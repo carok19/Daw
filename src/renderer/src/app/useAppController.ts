@@ -29,7 +29,7 @@ import { calcularSecciones, estaSonando, posicionActualMs, seccionEn } from '@sh
 import { SocketClient } from '../sync/SocketClient'
 import { StreamingEngine } from '../audio/StreamingEngine'
 import type { MezclaPersonal, PlaybackEngine } from '../audio/PlaybackEngine'
-import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_SUAVE_MS } from '../sync/driftConfig'
+import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_SUAVE_MS, UMBRAL_SUAVE_PRECISO_MS } from '../sync/driftConfig'
 import { setPlayheadMs, getPlayheadMs } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
 import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
@@ -433,7 +433,7 @@ export function useAppController() {
             if (abs >= UMBRAL_DURO_MS) {
               resyncsRef.current++
               reingresarEnSync(engine, socket, playback, actual?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS, compases())
-            } else if (abs >= UMBRAL_SUAVE_MS) {
+            } else if (abs >= (engine.relojPreciso() ? UMBRAL_SUAVE_PRECISO_MS : UMBRAL_SUAVE_MS)) {
               engine.corregirDriftSuave(drift)
             }
           }

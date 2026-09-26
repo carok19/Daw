@@ -28,6 +28,8 @@ export interface PlaybackEngine {
   detener(): void
   posicionRealMs(): number | null
   enCorreccionSuave(): boolean
+  /** el navegador da la hora exacta de salida del audio (se puede corregir desde menos ms) */
+  relojPreciso(): boolean
   corregirDriftSuave(driftMs: number): void
 
   estadoBuffer(): EstadoBuffer | null

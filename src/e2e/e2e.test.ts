@@ -1180,3 +1180,175 @@ test('listas por día: al abrir aparecen las listas; se arma la del sábado en u
     assert.deepEqual(errores, [])
   })
 })
+
+test('cambiar de canción y pausa → play: la compu (con sonido) y los celulares arrancan juntos (audio real)', { timeout: 4 * 60 * 1000 }, async (t) => {
+  // cada dispositivo graba lo que de verdad sale (AudioWorklet) y se compara contra los otros a la misma hora:
+  // la pista "Posicion" (diente de sierra de 8 s) dice en cada muestra en que punto de la cancion esta
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-arranque-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  // los comandos de reproduccion que manda la compu (para saber que tiene que sonar a cada hora)
+  type Cmd = { executeAtServerTime: number; playback: { estado: string; positionMs: number; referenceServerTime: number } }
+  const cmds: Cmd[] = []
+  const emitir = server.io.emit.bind(server.io)
+  server.io.emit = ((ev: string, ...args: unknown[]) => {
+    if (ev === 'playback:scheduled') cmds.push(args[0] as Cmd)
+    return emitir(ev, ...args)
+  }) as typeof server.io.emit
+
+  const SEG = 40
+  const sierra = new Float32Array(SEG * SR)
+  for (let i = 0; i < sierra.length; i++) sierra[i] = (((i / SR) % 8) / 8) * 0.9
+  const zips = ['Cancion A', 'Cancion B'].map((nombre) => {
+    const z = new AdmZip()
+    z.addFile('Posicion.wav', wav16(sierra, SR))
+    z.addFile('Click.wav', wav16(generarClick(120, 4, SEG), SR))
+    z.addFile('Pad.wav', wav16(new Float32Array(SEG * SR), SR))
+    const zip = path.join(tmp, `${nombre}.zip`)
+    z.writeZip(zip)
+    return zip
+  })
+
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    localStorage.setItem('multitrack:sonido-compu', 'true')
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+    g.__zip = null
+    g.electronAPI = { isElectron: true, compuToken: 'e2e', pickZipFile: async () => g.__zip, getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }) }
+  })
+  const compu = await ctxCompu.newPage()
+  await compu.goto(`${base}/?debug`)
+  for (const zip of zips) {
+    await compu.evaluate((z) => ((globalThis as unknown as { __zip: string }).__zip = z), zip)
+    const vacio = compu.getByRole('button', { name: /Importar o abrir canción/ })
+    if (await vacio.isVisible()) await vacio.click()
+    else await compu.locator('.boton-nueva').click()
+    await compu.getByRole('button', { name: /Importar \.zip/ }).click()
+    await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
+  }
+  await compu.locator('.setlist-tab').nth(0).click()
+  await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Cancion A')
+
+  const dispositivos: { nombre: string; p: Page }[] = [{ nombre: 'compu', p: compu }]
+  for (const [i, d] of [devices['Pixel 7'], devices['iPhone 13']].entries()) {
+    const ctx = await browser.newContext({ ...d })
+    ctx.setDefaultTimeout(15000)
+    const p = await ctx.newPage()
+    await p.goto(`${base}/?debug`)
+    await p.getByRole('button', { name: /Tocá para empezar/ }).click()
+    dispositivos.push({ nombre: `celular ${i + 1}`, p })
+  }
+  for (const { p } of dispositivos) {
+    await p.waitForFunction(() => !!(globalThis as unknown as { __mt?: { engineRef: { current: unknown } } }).__mt?.engineRef.current)
+    await p.evaluate(async () => {
+      const g = globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode } } }; __muestras: [number, number][] }
+      const engine = g.__mt.engineRef.current
+      // canal derecho: ahi va la banda ("Posicion"); el click va a la izquierda
+      const codigo = `registerProcessor('grabador', class extends AudioWorkletProcessor {
+        constructor() { super(); this.lote = [] }
+        process(inputs) {
+          const x = inputs[0] && inputs[0][1]
+          if (x) this.lote.push([currentTime, x[0]])
+          if (this.lote.length >= 8) { this.port.postMessage(this.lote); this.lote = [] }
+          return true
+        }
+      })`
+      await engine.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' })))
+      const nodo = new AudioWorkletNode(engine.ctx, 'grabador', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' })
+      g.__muestras = []
+      nodo.port.onmessage = (e: MessageEvent<[number, number][]>) => {
+        // a que hora (reloj de esta compu) sale por el parlante cada bloque grabado
+        const ts = engine.ctx.getOutputTimestamp()
+        const base = performance.timeOrigin + (ts.performanceTime ?? 0) - (ts.contextTime ?? 0) * 1000
+        for (const [tc, v] of e.data) g.__muestras.push([base + tc * 1000, v])
+      }
+      engine.masterGain.connect(nodo)
+    })
+  }
+
+  // se mide el ARRANQUE: los primeros 600 ms desde que tiene que empezar a sonar
+  const fases: { nombre: string; desde: number; hasta: number }[] = []
+  async function medir(nombre: string, ms: number): Promise<void> {
+    // (se llama justo despues del play: es el ultimo comando de reproduccion)
+    const inicio = cmds.filter((c) => c.playback.estado === 'playing').pop()!.executeAtServerTime
+    await esperar(ms)
+    fases.push({ nombre, desde: inicio + 50, hasta: inicio + 650 })
+  }
+  // calentamiento (no se mide): en Chromium sin pantalla el audio falso a veces se atrasa de golpe 20 ms
+  // justo al arrancar, con las tres ventanas bajando y decodificando a la vez
+  server.transporte.play()
+  await esperar(4000)
+  server.transporte.pause()
+  await esperar(2000)
+  // cambio de cancion (en pausa) y play
+  await compu.locator('.setlist-tab').nth(1).click()
+  await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Cancion B')
+  await esperar(2500)
+  server.transporte.play()
+  await medir('play después de cambiar de canción', 6000)
+  server.transporte.pause()
+  await esperar(2000)
+  server.transporte.play()
+  await medir('pausa → play', 6000)
+  // cambio de cancion con la musica sonando (la compu pide confirmar) y play enseguida
+  await compu.locator('.setlist-tab').nth(0).click()
+  await compu.locator('.modal').getByRole('button', { name: /Pasar a Cancion A/ }).click()
+  await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Cancion A')
+  await esperar(1000)
+  server.transporte.play()
+  await medir('cambio con la música sonando y play', 6000)
+  server.transporte.stop()
+
+  // desfase de cada dispositivo contra lo que tiene que sonar a esa hora; entre ellos es lo que se escucha
+  const medianas: Record<string, Record<string, number>> = {}
+  const volcado: Record<string, unknown> = { cmds, fases }
+  for (const { nombre, p } of dispositivos) {
+    const muestras = (await p.evaluate(() => (globalThis as unknown as { __muestras: [number, number][] }).__muestras)) as [number, number][]
+    volcado[nombre] = muestras
+    const escala = Math.max(...muestras.map((m) => m[1]))
+    for (const f of fases) {
+      const difs: number[] = []
+      for (const [w, v] of muestras) {
+        if (w < f.desde || w > f.hasta || v < 0.002 * escala) continue
+        const c = cmds.filter((x) => x.executeAtServerTime <= w).pop()
+        if (!c || c.playback.estado !== 'playing') continue
+        const enCiclo = ((c.playback.positionMs + w - c.playback.referenceServerTime) / 1000) % 8
+        if (enCiclo < 0.05 || enCiclo > 7.95) continue
+        let d = (v / escala) * 8 - enCiclo
+        if (d > 4) d -= 8
+        if (d < -4) d += 8
+        difs.push(d * 1000)
+      }
+      assert.ok(difs.length > 100, `${nombre} en "${f.nombre}": casi no sonó (${difs.length})`)
+      // el audio falso de Chromium sin pantalla a veces se atrasa de golpe ~20 ms (como un corte): si pasa
+      // justo en la ventana medida, esa medicion no dice nada del arranque y se descarta
+      const primeros = difs.slice(0, 20).sort((a, b) => a - b)
+      const ultimos = difs.slice(-20).sort((a, b) => a - b)
+      const salto = Math.abs(primeros[10] - ultimos[10]) > 6
+      difs.sort((a, b) => a - b)
+      ;(medianas[f.nombre] ??= {})[nombre] = salto ? NaN : difs[Math.floor(difs.length / 2)]
+    }
+  }
+  if (process.env.E2E_VOLCADO_ARRANQUE) fs.writeFileSync(process.env.E2E_VOLCADO_ARRANQUE, JSON.stringify(volcado))
+  const validas = Object.entries(medianas).filter(([, m]) => Object.values(m).every((x) => !Number.isNaN(x)))
+  assert.ok(validas.length >= 2, `muy pocas mediciones limpias: ${JSON.stringify(medianas)}`)
+  for (const [f, m] of validas) {
+    const v = Object.values(m)
+    const separacion = Math.max(...v) - Math.min(...v)
+    assert.ok(
+      separacion < 5,
+      `"${f}": los dispositivos no arrancaron juntos (${Object.entries(m)
+        .map(([d, x]) => `${d} ${x.toFixed(1)} ms`)
+        .join(' · ')})`
+    )
+  }
+})
