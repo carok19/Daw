@@ -14,3 +14,7 @@ android/app/build/
 android/local.properties
 extras/*
 !extras/LEEME.txt
+
+# claves del vendedor (la privada NUNCA va al repositorio)
+claves-licencias-*.json
+*.licencia

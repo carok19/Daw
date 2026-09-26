@@ -14,6 +14,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import AdmZip from 'adm-zip'
 import { chromium, devices, type Browser, type BrowserContext, type Page } from 'playwright'
@@ -22,6 +23,8 @@ import { rutaFfmpeg } from '../server/audio'
 import { buildEstadoCompleto } from '../server/estado'
 import { ANUNCIOS, generarClick, inicioCompas, SR, wav16, zipConGuia } from '../server/__fixtures__/sintetico'
 import { crearRar5 } from '../server/__fixtures__/rar'
+import { verificarLicencia } from '../server/licencia'
+import { deBase64Url } from '../shared/licencia'
 
 const RENDERER = path.resolve(__dirname, '../renderer')
 const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -926,6 +929,142 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   })
 
   await t.test('sin errores de JavaScript en la compu', () => {
+    assert.deepEqual(errores, [])
+  })
+})
+
+test('licencias: el generador (sin internet) hace licencias que la app acepta; sin licencia, el 3er celular espera', { timeout: 3 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-licencias-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const browser: Browser = await chromium.launch()
+  let server: AppServer | null = null
+  t.after(async () => {
+    await browser.close()
+    await server?.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+
+  // ---- el vendedor: claves nuevas en el generador (un .html abierto desde el disco) ----
+  const ctxGen = await browser.newContext({ acceptDownloads: true })
+  ctxGen.setDefaultTimeout(15000)
+  const gen = await ctxGen.newPage()
+  const erroresGen: string[] = []
+  gen.on('pageerror', (e) => erroresGen.push(e.message))
+  await gen.goto(pathToFileURL(path.resolve(__dirname, '../../herramientas/generador-licencias.html')).href)
+  const [bajada] = await Promise.all([gen.waitForEvent('download'), gen.locator('#btn-crear-claves').click()])
+  const archivoClaves = path.join(tmp, 'claves.json')
+  await bajada.saveAs(archivoClaves)
+  const claves = JSON.parse(fs.readFileSync(archivoClaves, 'utf-8')) as { privada: string; publica: string }
+  const publica = (await gen.locator('#clave-publica').textContent())!.trim()
+  assert.equal(publica, claves.publica)
+  assert.equal(deBase64Url(publica)?.length, 32)
+
+  // ---- la app con esa clave publica: version de prueba ----
+  server = createServer(RENDERER, { compuToken: 'e2e', clavePublicaLicencias: `# clave del vendedor\n${publica}\n` })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    ;(globalThis as unknown as { electronAPI: unknown }).electronAPI = {
+      isElectron: true,
+      compuToken: 'e2e',
+      pickZipFile: async () => null,
+      getConnectionInfo: async () => ({ url: 'http://192.168.0.10:4848', ip: '192.168.0.10', port: 4848 }),
+      elegirCarpeta: async () => null,
+      abrirCarpeta: async () => {}
+    }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(base)
+  await compu.locator('.chip-licencia').waitFor()
+  assert.match((await compu.locator('.chip-licencia').getAttribute('title'))!, /hasta 2 celulares/)
+
+  const celulares: Page[] = []
+  for (let i = 0; i < 3; i++) {
+    const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+    ctx.setDefaultTimeout(15000)
+    const p = await ctx.newPage()
+    await p.goto(base)
+    if (i < 2) await p.getByRole('button', { name: /Tocá para empezar/ }).waitFor()
+    celulares.push(p)
+  }
+  const tercero = celulares[2]
+
+  await t.test('sin licencia: el tercer celular ve "No hay más lugar" y la compu se entera', async () => {
+    await tercero.getByRole('heading', { name: 'No hay más lugar' }).waitFor()
+    assert.match((await tercero.locator('.pantalla-codigo').textContent())!, /versión de prueba permite 2 celulares/)
+    await compu.locator('.aviso', { hasText: 'Un celular no pudo entrar' }).waitFor()
+  })
+
+  let equipo = ''
+  await t.test('una licencia para otra compu no sirve; el archivo .licencia para esta sí', async () => {
+    await compu.locator('.chip-licencia').click()
+    equipo = (await compu.locator('.licencia-equipo code').textContent())!.trim()
+    assert.match(equipo, /^EQ-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/)
+
+    async function crear(nombre: string, celulares: string, equipoLic: string): Promise<string> {
+      await gen.locator('#f-nombre').fill(nombre)
+      await gen.locator('#f-celulares').selectOption(celulares)
+      await gen.locator('#f-vence').selectOption('1a')
+      await gen.locator('#f-equipo').fill(equipoLic)
+      await gen.locator('#btn-crear-licencia').click()
+      await gen.waitForFunction((n) => (document.getElementById('verif-resultado')?.textContent ?? '').includes(n), nombre)
+      return gen.locator('#licencia-texto').inputValue()
+    }
+    // para otra compu (escrito a mano, en minusculas y con espacios)
+    const ajena = await crear('Otra Iglesia', '10', 'eq 0000 1111 2222')
+    await compu.locator('#texto-licencia').fill(`Tu licencia:\n${ajena}\nGracias`)
+    await compu.getByRole('button', { name: 'Activar' }).click()
+    await compu.locator('.licencia .error-texto', { hasText: 'otra computadora (EQ-0000-1111-2222)' }).waitFor()
+
+    // para esta, como archivo .licencia
+    const texto = await crear('Iglesia Vida Nueva', '5', equipo.toLowerCase())
+    const v = verificarLicencia(texto, deBase64Url(publica)!, equipo)
+    assert.ok(v.ok, 'la app acepta la licencia del generador')
+    if (v.ok) {
+      assert.equal(v.datos.nombre, 'Iglesia Vida Nueva')
+      assert.equal(v.datos.celulares, 5)
+      assert.equal(v.datos.equipo, equipo)
+      assert.match(v.datos.vence!, /^\d{4}-\d{2}-\d{2}$/)
+    }
+    const [archivoLic] = await Promise.all([gen.waitForEvent('download'), gen.locator('#btn-bajar-licencia').click()])
+    assert.equal(archivoLic.suggestedFilename(), 'Iglesia-Vida-Nueva.licencia')
+    const rutaLic = path.join(tmp, 'Iglesia-Vida-Nueva.licencia')
+    await archivoLic.saveAs(rutaLic)
+    await compu.locator('.licencia input[type=file]').setInputFiles(rutaLic)
+    await compu.locator('.licencia-estado.activa', { hasText: 'Iglesia Vida Nueva' }).waitFor()
+    assert.match((await compu.locator('.licencia-estado').textContent())!, /Hasta 5 celulares.*solo en esta computadora/)
+    await compu.keyboard.press('Escape')
+    await compu.locator('.chip-licencia').waitFor({ state: 'detached' })
+  })
+
+  await t.test('con la licencia, el tercer celular entra solo (sin tocar nada)', async () => {
+    // reintenta solo cada 8 s
+    await tercero.getByRole('heading', { name: 'No hay más lugar' }).waitFor({ state: 'detached', timeout: 15000 })
+    await compu.locator('.chip-dispositivos').click()
+    await compu.waitForFunction(() => /3 celulares conectados\s*\(máximo 5\)/.test(document.querySelector('.modal')?.textContent ?? ''))
+    await compu.keyboard.press('Escape')
+  })
+
+  await t.test('generador: comprueba licencias (propias, cambiadas) y vuelve a abrir las claves del archivo', async () => {
+    const buena = await gen.locator('#licencia-texto').inputValue()
+    await gen.locator('#comprobar-texto').fill(buena)
+    await gen.locator('#comprobar-resultado', { hasText: '✓ Firmada por vos' }).waitFor()
+    const [, datos, firma] = buena.split('.')
+    const cambiada = `LIC1.${Buffer.from(Buffer.from(datos, 'base64url').toString().replace('"celulares":5', '"celulares":0')).toString('base64url')}.${firma}`
+    await gen.locator('#comprobar-texto').fill(cambiada)
+    await gen.locator('#comprobar-resultado', { hasText: '✗ No la firmaste' }).waitFor()
+    assert.equal(await gen.locator('#historial tr').count(), 2)
+
+    await gen.reload()
+    assert.equal(await gen.locator('#btn-crear-licencia').isDisabled(), true, 'sin claves no se puede crear')
+    await gen.locator('#archivo-claves').setInputFiles(archivoClaves)
+    await gen.locator('#con-claves').waitFor()
+    assert.equal((await gen.locator('#clave-publica').textContent())!.trim(), publica)
+    assert.deepEqual(erroresGen, [])
     assert.deepEqual(errores, [])
   })
 })

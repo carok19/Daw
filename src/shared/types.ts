@@ -424,6 +424,26 @@ export interface DiagnosticoAudio {
   salidaMs: number
 }
 
+/** Licencia de la compu (ver shared/licencia.ts y server/licencia.ts). */
+export interface EstadoLicencia {
+  /** la app usa licencias (trae la clave publica del vendedor) */
+  configuradas: boolean
+  activa: boolean
+  /** sin licencia valida: version de prueba (hasta `celularesPrueba` celulares) */
+  prueba: boolean
+  celularesPrueba: number
+  /** codigo de esta compu (para licencias atadas a una compu) */
+  equipo: string
+  nombre?: string
+  /** celulares a la vez que permite la licencia (0 = sin limite) */
+  celulares?: number
+  vence?: string | null
+  atadaAEquipo?: boolean
+  id?: string
+  /** por que la licencia guardada no vale (vencio, es de otra compu...) */
+  error?: string
+}
+
 /** Todo lo que la compu junta para "Copiar diagnostico". */
 export interface DiagnosticoServidor {
   version: string
@@ -432,6 +452,7 @@ export interface DiagnosticoServidor {
   puerto: number
   puertoCorto: number | null
   mezcla: { pedidos: number; aciertosCache: number; mezclados: number; msPromedio: number; msMax: number; bytes: number } | null
+  licencia: string
   cancion: { nombre: string; pistas: number; duracionMs: number; bpm: number | null } | null
   dispositivos: DispositivoInfo[]
 }

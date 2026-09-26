@@ -9,10 +9,11 @@ import { Transport } from './Transport'
 import { Mixer } from './Mixer'
 import { MarkersPanel } from './MarkersPanel'
 import { ConnectionPanel } from './ConnectionPanel'
+import { LicenciaPanel } from './LicenciaPanel'
 import { ProjectsScreen } from './ProjectsScreen'
 import { ShortcutsModal } from './ShortcutsModal'
 
-type Ventana = null | { tipo: 'canciones' | 'setlists' } | { tipo: 'conexion' } | { tipo: 'atajos' }
+type Ventana = null | { tipo: 'canciones' | 'setlists' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' }
 
 /** Solo los campos donde se escribe texto "se comen" el teclado; faders, botones y casillas no. */
 function escribiendoTexto(el: EventTarget | null): boolean {
@@ -175,6 +176,8 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         sonidoLocal={controller.sonidoLocal}
         onSonidoLocal={controller.setSonidoLocal}
         onAyuda={() => setVentana({ tipo: 'atajos' })}
+        licencia={controller.licencia}
+        onLicencia={() => setVentana({ tipo: 'licencia' })}
       />
 
       {!controller.conectado && estado && (
@@ -259,8 +262,14 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         <ProjectsScreen controller={controller} vistaInicial={ventana.tipo} onCerrar={() => setVentana(null)} />
       )}
       {ventana?.tipo === 'conexion' && (
-        <ConnectionPanel controller={controller} sonando={sonando} onCerrar={() => setVentana(null)} />
+        <ConnectionPanel
+          controller={controller}
+          sonando={sonando}
+          onCerrar={() => setVentana(null)}
+          onLicencia={() => setVentana({ tipo: 'licencia' })}
+        />
       )}
+      {ventana?.tipo === 'licencia' && <LicenciaPanel controller={controller} onCerrar={() => setVentana(null)} />}
       {ventana?.tipo === 'atajos' && <ShortcutsModal onCerrar={() => setVentana(null)} />}
 
       <Avisos avisos={controller.avisos} onCerrar={controller.cerrarAviso} />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, Download, KeyRound, Lock, MessageCircle, Share, Share2, Smartphone, Wifi } from 'lucide-react'
+import { Check, Copy, Download, KeyRound, Lock, MessageCircle, Share, Share2, Smartphone, Users, Wifi } from 'lucide-react'
 import type { DatosInvitacion, MotivoCodigo } from '@shared/types'
 import type { AppController } from '../app/useAppController'
 import {
@@ -73,6 +73,48 @@ export function PantallaCodigo({ controller }: { controller: AppController }) {
           {enviando ? 'Entrando…' : 'Entrar'}
         </button>
       </form>
+      {app && (
+        <button className="btn-fantasma" onClick={() => app.cambiarCompu()}>
+          Elegir otra computadora
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---------- sin lugar (licencia) ----------
+
+/**
+ * Pantalla completa: la compu ya tiene todos los celulares que permite la
+ * version de prueba (o la licencia). Se reintenta sola cada unos segundos.
+ */
+export function PantallaLicencia({ controller }: { controller: AppController }) {
+  const pedido = controller.pedidoLicencia!
+  const [probando, setProbando] = useState(false)
+  const app = puenteAndroid()
+
+  useEffect(() => setProbando(false), [pedido])
+
+  return (
+    <div className="pantalla-codigo" role="dialog" aria-modal aria-labelledby="titulo-licencia">
+      <Users size={40} color="var(--warn)" />
+      <h1 id="titulo-licencia">No hay más lugar</h1>
+      <p>
+        {pedido.prueba
+          ? `La versión de prueba permite ${pedido.limite} celulares a la vez y ya están conectados. Para sumar más, quien maneja la computadora tiene que activar una licencia.`
+          : `La licencia de esta computadora permite ${pedido.limite} celulares a la vez y ya están conectados.`}
+      </p>
+      <p style={{ fontSize: 13, color: 'var(--text-3)' }}>Si alguien se desconecta, entrás solo.</p>
+      <button
+        className="btn-primario codigo-boton"
+        disabled={probando}
+        onClick={() => {
+          setProbando(true)
+          controller.reintentarConexion()
+        }}
+      >
+        {probando ? 'Probando…' : 'Probar de nuevo'}
+      </button>
       {app && (
         <button className="btn-fantasma" onClick={() => app.cambiarCompu()}>
           Elegir otra computadora

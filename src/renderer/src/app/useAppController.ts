@@ -5,6 +5,7 @@ import type {
   DatosInvitacion,
   DiagnosticoDispositivo,
   DiagnosticoServidor,
+  EstadoLicencia,
   DispositivoInfo,
   EstadoBiblioteca,
   EstadoBuffer,
@@ -150,6 +151,10 @@ export function useAppController() {
 
   /** la compu pide el codigo de la banda (n: cuantas veces, para reaccionar a cada rechazo) */
   const [pedidoCodigo, setPedidoCodigo] = useState<{ motivo: MotivoCodigo; n: number } | null>(null)
+  /** celular: la compu ya tiene el maximo de celulares que permite la licencia (o la prueba) */
+  const [pedidoLicencia, setPedidoLicencia] = useState<{ limite: number; prueba: boolean; n: number } | null>(null)
+  /** compu: licencia de esta compu */
+  const [licencia, setLicencia] = useState<EstadoLicencia | null>(null)
 
   const nombreRef = useRef(nombreDispositivo)
   nombreRef.current = nombreDispositivo
@@ -351,6 +356,11 @@ export function useAppController() {
       socket.on<{ tipo: 'info' | 'error'; texto: string; grupo?: string }>('aviso', (a) => avisarAgrupado(a)),
       socket.on('proyectos:cambio', () => setVersionProyectos((v) => v + 1)),
       socket.onCodigo((motivo) => setPedidoCodigo((prev) => ({ motivo, n: (prev?.n ?? 0) + 1 }))),
+      socket.onLicencia((limite, prueba) => {
+        setPedidoCodigo(null)
+        setPedidoLicencia((prev) => ({ limite, prueba, n: (prev?.n ?? 0) + 1 }))
+      }),
+      socket.on<EstadoLicencia>('licencia:estado', (l) => setLicencia(l)),
       socket.onConexionCambia(async (c) => {
         setConectado(c)
         try {
@@ -360,6 +370,8 @@ export function useAppController() {
         }
         if (c) {
           setPedidoCodigo(null)
+          setPedidoLicencia(null)
+          if (origen === 'compu') void socket.emitAck<EstadoLicencia | null>('licencia:estado', {}, 5000).then(setLicencia, () => undefined)
           // el codigo funciono: queda guardado para la proxima
           if (codigoRef.current) guardarPref('codigo-banda', codigoRef.current)
           await socket.sincronizarReloj()
@@ -372,6 +384,13 @@ export function useAppController() {
       for (const g of grupos.values()) clearTimeout(g.timer)
     }
   }, [avisar, sincronizarMotor])
+
+  // celular sin lugar (licencia): se reintenta solo, por si alguien se desconecta
+  useEffect(() => {
+    if (!pedidoLicencia) return
+    const t = setTimeout(() => socketRef.current?.reconectar(), 8000)
+    return () => clearTimeout(t)
+  }, [pedidoLicencia])
 
   // compu: el sonido local se enciende/apaga segun la preferencia (en Electron no hace falta un gesto del usuario)
   useEffect(() => {
@@ -727,6 +746,21 @@ export function useAppController() {
         return socket.emitAck<DiagnosticoServidor | null>('diagnostico:obtener', {}, 5000)
       },
 
+      // ---- licencia (compu) ----
+      async activarLicencia(texto: string): Promise<{ ok: boolean; error?: string }> {
+        const r = await socket.emitAck<{ ok: boolean; error?: string; estado?: EstadoLicencia }>('licencia:activar', { texto }, 5000)
+        if (r.estado) setLicencia(r.estado)
+        return r
+      },
+      async quitarLicencia(): Promise<void> {
+        const r = await socket.emitAck<{ ok: boolean; estado?: EstadoLicencia }>('licencia:quitar', {}, 5000)
+        if (r.estado) setLicencia(r.estado)
+      },
+      /** celular: "Probar de nuevo" (sin lugar por la licencia, o la compu no respondio) */
+      reintentarConexion(): void {
+        socket.reconectar()
+      },
+
       // ---- conexion: codigo de la banda, invitar, ajustes (compu) ----
       enviarCodigo(codigo: string): void {
         codigoRef.current = codigo.replace(/\D/g, '')
@@ -786,6 +820,8 @@ export function useAppController() {
     origen,
     conectado,
     pedidoCodigo,
+    pedidoLicencia,
+    licencia,
     estado,
     secciones,
     siguienteProyecto,

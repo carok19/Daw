@@ -74,8 +74,20 @@ function codigoAlAzar(): string {
   return String(1000 + (n[0] % 9000))
 }
 
-export function ConnectionPanel({ controller, sonando, onCerrar }: { controller: AppController; sonando: boolean; onCerrar: () => void }) {
-  const { dispositivos } = controller
+export function ConnectionPanel({
+  controller,
+  sonando,
+  onCerrar,
+  onLicencia
+}: {
+  controller: AppController
+  sonando: boolean
+  onCerrar: () => void
+  onLicencia: () => void
+}) {
+  const { dispositivos, licencia } = controller
+  /** cuantos celulares a la vez permite la licencia (o la prueba); null = sin limite */
+  const limite = !licencia?.configuradas ? null : licencia.activa ? licencia.celulares || null : licencia.celularesPrueba
   const [datos, setDatos] = useState<DatosInvitacion | null>(null)
   const [ajustes, setAjustes] = useState<AjustesConexion | null>(null)
   const pedirDatos = controller.datosInvitacion
@@ -115,6 +127,11 @@ export function ConnectionPanel({ controller, sonando, onCerrar }: { controller:
           <span className="ayuda" style={{ marginRight: 'auto', alignSelf: 'center' }}>
             Hoja con los QR del WiFi y de la app, para pegar en el ensayo.
           </span>
+          {licencia?.configuradas && (
+            <button onClick={onLicencia} title="Ver o activar la licencia de esta computadora">
+              <KeyRound size={16} /> Licencia
+            </button>
+          )}
           <BotonDiagnostico controller={controller} />
           <button onClick={() => window.print()} disabled={!datos}>
             <Printer size={16} /> Imprimir hoja para la banda
@@ -161,6 +178,13 @@ export function ConnectionPanel({ controller, sonando, onCerrar }: { controller:
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 8px' }}>
             <strong>
               <span className="num">{conectados}</span> {conectados === 1 ? 'celular conectado' : 'celulares conectados'}
+              {limite !== null && (
+                <span className={`ayuda ${conectados >= limite ? 'texto-amarillo' : ''}`} style={{ fontWeight: 400 }}>
+                  {' '}
+                  (máximo {limite}
+                  {licencia?.activa ? '' : ' en la versión de prueba'})
+                </span>
+              )}
             </strong>
             {desconectados > 0 && (
               <button className="btn-chico btn-fantasma" onClick={() => controller.forgetDevice('*')}>

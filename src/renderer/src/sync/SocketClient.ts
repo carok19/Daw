@@ -144,6 +144,15 @@ export class SocketClient {
     return () => this.socket.off('connect_error', h)
   }
 
+  /** Version de prueba (o licencia) con el maximo de celulares ya conectados: no entra. */
+  onLicencia(cb: (limite: number, prueba: boolean) => void): Desuscribir {
+    const h = (err: Error & { data?: { limite?: number; prueba?: boolean } }): void => {
+      if (err?.message === 'licencia') cb(err.data?.limite ?? 0, err.data?.prueba ?? true)
+    }
+    this.socket.on('connect_error', h)
+    return () => this.socket.off('connect_error', h)
+  }
+
   reconectar(): void {
     if (!this.socket.connected) this.socket.connect()
   }

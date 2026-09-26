@@ -16,6 +16,7 @@ import { ModelosVoz } from './modelos'
 import { leerAjustes, type Ajustes } from './ajustes'
 import { Descubrimiento } from './descubrimiento'
 import { Mezclador } from './mezclador'
+import { Licencias } from './licencia'
 import { decodificarMezcla } from '../shared/mezcla'
 
 export interface AppServer {
@@ -30,6 +31,7 @@ export interface AppServer {
   modelos: ModelosVoz
   /** mezcla de cada celular (una pista estereo en vez de todas las pistas) */
   mezclador: Mezclador
+  licencias: Licencias
   /** secreto que identifica a la ventana de Electron como "la compu" (ver socketHandlers.origenDe) */
   compuToken: string
   start(preferredPort: number): Promise<number>
@@ -68,6 +70,8 @@ export interface OpcionesServidor {
   dirExtras?: string | null
   /** version de la app (se informa a la app Android) */
   version?: string
+  /** clave publica de las licencias (undefined = la que trae la app; null = sin licencias) */
+  clavePublicaLicencias?: string | null
 }
 
 /**
@@ -85,6 +89,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
   const state = new AppState()
   const devices = new DeviceRegistry()
   const ajustes = leerAjustes()
+  const licencias = new Licencias(opciones.clavePublicaLicencias)
   const version = opciones.version ?? '0.0.0'
   const rutaApk = opciones.dirExtras ? path.join(opciones.dirExtras, 'alabanza.apk') : null
   const hayApk = (): boolean => !!rutaApk && fs.existsSync(rutaApk)
@@ -159,7 +164,8 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     puertoCorto: () => puertoCortoActivo,
     hayApk,
     estadisticasMezcla: () => mezclador.estadisticas(),
-    version
+    version,
+    licencias
   })
 
   async function listenOn(port: number): Promise<number> {
@@ -263,6 +269,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     biblioteca,
     modelos,
     mezclador,
+    licencias,
     compuToken,
     ajustes,
     puertoCorto: () => puertoCortoActivo,

@@ -8,7 +8,9 @@ const common = {
   format: 'cjs',
   packages: 'external',
   sourcemap: true,
-  logLevel: 'info'
+  logLevel: 'info',
+  // licencias/clave-publica.txt va adentro del programa (no es un archivo aparte que se pueda cambiar)
+  loader: { '.txt': 'text' }
 }
 
 await esbuild.build({

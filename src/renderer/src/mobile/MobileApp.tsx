@@ -34,7 +34,7 @@ import { useWakeLock } from './useWakeLock'
 import { Hoja, HojaAjustes } from './Hojas'
 import { Toggle } from '../ui/Toggle'
 import { pistasClickYGuia } from '@shared/mezcla'
-import { AccesoFijo, HojaInvitar, PantallaCodigo } from './Conectar'
+import { AccesoFijo, HojaInvitar, PantallaCodigo, PantallaLicencia } from './Conectar'
 import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion'
 
 type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones' | 'invitar'
@@ -149,6 +149,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
       {hoja === 'canciones' && <HojaCanciones controller={controller} onCerrar={() => setHoja(null)} />}
 
       {controller.pedidoCodigo && <PantallaCodigo controller={controller} />}
+      {controller.pedidoLicencia && !controller.conectado && <PantallaLicencia controller={controller} />}
 
       <Avisos avisos={controller.avisos} onCerrar={controller.cerrarAviso} />
     </div>

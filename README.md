@@ -428,6 +428,49 @@ Todo por la WiFi local, sin internet ni servidores externos:
   suele quedar como "pública"). Si se usa la compu en redes ajenas, conviene
   poner el código de la banda.
 
+### Licencias (para vender el programa)
+
+Sin internet y sin servidor: la licencia es una línea de texto firmada que se
+manda por WhatsApp o mail y se pega en la compu.
+
+- **Versión de prueba:** todo funciona completo, con hasta **2 celulares a la
+  vez**. El tercero ve “No hay más lugar” y entra solo cuando se libera un
+  lugar o se activa una licencia. La compu muestra el chip **Prueba** arriba
+  y un aviso cuando un celular no pudo entrar.
+- **Licencia:** dice a nombre de quién está, cuántos celulares a la vez (o sin
+  límite), si vence y, opcionalmente, en qué compu sirve (el **código de la
+  computadora** `EQ-XXXX-XXXX-XXXX` que se ve en *Prueba → Licencia*). Se
+  activa pegándola o abriendo el archivo `.licencia`; queda guardada en la
+  compu (`licencia.txt` en la carpeta de la app).
+- **Cómo se verifica:** formato `LIC1.<datos>.<firma>`, firma Ed25519. La app
+  trae solo la **clave pública** (`licencias/clave-publica.txt`, se mete en el
+  programa al compilar): sirve para comprobar licencias pero no para hacerlas.
+  Cambiar cualquier dato (por ejemplo, los celulares) rompe la firma.
+- **Mientras `licencias/clave-publica.txt` no tenga una clave, la app no pide
+  licencia** (todo libre, como hasta ahora).
+
+**Para empezar a vender (una sola vez):**
+
+1. Abrí `herramientas/generador-licencias.html` con Chrome o Edge (funciona
+   sin internet, desde el disco) y tocá **Crear claves nuevas**. Se baja un
+   archivo `claves-licencias-….json`: es tu clave privada. Guardalo en un
+   lugar seguro con una copia. **No lo subas a GitHub ni lo mandes a nadie.**
+2. Copiá la **clave pública** que muestra y pegala en
+   `licencias/clave-publica.txt` (en una línea, sin `#`). Subí ese cambio: el
+   próximo instalador ya arranca en versión de prueba.
+
+**Para cada venta:** abrí el generador → *Abrir mi archivo de claves* →
+completá a nombre de quién, cuántos celulares, vencimiento y (si querés)
+el código de la computadora → **Crear licencia** → *Copiar mensaje para
+WhatsApp* o *Descargar archivo .licencia*. El generador comprueba cada
+licencia que hace, puede comprobar una que te pasen y guarda el historial
+(con planilla para Excel).
+
+Lo que una licencia sin internet no puede evitar: que alguien comparta una
+licencia **sin** código de computadora (por eso conviene atarlas a la compu),
+o que modifique el programa para saltarse el control. Es la protección
+habitual de los programas que se venden sin conexión.
+
 ---
 
 ## Decisiones de diseño

@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { HelpCircle, Lock, LockOpen, Plus, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
-import type { DispositivoInfo, TabResumen } from '@shared/types'
+import { HelpCircle, KeyRound, Lock, LockOpen, Plus, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
+import type { DispositivoInfo, EstadoLicencia, TabResumen } from '@shared/types'
 import { Toggle } from '../ui/Toggle'
 
 interface Props {
@@ -18,6 +18,8 @@ interface Props {
   sonidoLocal: boolean
   onSonidoLocal: (v: boolean) => void
   onAyuda: () => void
+  licencia: EstadoLicencia | null
+  onLicencia: () => void
 }
 
 /** Resumen de salud de los celulares para el chip de la barra: verde / amarillo / rojo. */
@@ -122,6 +124,17 @@ export function TopBar(p: Props) {
       </button>
 
       <div className="topbar-derecha">
+        {p.licencia?.configuradas && !p.licencia.activa && (
+          <button
+            className="chip-dispositivos chip-licencia"
+            onClick={p.onLicencia}
+            title={`Versión de prueba: hasta ${p.licencia.celularesPrueba} celulares a la vez. Tocá para activar una licencia.`}
+          >
+            <KeyRound size={15} />
+            <span>Prueba</span>
+            <span className="texto-largo">· hasta {p.licencia.celularesPrueba} celulares</span>
+          </button>
+        )}
         <button
           className={`chip-dispositivos ${salud.nivel !== 'nada' ? salud.nivel : ''}`}
           onClick={p.onDispositivos}

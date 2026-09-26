@@ -69,6 +69,7 @@ export function informeTexto(s: DiagnosticoServidor, ahora = new Date()): string
     `Compu: versión ${s.version || '?'} · ${s.sistema}`,
     `Direcciones: ${s.direcciones.map((ip) => `${ip}:${s.puerto}`).join(', ') || 'sin red'}${s.puertoCorto ? ` · dirección corta en el puerto ${s.puertoCorto}` : ''}`
   ]
+  if (s.licencia) lineas.push(`Licencia: ${s.licencia}`)
   if (s.cancion) {
     const min = Math.floor(s.cancion.duracionMs / 60000)
     const seg = Math.round((s.cancion.duracionMs % 60000) / 1000)

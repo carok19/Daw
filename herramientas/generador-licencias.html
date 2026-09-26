@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Generador de licencias</title>
+<style>
+  :root {
+    --bg: #0e1120; --panel: #161a2e; --panel-2: #1d2240; --line: #2a3050; --line-2: #394070;
+    --text: #eef0fa; --text-2: #b5bad6; --text-3: #7c82a8; --accent: #6d8bff; --ok: #22c55e; --warn: #f59e0b; --err: #ff7a7a;
+    color-scheme: dark;
+  }
+  :root[data-theme='light'] {
+    --bg: #f4f5fb; --panel: #ffffff; --panel-2: #eef0f8; --line: #dde0ee; --line-2: #c5c9e0;
+    --text: #151935; --text-2: #3f4468; --text-3: #6b7096; --accent: #3d5ee8; --ok: #15803d; --warn: #b45309; --err: #c62828;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme='dark']) {
+      --bg: #f4f5fb; --panel: #ffffff; --panel-2: #eef0f8; --line: #dde0ee; --line-2: #c5c9e0;
+      --text: #151935; --text-2: #3f4468; --text-3: #6b7096; --accent: #3d5ee8; --ok: #15803d; --warn: #b45309; --err: #c62828;
+      color-scheme: light;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 28px 16px 60px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 0 0 12px; display: flex; gap: 10px; align-items: center; }
+  .num-paso { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 14px; flex: none; }
+  .sub { color: var(--text-2); margin: 0 0 22px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+  p { margin: 0 0 10px; }
+  .ayuda { color: var(--text-2); font-size: 14px; }
+  .chico { font-size: 13px; color: var(--text-3); }
+  button { font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.primario { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .botones { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  label { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 4px; }
+  input, select, textarea { font: inherit; width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--bg); color: var(--text); }
+  textarea { font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; word-break: break-all; resize: vertical; }
+  .grilla { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; margin-bottom: 14px; }
+  .grilla .ancho { grid-column: 1 / -1; }
+  @media (max-width: 620px) { .grilla { grid-template-columns: 1fr; } }
+  .caja { border-radius: 10px; padding: 10px 12px; margin: 10px 0; font-size: 14px; }
+  .caja.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent); }
+  .caja.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); }
+  .caja.err { background: color-mix(in srgb, var(--err) 14%, transparent); border: 1px solid color-mix(in srgb, var(--err) 40%, transparent); }
+  code.clave { display: block; padding: 10px 12px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line-2); word-break: break-all; font-size: 14px; user-select: all; margin: 6px 0 10px; }
+  .oculto { display: none !important; }
+  .tabla-envuelta { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--text-3); font-weight: 600; }
+  td button { padding: 3px 9px; font-size: 12px; }
+  .casilla { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--text-2); margin: 10px 0 0; }
+  .casilla input { width: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Generador de licencias</h1>
+  <p class="sub">Para el que vende el programa. Funciona sin internet: abrí este archivo con Chrome o Edge en tu computadora. No lo compartas: solo lo usás vos.</p>
+
+  <!-- 1. claves -->
+  <section>
+    <h2><span class="num-paso">1</span> Tus claves</h2>
+    <div id="sin-claves">
+      <p class="ayuda">
+        La <b>clave privada</b> firma las licencias (queda en un archivo en tu compu; nadie más la tiene que tener).
+        La <b>clave pública</b> va dentro del programa y solo sirve para comprobar que una licencia la hiciste vos.
+      </p>
+      <div class="botones">
+        <button id="btn-abrir-claves" class="primario">Abrir mi archivo de claves</button>
+        <button id="btn-crear-claves">Crear claves nuevas (solo la primera vez)</button>
+        <input id="archivo-claves" type="file" accept=".json" class="oculto" />
+      </div>
+      <div id="error-claves" class="caja err oculto"></div>
+    </div>
+    <div id="con-claves" class="oculto">
+      <div id="aviso-nuevas" class="caja warn oculto">
+        <b>Se descargó tu archivo de claves</b> (<span id="nombre-archivo-claves"></span>). Guardalo en un lugar seguro y hacé una copia (un pendrive, tu mail).
+        Si lo perdés no vas a poder hacer licencias para el programa que ya instalaron; si alguien más lo consigue, puede hacer licencias truchas.
+        <div class="botones" style="margin-top: 8px"><button id="btn-bajar-claves">Descargar de nuevo</button></div>
+      </div>
+      <p class="ayuda" style="margin-bottom: 2px">Clave pública (esta sí se puede compartir: va en <code>licencias/clave-publica.txt</code> del programa):</p>
+      <code id="clave-publica" class="clave"></code>
+      <div class="botones">
+        <button id="btn-copiar-publica">Copiar clave pública</button>
+        <button id="btn-cerrar-claves">Cerrar mis claves</button>
+      </div>
+      <label class="casilla"><input id="recordar" type="checkbox" /> Recordar mis claves en este navegador (solo si nadie más usa esta compu)</label>
+    </div>
+  </section>
+
+  <!-- 2. licencia -->
+  <section id="seccion-licencia">
+    <h2><span class="num-paso">2</span> Crear una licencia</h2>
+    <p id="falta-claves" class="caja warn">Primero abrí (o creá) tus claves.</p>
+    <form id="form-licencia">
+      <div class="grilla">
+        <div class="ancho">
+          <label for="f-nombre">A nombre de (iglesia, banda o persona) *</label>
+          <input id="f-nombre" required maxlength="120" placeholder="Iglesia Vida Nueva — Rosario" />
+        </div>
+        <div>
+          <label for="f-contacto">Contacto (mail o teléfono, opcional)</label>
+          <input id="f-contacto" maxlength="120" placeholder="lider@iglesia.org" />
+        </div>
+        <div>
+          <label for="f-celulares">Celulares a la vez</label>
+          <select id="f-celulares">
+            <option value="5">5 celulares</option>
+            <option value="10" selected>10 celulares</option>
+            <option value="15">15 celulares</option>
+            <option value="25">25 celulares</option>
+            <option value="0">Sin límite</option>
+            <option value="otro">Otro número…</option>
+          </select>
+          <input id="f-celulares-otro" class="oculto" type="number" min="1" max="999" value="8" style="margin-top: 6px" />
+        </div>
+        <div>
+          <label for="f-vence">Vencimiento</label>
+          <select id="f-vence">
+            <option value="">Sin vencimiento</option>
+            <option value="1m">1 mes</option>
+            <option value="1a">1 año</option>
+            <option value="fecha">Elegir fecha…</option>
+          </select>
+          <input id="f-vence-fecha" class="oculto" type="date" style="margin-top: 6px" />
+        </div>
+        <div>
+          <label for="f-equipo">Código de la computadora (opcional)</label>
+          <input id="f-equipo" maxlength="30" placeholder="EQ-XXXX-XXXX-XXXX" autocomplete="off" />
+          <div class="chico">Si lo ponés, la licencia sirve solo en esa compu (lo ven en el programa: “Prueba” → Licencia).</div>
+        </div>
+      </div>
+      <div id="error-licencia" class="caja err oculto"></div>
+      <div class="botones"><button id="btn-crear-licencia" class="primario" type="submit">Crear licencia</button></div>
+    </form>
+
+    <div id="resultado" class="oculto">
+      <div id="verif-resultado" class="caja ok"></div>
+      <label for="licencia-texto">Licencia (mandala por WhatsApp o mail, o el archivo .licencia):</label>
+      <textarea id="licencia-texto" rows="4" readonly></textarea>
+      <div class="botones" style="margin-top: 8px">
+        <button id="btn-copiar-licencia">Copiar licencia</button>
+        <button id="btn-copiar-mensaje">Copiar mensaje para WhatsApp</button>
+        <button id="btn-bajar-licencia">Descargar archivo .licencia</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. comprobar -->
+  <section>
+    <h2><span class="num-paso">3</span> Comprobar una licencia</h2>
+    <p class="ayuda">Pegá una licencia para ver a nombre de quién está, cuántos celulares da y si la firmaste vos.</p>
+    <textarea id="comprobar-texto" rows="3" placeholder="LIC1.…"></textarea>
+    <div id="comprobar-resultado" class="caja oculto"></div>
+  </section>
+
+  <!-- 4. historial -->
+  <section>
+    <h2><span class="num-paso">4</span> Licencias que hiciste</h2>
+    <p class="chico">Se guardan en este navegador. Bajá la planilla de vez en cuando para tener una copia.</p>
+    <div class="tabla-envuelta">
+      <table>
+        <thead><tr><th>Fecha</th><th>A nombre de</th><th>Contacto</th><th>Celulares</th><th>Vence</th><th>Compu</th><th></th></tr></thead>
+        <tbody id="historial"></tbody>
+      </table>
+    </div>
+    <p id="historial-vacio" class="chico" style="margin-top: 8px">Todavía no hiciste ninguna.</p>
+    <div class="botones" style="margin-top: 10px"><button id="btn-csv">Descargar planilla (CSV para Excel)</button></div>
+  </section>
+</main>
+
+<script>
+'use strict'
+// Formato (igual que src/shared/licencia.ts del programa):
+//   LIC1.<datos: JSON en UTF-8, en base64url>.<firma Ed25519 de ese texto base64url, en base64url>
+const NOMBRE_APP = 'Multitrack Alabanza'
+const PREFIJO = 'LIC1'
+const CLAVE_RECORDADA = 'generador-licencias:claves'
+const CLAVE_HISTORIAL = 'generador-licencias:historial'
+
+const $ = (id) => document.getElementById(id)
+const mostrar = (el, si) => el.classList.toggle('oculto', !si)
+
+function aB64u(bytes) {
+  let bin = ''
+  for (const b of new Uint8Array(bytes)) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+function deB64u(texto) {
+  if (!/^[A-Za-z0-9_-]*$/.test(texto)) return null
+  try {
+    const bin = atob(texto.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (texto.length % 4)) % 4))
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0))
+  } catch {
+    return null
+  }
+}
+function hoyISO(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const fechaLegible = (iso) => (iso ? iso.split('-').reverse().join('/') : '')
+function normalizarEquipo(texto) {
+  const hex = texto.toUpperCase().replace(/^\s*EQ/, '').replace(/[^0-9A-F]/g, '')
+  if (hex.length !== 12) return null
+  return `EQ-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}`
+}
+function descargar(nombre, contenido, tipo) {
+  const url = URL.createObjectURL(new Blob([contenido], { type: tipo }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = nombre
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 5000)
+}
+async function copiar(texto, boton) {
+  try {
+    await navigator.clipboard.writeText(texto)
+  } catch {
+    const t = document.createElement('textarea')
+    t.value = texto
+    document.body.appendChild(t)
+    t.select()
+    document.execCommand('copy')
+    t.remove()
+  }
+  if (boton) {
+    const antes = boton.textContent
+    boton.textContent = '¡Copiado!'
+    setTimeout(() => (boton.textContent = antes), 1800)
+  }
+}
+
+// ---------- claves ----------
+let claves = null // { privada: CryptoKey, publica: CryptoKey, archivo: {...} }
+
+async function usarArchivoClaves(archivo) {
+  if (!archivo || archivo.tipo !== 'claves-licencias' || archivo.v !== 1) throw new Error('Ese archivo no es un archivo de claves de licencias.')
+  const priv = deB64u(archivo.privada || '')
+  const pub = deB64u(archivo.publica || '')
+  if (!priv || !pub || pub.length !== 32) throw new Error('El archivo de claves está dañado.')
+  const privada = await crypto.subtle.importKey('pkcs8', priv, { name: 'Ed25519' }, false, ['sign'])
+  const publica = await crypto.subtle.importKey('raw', pub, { name: 'Ed25519' }, true, ['verify'])
+  // que las dos claves sean pareja
+  const prueba = new TextEncoder().encode('prueba')
+  if (!(await crypto.subtle.verify({ name: 'Ed25519' }, publica, await crypto.subtle.sign({ name: 'Ed25519' }, privada, prueba), prueba))) {
+    throw new Error('La clave privada y la pública del archivo no son pareja.')
+  }
+  claves = { privada, publica, archivo }
+  $('clave-publica').textContent = archivo.publica
+  mostrar($('sin-claves'), false)
+  mostrar($('con-claves'), true)
+  mostrar($('falta-claves'), false)
+  $('btn-crear-licencia').disabled = false
+  $('recordar').checked = !!leerLocal(CLAVE_RECORDADA)
+  comprobar()
+}
+
+async function crearClaves() {
+  if (!crypto.subtle || !crypto.subtle.generateKey) throw new Error('Este navegador no puede crear claves. Abrí este archivo con Chrome o Edge actualizados.')
+  const par = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+  const archivo = {
+    tipo: 'claves-licencias',
+    v: 1,
+    programa: NOMBRE_APP,
+    creadas: new Date().toISOString(),
+    aviso: 'NO COMPARTAS ESTE ARCHIVO. La clave privada crea licencias. Guardá una copia en un lugar seguro.',
+    privada: aB64u(await crypto.subtle.exportKey('pkcs8', par.privateKey)),
+    publica: aB64u(await crypto.subtle.exportKey('raw', par.publicKey))
+  }
+  await usarArchivoClaves(archivo)
+  bajarClaves()
+  mostrar($('aviso-nuevas'), true)
+}
+
+function bajarClaves() {
+  if (!claves) return
+  const nombre = `claves-licencias-${hoyISO()}.json`
+  $('nombre-archivo-claves').textContent = nombre
+  descargar(nombre, JSON.stringify(claves.archivo, null, 2), 'application/json')
+}
+
+function leerLocal(clave) {
+  try {
+    return JSON.parse(localStorage.getItem(clave) || 'null')
+  } catch {
+    return null
+  }
+}
+function guardarLocal(clave, valor) {
+  try {
+    if (valor === null) localStorage.removeItem(clave)
+    else localStorage.setItem(clave, JSON.stringify(valor))
+  } catch {
+    // navegador sin almacenamiento: no se recuerda
+  }
+}
+
+$('btn-crear-claves').onclick = async () => {
+  mostrar($('error-claves'), false)
+  if (leerLocal(CLAVE_HISTORIAL)?.length && !confirm('Ya hiciste licencias con otras claves. Con claves nuevas, esas licencias no van a servir en el programa nuevo. ¿Crear claves nuevas igual?')) return
+  try {
+    await crearClaves()
+  } catch (e) {
+    $('error-claves').textContent = e.message || String(e)
+    mostrar($('error-claves'), true)
+  }
+}
+$('btn-abrir-claves').onclick = () => $('archivo-claves').click()
+$('archivo-claves').onchange = async (e) => {
+  const f = e.target.files[0]
+  e.target.value = ''
+  if (!f) return
+  mostrar($('error-claves'), false)
+  try {
+    await usarArchivoClaves(JSON.parse(await f.text()))
+  } catch (err) {
+    $('error-claves').textContent = err instanceof SyntaxError ? 'Ese archivo no es un archivo de claves.' : err.message || String(err)
+    mostrar($('error-claves'), true)
+  }
+}
+$('btn-bajar-claves').onclick = bajarClaves
+$('btn-copiar-publica').onclick = (e) => copiar(claves.archivo.publica, e.target)
+$('btn-cerrar-claves').onclick = () => {
+  claves = null
+  guardarLocal(CLAVE_RECORDADA, null)
+  mostrar($('sin-claves'), true)
+  mostrar($('con-claves'), false)
+  mostrar($('aviso-nuevas'), false)
+  mostrar($('falta-claves'), true)
+  mostrar($('resultado'), false)
+  $('btn-crear-licencia').disabled = true
+  comprobar()
+}
+$('recordar').onchange = (e) => guardarLocal(CLAVE_RECORDADA, e.target.checked && claves ? claves.archivo : null)
+
+// ---------- crear licencia ----------
+let ultima = null
+
+$('f-celulares').onchange = (e) => mostrar($('f-celulares-otro'), e.target.value === 'otro')
+$('f-vence').onchange = (e) => {
+  mostrar($('f-vence-fecha'), e.target.value === 'fecha')
+  if (e.target.value === 'fecha' && !$('f-vence-fecha').value) {
+    const d = new Date()
+    d.setFullYear(d.getFullYear() + 1)
+    $('f-vence-fecha').value = hoyISO(d)
+  }
+}
+
+function leerFormulario() {
+  const nombre = $('f-nombre').value.trim()
+  if (!nombre) throw new Error('Poné a nombre de quién es la licencia.')
+  const sel = $('f-celulares').value
+  const celulares = sel === 'otro' ? Number($('f-celulares-otro').value) : Number(sel)
+  if (!Number.isInteger(celulares) || celulares < 0 || celulares > 999) throw new Error('La cantidad de celulares tiene que ser un número entero.')
+  let vence
+  const v = $('f-vence').value
+  if (v === '1m' || v === '1a') {
+    const d = new Date()
+    if (v === '1m') d.setMonth(d.getMonth() + 1)
+    else d.setFullYear(d.getFullYear() + 1)
+    vence = hoyISO(d)
+  } else if (v === 'fecha') {
+    vence = $('f-vence-fecha').value
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(vence)) throw new Error('Elegí la fecha de vencimiento.')
+    if (vence < hoyISO()) throw new Error('La fecha de vencimiento ya pasó.')
+  }
+  let equipo
+  const eq = $('f-equipo').value.trim()
+  if (eq) {
+    equipo = normalizarEquipo(eq)
+    if (!equipo) throw new Error('El código de la computadora tiene que ser como EQ-4F3A-9C21-7B55.')
+  }
+  const contacto = $('f-contacto').value.trim()
+  const datos = { v: 1, id: crypto.randomUUID(), nombre, celulares, emitida: hoyISO() }
+  if (contacto) datos.email = contacto
+  if (vence) datos.vence = vence
+  if (equipo) datos.equipo = equipo
+  return datos
+}
+
+async function firmar(datos) {
+  const datosB64 = aB64u(new TextEncoder().encode(JSON.stringify(datos)))
+  const firma = await crypto.subtle.sign({ name: 'Ed25519' }, claves.privada, new TextEncoder().encode(datosB64))
+  return `${PREFIJO}.${datosB64}.${aB64u(firma)}`
+}
+
+/** Lee una licencia pegada (con espacios, saltos de linea o texto alrededor). */
+function separar(texto) {
+  const limpio = texto.replace(/\s+/g, '')
+  // la firma (64 bytes) siempre ocupa 86 caracteres: lo que venga pegado despues no es de la licencia
+  const m = new RegExp(`${PREFIJO}\\.([A-Za-z0-9_-]{20,4000})\\.([A-Za-z0-9_-]{86})`).exec(limpio)
+  if (!m) return null
+  const firma = deB64u(m[2])
+  const bytes = deB64u(m[1])
+  if (!firma || firma.length !== 64 || !bytes) return null
+  try {
+    return { texto: m[0], datosB64: m[1], firma, datos: JSON.parse(new TextDecoder().decode(bytes)) }
+  } catch {
+    return null
+  }
+}
+
+async function verificar(partes, publica) {
+  try {
+    return await crypto.subtle.verify({ name: 'Ed25519' }, publica, partes.firma, new TextEncoder().encode(partes.datosB64))
+  } catch {
+    return false
+  }
+}
+
+function describir(d) {
+  const partes = [`A nombre de <b>${escapar(d.nombre)}</b>`]
+  partes.push(d.celulares ? `${d.celulares} celulares a la vez` : 'celulares sin límite')
+  partes.push(d.vence ? `vence el ${fechaLegible(d.vence)}` : 'sin vencimiento')
+  partes.push(d.equipo ? `solo en la compu ${d.equipo}` : 'en cualquier compu')
+  return partes.join(' · ')
+}
+function escapar(t) {
+  return String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+}
+
+$('form-licencia').onsubmit = async (e) => {
+  e.preventDefault()
+  mostrar($('error-licencia'), false)
+  if (!claves) return
+  try {
+    const datos = leerFormulario()
+    const texto = await firmar(datos)
+    const partes = separar(texto)
+    if (!partes || !(await verificar(partes, claves.publica))) throw new Error('No se pudo comprobar la licencia recién hecha. Probá de nuevo.')
+    ultima = { datos, texto }
+    $('licencia-texto').value = texto
+    $('verif-resultado').innerHTML = `✓ Licencia lista y comprobada. ${describir(datos)}.`
+    mostrar($('resultado'), true)
+    const historial = leerLocal(CLAVE_HISTORIAL) || []
+    historial.unshift({ ...datos, licencia: texto })
+    guardarLocal(CLAVE_HISTORIAL, historial)
+    pintarHistorial()
+    $('resultado').scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  } catch (err) {
+    $('error-licencia').textContent = err.message || String(err)
+    mostrar($('error-licencia'), true)
+  }
+}
+
+function mensajeWhatsApp(datos, texto) {
+  const que = `${datos.celulares ? `hasta ${datos.celulares} celulares a la vez` : 'celulares sin límite'}${datos.vence ? `, vence el ${fechaLegible(datos.vence)}` : ''}`
+  return [
+    `¡Hola! Esta es la licencia de ${NOMBRE_APP} para ${datos.nombre} (${que}):`,
+    '',
+    texto,
+    '',
+    'Para activarla: en la computadora abrí el programa, tocá “Prueba” arriba a la derecha (o Conectar celulares → Licencia), pegá la licencia y tocá Activar. No hace falta internet.'
+  ].join('\n')
+}
+const nombreArchivo = (d) => `${d.nombre.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 40) || 'licencia'}.licencia`
+
+$('btn-copiar-licencia').onclick = (e) => ultima && copiar(ultima.texto, e.target)
+$('btn-copiar-mensaje').onclick = (e) => ultima && copiar(mensajeWhatsApp(ultima.datos, ultima.texto), e.target)
+$('btn-bajar-licencia').onclick = () => ultima && descargar(nombreArchivo(ultima.datos), ultima.texto + '\n', 'text/plain')
+
+// ---------- comprobar ----------
+async function comprobar() {
+  const caja = $('comprobar-resultado')
+  const texto = $('comprobar-texto').value
+  if (!texto.trim()) return mostrar(caja, false)
+  mostrar(caja, true)
+  const partes = separar(texto)
+  let clase = 'err'
+  let html = 'Eso no es una licencia (tiene que empezar con LIC1.).'
+  if (partes) {
+    const d = partes.datos
+    if (!claves) {
+      clase = 'warn'
+      html = `${describir(d)}. Abrí tus claves para saber si la firmaste vos.`
+    } else if (await verificar(partes, claves.publica)) {
+      const vencida = d.vence && d.vence < hoyISO()
+      clase = vencida ? 'warn' : 'ok'
+      html = `${vencida ? '⚠ Firmada por vos, pero ya venció.' : '✓ Firmada por vos.'} ${describir(d)}. Hecha el ${fechaLegible(d.emitida)}.`
+    } else {
+      html = `✗ No la firmaste con estas claves (o la modificaron). Dice: ${describir(d)}.`
+    }
+  }
+  caja.className = `caja ${clase}`
+  caja.innerHTML = html
+}
+$('comprobar-texto').oninput = comprobar
+
+// ---------- historial ----------
+function pintarHistorial() {
+  const historial = leerLocal(CLAVE_HISTORIAL) || []
+  const cuerpo = $('historial')
+  cuerpo.innerHTML = ''
+  mostrar($('historial-vacio'), historial.length === 0)
+  historial.forEach((h) => {
+    const tr = document.createElement('tr')
+    for (const valor of [fechaLegible(h.emitida), h.nombre, h.email || '', h.celulares ? String(h.celulares) : 'sin límite', h.vence ? fechaLegible(h.vence) : '—', h.equipo || 'cualquiera']) {
+      const td = document.createElement('td')
+      td.textContent = valor
+      tr.appendChild(td)
+    }
+    const td = document.createElement('td')
+    const b = document.createElement('button')
+    b.textContent = 'Copiar'
+    b.title = 'Copiar la licencia otra vez'
+    b.onclick = () => copiar(h.licencia, b)
+    td.appendChild(b)
+    tr.appendChild(td)
+    cuerpo.appendChild(tr)
+  })
+}
+$('btn-csv').onclick = () => {
+  const historial = leerLocal(CLAVE_HISTORIAL) || []
+  const celda = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const filas = [['Fecha', 'A nombre de', 'Contacto', 'Celulares', 'Vence', 'Compu', 'Id', 'Licencia']]
+  for (const h of historial) filas.push([h.emitida, h.nombre, h.email, h.celulares || 'sin límite', h.vence || '', h.equipo || '', h.id, h.licencia])
+  descargar(`licencias-${hoyISO()}.csv`, '﻿' + filas.map((f) => f.map(celda).join(';')).join('\r\n'), 'text/csv')
+}
+
+// ---------- inicio ----------
+$('btn-crear-licencia').disabled = true
+pintarHistorial()
+const recordadas = leerLocal(CLAVE_RECORDADA)
+if (recordadas) usarArchivoClaves(recordadas).catch(() => guardarLocal(CLAVE_RECORDADA, null))
+if (!crypto.subtle) {
+  $('error-claves').textContent = 'Este navegador no permite firmar. Abrí este archivo con Chrome o Edge actualizados.'
+  mostrar($('error-claves'), true)
+}
+</script>
+</body>
+</html>

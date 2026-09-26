@@ -2532,6 +2532,83 @@ input[type='range'].slider::-moz-range-thumb {
   vertical-align: -2px;
 }
 
+/* ---------- licencia (compu) ---------- */
+.licencia {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.licencia-estado {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+}
+.licencia-estado > svg {
+  flex: none;
+  margin-top: 1px;
+}
+.licencia-estado strong {
+  display: block;
+  margin-bottom: 3px;
+}
+.licencia-estado .ayuda {
+  margin: 0;
+}
+.licencia-estado.activa {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.35);
+  color: var(--play);
+}
+.licencia-estado.prueba {
+  background: var(--warn-soft);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: var(--warn);
+}
+.licencia-estado strong {
+  color: var(--text);
+}
+.licencia-equipo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.licencia-equipo code {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+.licencia-activar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.licencia-texto {
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  resize: vertical;
+  word-break: break-all;
+}
+.licencia-botones {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chip-licencia {
+  border-color: rgba(245, 158, 11, 0.45);
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
 .pantalla-codigo {
   position: fixed;
   inset: 0;

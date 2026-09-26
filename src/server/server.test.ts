@@ -17,6 +17,8 @@ import { responderMdns } from './descubrimiento'
 import { decodePcmSegment, parseWavHeader } from '../shared/wav'
 import { codificarMezcla, coeficientesPaneo, mezclaEfectiva, pistasClickYGuia, type CanalMezcla } from '../shared/mezcla'
 import { fichaDesdeProyecto, interpretarFicha } from './ficha'
+import { armarLicencia, datosAFirmar, type DatosLicencia } from '../shared/licencia'
+import { Licencias } from './licencia'
 import { wav16 } from './__fixtures__/sintetico'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
@@ -24,6 +26,7 @@ import type {
   ClockSyncAck,
   DatosInvitacion,
   ComandoProgramado,
+  EstadoLicencia,
   DispositivoInfo,
   EstadoCompleto,
   MixerActualizadoPayload,
@@ -95,7 +98,7 @@ interface Entorno {
 async function entorno(
   t: { after(fn: () => Promise<void> | void): void },
   appDir = tmpDir('multitrack-test-'),
-  extra: { dirExtras?: string } = {}
+  extra: { dirExtras?: string; clavePublicaLicencias?: string | null } = {}
 ): Promise<Entorno> {
   process.env.MULTITRACK_APP_DIR = appDir
   const rendererDir = tmpDir('multitrack-renderer-')
@@ -565,6 +568,85 @@ function wavEstereoConstante(l: number, r: number, segundos: number, sr: number)
   h.writeUInt32LE(data.length, 40)
   return Buffer.concat([h, data])
 }
+
+test('licencias: sin licencia hasta 2 celulares; la licencia (firmada, sin internet) habilita más, vence o se ata a una compu', async (t) => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519')
+  const clavePublica = Buffer.from(publicKey.export({ format: 'der', type: 'spki' }).subarray(12)).toString('base64url')
+  const firmar = (d: Partial<DatosLicencia>): string => {
+    const datos: DatosLicencia = { v: 1, id: crypto.randomUUID(), nombre: 'Iglesia Central', celulares: 3, emitida: '2026-01-10', ...d }
+    const b64 = datosAFirmar(datos)
+    return armarLicencia(b64, new Uint8Array(crypto.sign(null, Buffer.from(b64), privateKey)))
+  }
+  const env = await entorno(t, undefined, { clavePublicaLicencias: `# comentario\n${clavePublica}\n` })
+  const compu = await env.conectar(compuAuth)
+  const estado0 = await emitAck<EstadoLicencia>(compu, 'licencia:estado', {})
+  assert.equal(estado0.configuradas, true)
+  assert.equal(estado0.prueba, true)
+  assert.match(estado0.equipo, /^EQ-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/)
+
+  // version de prueba: 2 celulares; el tercero no entra (el que reconecta si)
+  const cel = (id: string): Promise<ClientSocket> => env.conectar({ origen: 'celular', deviceId: id })
+  const intentar = (id: string): Promise<{ motivo?: string; limite?: number; prueba?: boolean } | 'ok'> =>
+    new Promise((resolve) => {
+      const s = ioClient(`http://localhost:${env.port}`, { auth: { origen: 'celular', deviceId: id }, reconnection: false })
+      s.once('connect', () => {
+        s.close()
+        resolve('ok')
+      })
+      s.once('connect_error', (e: Error & { data?: { motivo?: string; limite?: number; prueba?: boolean } }) => {
+        s.close()
+        assert.equal(e.message, 'licencia')
+        resolve(e.data ?? {})
+      })
+    })
+  const c1 = await cel('celular-numero-1')
+  await cel('celular-numero-2')
+  assert.deepEqual(await intentar('celular-numero-3'), { motivo: 'limite', limite: 2, prueba: true })
+  c1.close()
+  await esperar(150)
+  assert.equal(await intentar('celular-numero-3'), 'ok', 'se libero un lugar')
+  await cel('celular-numero-1')
+  assert.equal(await intentar('celular-numero-1'), 'ok', 'el mismo celular reconectando no cuenta dos veces')
+
+  // un celular no puede activar licencias
+  const c2 = await env.conectar({ origen: 'celular', deviceId: 'celular-numero-2' })
+  assert.equal((await emitAck<{ ok: boolean }>(c2, 'licencia:activar', { texto: firmar({}) })).ok, false)
+
+  // licencias que no valen
+  const activar = (texto: string): Promise<{ ok: boolean; error?: string; estado?: EstadoLicencia }> => emitAck(compu, 'licencia:activar', { texto })
+  assert.match((await activar('hola')).error!, /no es una licencia/)
+  const buena = firmar({ celulares: 3 })
+  const [, datos, firma] = buena.split('.')
+  const trucha = `LIC1.${Buffer.from(Buffer.from(datos, 'base64url').toString().replace('"celulares":3', '"celulares":0')).toString('base64url')}.${firma}`
+  assert.match((await activar(trucha)).error!, /no es válida/, 'cambiar los datos rompe la firma')
+  const { privateKey: otra } = crypto.generateKeyPairSync('ed25519')
+  const b64 = datosAFirmar({ v: 1, id: 'x', nombre: 'Pirata', celulares: 0, emitida: '2026-01-01' })
+  assert.match((await activar(armarLicencia(b64, new Uint8Array(crypto.sign(null, Buffer.from(b64), otra))))).error!, /no es válida/, 'firmada con otra clave')
+  assert.match((await activar(firmar({ vence: '2020-12-31' }))).error!, /venció el 31\/12\/2020/)
+  assert.match((await activar(firmar({ equipo: 'EQ-0000-0000-0000' }))).error!, /otra computadora/)
+
+  // una buena (pegada de un chat: con espacios y saltos de linea), atada a esta compu y con 3 celulares
+  const licencia = firmar({ celulares: 3, equipo: estado0.equipo, vence: '2099-01-01' })
+  // (al sacar los espacios, "Gracias" queda pegado a la firma: no tiene que confundirla)
+  const r = await activar(`Tu licencia:\n ${licencia.replace(/(.{40})/g, '$1\n')}\nGracias por la compra`)
+  assert.equal(r.ok, true, r.error)
+  assert.equal(fs.readFileSync(path.join(process.env.MULTITRACK_APP_DIR!, 'licencia.txt'), 'utf-8'), licencia, 'se guarda solo la licencia')
+  assert.equal(r.estado!.activa, true)
+  assert.equal(r.estado!.nombre, 'Iglesia Central')
+  assert.equal(r.estado!.celulares, 3)
+  assert.equal(await intentar('celular-numero-4'), 'ok', 'con 3 celulares entra el tercero')
+  await cel('celular-numero-4')
+  assert.deepEqual(await intentar('celular-numero-5'), { motivo: 'limite', limite: 3, prueba: false })
+
+  // queda guardada (la app se abre de nuevo) y se puede quitar
+  assert.equal(new Licencias(clavePublica).estado().activa, true)
+  const q = await emitAck<{ ok: boolean; estado: EstadoLicencia }>(compu, 'licencia:quitar', {})
+  assert.equal(q.estado.prueba, true)
+  assert.equal(new Licencias(clavePublica).estado().activa, false)
+  // sin clave publica (la version libre): sin limites
+  assert.equal(new Licencias(null).limiteCelulares(), null)
+  assert.equal(new Licencias('# todavia sin clave').estado().configuradas, false)
+})
 
 test('click y guía a la izquierda: se detectan por nombre, por el análisis o a mano; la banda va a la derecha 3 dB más baja', () => {
   const pista = (id: string, nombre: string, extra: Partial<Pista> = {}): Pista => ({

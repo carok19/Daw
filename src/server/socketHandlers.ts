@@ -29,6 +29,7 @@ import type {
   AjustesConexion,
   DatosInvitacion,
   DiagnosticoServidor,
+  EstadoLicencia,
   MotivoCodigo
 } from '../shared/types'
 import type { AppState } from './state'
@@ -55,6 +56,7 @@ import { Biblioteca } from './biblioteca'
 import type { ModelosVoz } from './modelos'
 import { guardarAjustes, normalizarCodigo, type Ajustes } from './ajustes'
 import type { EstadisticasMezcla } from './mezclador'
+import type { Licencias } from './licencia'
 import { direccionesLan, ipParaCliente } from './network'
 import { NOMBRE_FIJO } from './descubrimiento'
 
@@ -103,6 +105,21 @@ export interface Conexion {
   estadisticasMezcla?(): EstadisticasMezcla
   /** version de la app (para el diagnostico) */
   version?: string
+  /** licencia de la compu: cuantos celulares a la vez */
+  licencias?: Licencias
+}
+
+/** Version de prueba (o licencia con menos celulares): ya hay el maximo conectado. */
+function resumenLicencia(e: EstadoLicencia | undefined): string {
+  if (!e || !e.configuradas) return 'sin licencias (versión libre)'
+  if (e.activa) return `licencia de ${e.nombre} · ${e.celulares ? `${e.celulares} celulares` : 'celulares sin límite'}${e.vence ? ` · vence ${e.vence}` : ''}`
+  return `versión de prueba (hasta ${e.celularesPrueba} celulares)${e.error ? ` · ${e.error}` : ''}`
+}
+
+function errorLicencia(limite: number, prueba: boolean): Error {
+  const e = new Error('licencia') as Error & { data?: unknown }
+  e.data = { motivo: 'limite', limite, prueba }
+  return e
 }
 
 function errorCodigo(motivo: MotivoCodigo): Error {
@@ -142,6 +159,37 @@ export function registerSocketHandlers(
     }
     next(errorCodigo('codigo-requerido'))
   })
+
+  // licencia: cuantos celulares a la vez (el que reconecta no cuenta dos veces)
+  io.use((socket, next) => {
+    const limite = conexion.licencias?.limiteCelulares() ?? null
+    if (limite === null || origenDe(socket, compuToken) === 'compu') return next()
+    const deviceId = (socket.handshake.auth as AuthHandshake | undefined)?.deviceId
+    const propio = typeof deviceId === 'string' ? `celular:${deviceId}` : null
+    const conectados = devices.listar().filter((d) => d.origen === 'celular' && d.conectado && d.id !== propio).length
+    if (conectados >= limite) {
+      // aviso en la compu (uno cada tanto: el celular reintenta solo)
+      const prueba = conexion.licencias?.estado().prueba ?? false
+      if (Date.now() - ultimoAvisoLimite > 60_000) {
+        ultimoAvisoLimite = Date.now()
+        aCompus('aviso', {
+          tipo: 'error',
+          texto: prueba
+            ? `Un celular no pudo entrar: la versión de prueba permite ${limite} celulares a la vez. Activá una licencia para más.`
+            : `Un celular no pudo entrar: la licencia permite ${limite} celulares a la vez.`
+        })
+      }
+      return next(errorLicencia(limite, prueba))
+    }
+    next()
+  })
+  let ultimoAvisoLimite = 0
+
+  function emitirLicencia(): void {
+    const estado = conexion.licencias?.estado()
+    if (!estado) return
+    for (const s of io.sockets.sockets.values()) if ((s.data as SocketData).origen === 'compu') s.emit('licencia:estado', estado)
+  }
 
   function datosInvitacion(ipCliente: string | undefined): DatosInvitacion {
     const ip = ipParaCliente(ipCliente) ?? 'localhost'
@@ -349,6 +397,24 @@ export function registerSocketHandlers(
       ack?.({ ok: true, ajustes: ajustesConexion() })
     })
 
+    // ---- licencia (compu) ----
+    socket.on('licencia:estado', (_p: unknown, ack?: Ack<EstadoLicencia | null>) => {
+      if (!soloCompu(socket)) return ack?.(null)
+      ack?.(conexion.licencias?.estado() ?? null)
+    })
+    socket.on('licencia:activar', (payload: { texto?: unknown }, ack?: Ack<{ ok: boolean; error?: string; estado?: EstadoLicencia }>) => {
+      if (!soloCompu(socket) || !conexion.licencias) return ack?.({ ok: false })
+      const r = conexion.licencias.activar(typeof payload?.texto === 'string' ? payload.texto.slice(0, 10000) : '')
+      ack?.({ ...r, estado: conexion.licencias.estado() })
+      if (r.ok) emitirLicencia()
+    })
+    socket.on('licencia:quitar', (_p: unknown, ack?: Ack<{ ok: boolean; estado?: EstadoLicencia }>) => {
+      if (!soloCompu(socket) || !conexion.licencias) return ack?.({ ok: false })
+      conexion.licencias.quitar()
+      ack?.({ ok: true, estado: conexion.licencias.estado() })
+      emitirLicencia()
+    })
+
     // "Copiar diagnostico" (compu): la compu, la cancion, la mezcla por celular y lo que mide cada dispositivo
     socket.on('diagnostico:obtener', (_p: unknown, ack?: Ack<DiagnosticoServidor | null>) => {
       if (!soloCompu(socket)) return ack?.(null)
@@ -360,6 +426,7 @@ export function registerSocketHandlers(
         puerto: conexion.puerto(),
         puertoCorto: conexion.puertoCorto(),
         mezcla: conexion.estadisticasMezcla?.() ?? null,
+        licencia: resumenLicencia(conexion.licencias?.estado()),
         cancion: p ? { nombre: p.nombre, pistas: p.pistas.length, duracionMs: p.duracionTotalMs, bpm: p.tempo?.bpm ?? null } : null,
         dispositivos: devices.listar()
       })

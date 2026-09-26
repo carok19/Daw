@@ -1,0 +1,9 @@
+# Clave publica de las licencias (la del vendedor).
+#
+# Mientras este archivo no tenga una clave, la app funciona SIN licencias
+# (todo libre). Para empezar a vender:
+#   1. Abri herramientas/generador-licencias.html y toca "Crear claves nuevas".
+#   2. Guarda el archivo de claves en un lugar seguro (y una copia): con el se
+#      crean las licencias. No lo subas a GitHub ni lo mandes a nadie.
+#   3. Pega la clave publica que te muestra en la linea de abajo (sin el #) y
+#      guarda los cambios: el proximo instalador ya pide licencia.
