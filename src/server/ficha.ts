@@ -24,7 +24,7 @@ export interface FichaCancion {
   marcadores: Pick<Marcador, 'nombre' | 'tiempoMs' | 'origen' | 'color'>[]
   seccionesEditadas: boolean
   /** mezcla por nombre de pista (los ids de pista se regeneran al importar) */
-  pistas: Pick<Pista, 'nombre' | 'volumen' | 'pan' | 'mute' | 'solo' | 'color' | 'rol'>[]
+  pistas: Pick<Pista, 'nombre' | 'volumen' | 'pan' | 'mute' | 'solo' | 'color' | 'rol' | 'panAutomatico'>[]
   tempo: TempoProyecto | null
   fuenteSecciones: 'archivo' | 'guia' | null
 }
@@ -46,7 +46,16 @@ export function fichaDesdeProyecto(p: Proyecto): FichaCancion {
     duracionTotalMs: p.duracionTotalMs,
     marcadores: p.marcadores.map(({ nombre, tiempoMs, origen, color }) => ({ nombre, tiempoMs, origen, ...(color ? { color } : {}) })),
     seccionesEditadas: !!p.seccionesEditadas,
-    pistas: p.pistas.map(({ nombre, volumen, pan, mute, solo, color, rol }) => ({ nombre, volumen, pan, mute, solo, color, ...(rol ? { rol } : {}) })),
+    pistas: p.pistas.map(({ nombre, volumen, pan, mute, solo, color, rol, panAutomatico }) => ({
+      nombre,
+      volumen,
+      pan,
+      mute,
+      solo,
+      color,
+      ...(rol ? { rol } : {}),
+      ...(typeof panAutomatico === 'boolean' ? { panAutomatico } : {})
+    })),
     tempo: p.tempo ?? null,
     fuenteSecciones: p.analisis?.fuente ?? null
   }
@@ -63,8 +72,12 @@ export function interpretarFicha(texto: string): FichaCancion | null {
     const pistas = f.pistas
       .filter((p) => p && typeof p.nombre === 'string')
       .map((p) => {
-        const { rol, ...resto } = p
-        return rol === 'click' || rol === 'guia' || rol === 'normal' ? { ...resto, rol } : resto
+        const { rol, panAutomatico, ...resto } = p
+        return {
+          ...resto,
+          ...(rol === 'click' || rol === 'guia' || rol === 'normal' ? { rol } : {}),
+          ...(typeof panAutomatico === 'boolean' ? { panAutomatico } : {})
+        }
       })
     const tempo =
       f.tempo && typeof f.tempo.bpm === 'number' && Array.isArray(f.tempo.compasesMs) && f.tempo.compasesMs.every((c) => typeof c === 'number')

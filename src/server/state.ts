@@ -157,7 +157,10 @@ export class AppState {
     const pista = tab?.proyecto.pistas.find((p) => p.id === pistaId)
     if (!tab || !pista || !patch) return null
     if (numeroFinito(patch.volumen)) pista.volumen = clamp(Math.round(patch.volumen), 0, 100)
-    if (numeroFinito(patch.pan)) pista.pan = clamp(Math.round(patch.pan), -100, 100)
+    if (numeroFinito(patch.pan)) {
+      pista.pan = clamp(Math.round(patch.pan), -100, 100)
+      pista.panAutomatico = false // movido a mano: la app no lo vuelve a acomodar
+    }
     if (typeof patch.mute === 'boolean') pista.mute = patch.mute
     if (typeof patch.solo === 'boolean') pista.solo = patch.solo
     const nombre = limpiarNombre(patch.nombre, 40)

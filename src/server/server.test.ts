@@ -15,7 +15,8 @@ import dgram from 'node:dgram'
 import dnsPacket from 'dns-packet'
 import { responderMdns } from './descubrimiento'
 import { decodePcmSegment, parseWavHeader } from '../shared/wav'
-import { codificarMezcla, coeficientesPaneo, mezclaEfectiva, pistasClickYGuia, type CanalMezcla } from '../shared/mezcla'
+import { aplicarPaneoAutomatico, codificarMezcla, coeficientesPaneo, mezclaEfectiva, type CanalMezcla } from '../shared/mezcla'
+import { migrarProyecto } from './projects'
 import { fichaDesdeProyecto, interpretarFicha } from './ficha'
 import { armarLicencia, datosAFirmar, type DatosLicencia } from '../shared/licencia'
 import { Licencias } from './licencia'
@@ -655,46 +656,113 @@ test('licencias: sin licencia hasta 2 celulares; la licencia (firmada, sin inter
   assert.equal(new Licencias('# todavia sin clave').estado().configuradas, false)
 })
 
-test('click y guía a la izquierda: se detectan por nombre, por el análisis o a mano; la banda va a la derecha 3 dB más baja', () => {
+test('paneo por defecto: click y guía a la izquierda y la banda a la derecha (por nombre, por el análisis o marcadas); lo movido a mano se respeta', async (t) => {
   const pista = (id: string, nombre: string, extra: Partial<Pista> = {}): Pista => ({
     id,
     nombre,
     archivo: `${id}.wav`,
     volumen: 100,
-    pan: 30,
+    pan: 0,
     mute: false,
     solo: false,
     color: '#ffffff',
     ...extra
   })
-  const proyecto = {
+  const cancion = () => ({
     pistas: [
       pista('a', 'Click 120'),
       pista('b', 'Voz Guía'),
-      pista('c', 'Metrónomo', { rol: 'normal' }), // marcada a mano como que no
+      pista('c', 'Metrónomo', { rol: 'normal' }), // marcada como que no
       pista('d', 'Pista 7'), // es el click segun el analisis (por como suena)
-      pista('e', 'Cues2'), // otra guia, marcada a mano
+      pista('e', 'Cues2', { rol: 'guia' }), // otra guia, marcada
       pista('f', 'Bajo'),
       pista('g', 'Guitarra')
     ],
     tempo: { bpm: 120, compas: 4, compasesMs: [], clickPistaId: 'd', acentoClaro: true },
     analisis: { estado: 'listo' as const, fuente: null, guiaPistaId: null }
-  }
-  proyecto.pistas[4].rol = 'guia'
-  const izq = pistasClickYGuia(proyecto)
-  assert.deepEqual([...izq].sort(), ['a', 'b', 'd', 'e'])
-  const m = new Map(mezclaEfectiva(proyecto.pistas, {}, izq).map((c) => [c.pistaId, c]))
+  })
+  const paneos = (p: { pistas: Pista[] }): Record<string, number> => Object.fromEntries(p.pistas.map((x) => [x.id, x.pan]))
+
+  // cancion de antes, nadie toco el paneo (todo al centro): se acomoda
+  const vieja = cancion()
+  assert.equal(aplicarPaneoAutomatico(vieja), true)
+  assert.deepEqual(paneos(vieja), { a: -100, b: -100, c: 100, d: -100, e: -100, f: 100, g: 100 })
+  assert.ok(vieja.pistas.every((x) => x.panAutomatico === true))
+  assert.equal(aplicarPaneoAutomatico(vieja), false, 'ya estaba')
+  // el paneo es el del director, sin nada especial en la mezcla del celular
+  const m = new Map(mezclaEfectiva(vieja.pistas).map((c) => [c.pistaId, c]))
   assert.equal(m.get('a')!.pan, -1)
-  assert.equal(m.get('f')!.pan, 1)
-  assert.equal(m.get('c')!.pan, 1)
-  assert.ok(Math.abs(m.get('g')!.ganancia - Math.SQRT1_2) < 1e-9, 'la banda va 3 dB más baja (suena de un solo lado)')
-  // sin la opcion: el paneo del director
-  assert.equal(mezclaEfectiva(proyecto.pistas)[0].pan, 0.3)
-  // la marca a mano se guarda en la ficha de la cancion
-  const ficha = interpretarFicha(JSON.stringify(fichaDesdeProyecto({ ...proyecto, id: 'x', nombre: 'x', duracionTotalMs: 1000, marcadores: [] } as unknown as Proyecto)))!
-  assert.equal(ficha.pistas.find((p) => p.nombre === 'Metrónomo')!.rol, 'normal')
-  assert.equal(ficha.pistas.find((p) => p.nombre === 'Cues2')!.rol, 'guia')
-  assert.equal(ficha.pistas.find((p) => p.nombre === 'Bajo')!.rol, undefined)
+  assert.equal(m.get('g')!.pan, 1)
+  assert.equal(m.get('g')!.ganancia, 1)
+
+  // cancion de antes con algun paneo puesto a mano: no se toca nada
+  const tocada = cancion()
+  tocada.pistas[5].pan = -30
+  aplicarPaneoAutomatico(tocada)
+  assert.deepEqual(paneos(tocada), { a: 0, b: 0, c: 0, d: 0, e: 0, f: -30, g: 0 })
+  assert.ok(tocada.pistas.every((x) => x.panAutomatico === false))
+
+  // la marca y el paneo se guardan en la ficha de la cancion
+  const ficha = interpretarFicha(JSON.stringify(fichaDesdeProyecto({ ...vieja, id: 'x', nombre: 'x', duracionTotalMs: 1000, marcadores: [] } as unknown as Proyecto)))!
+  const enFicha = (nombre: string) => ficha.pistas.find((p) => p.nombre === nombre)!
+  assert.equal(enFicha('Metrónomo').rol, 'normal')
+  assert.equal(enFicha('Cues2').rol, 'guia')
+  assert.equal(enFicha('Bajo').rol, undefined)
+  assert.equal(enFicha('Bajo').pan, 100)
+  assert.equal(enFicha('Bajo').panAutomatico, true)
+
+  // de punta a punta: al importar ya viene paneada; lo que se mueve a mano queda
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const silencio = wav16(new Float32Array(44100), 44100)
+  const estado = await cargarZip(compu, crearZip('Paneo', { '01 Click.wav': silencio, '02 Guide.wav': silencio, '03 Bajo.wav': silencio, '04 Pad.wav': silencio }))
+  const p = estado.proyectoActivo!
+  const panDe = (nombre: string): number => env.server.state.getActiveTab()!.proyecto.pistas.find((x) => x.nombre === nombre)!.pan
+  assert.deepEqual(
+    p.pistas.map((x) => [x.nombre, x.pan]),
+    [
+      ['Click', -100],
+      ['Guide', -100],
+      ['Bajo', 100],
+      ['Pad', 100]
+    ]
+  )
+  const pad = p.pistas.find((x) => x.nombre === 'Pad')!
+  compu.emit('mixer:update', { pistaId: pad.id, patch: { pan: 0 } })
+  await esperar(150)
+  assert.equal(panDe('Pad'), 0)
+  assert.equal(env.server.state.getActiveTab()!.proyecto.pistas.find((x) => x.nombre === 'Pad')!.panAutomatico, false)
+  // si la deteccion cambia (p.ej. el analisis encuentra el click en otra pista), lo movido a mano no se toca
+  const proyecto = env.server.state.getActiveTab()!.proyecto
+  proyecto.tempo = { bpm: 120, compas: 4, compasesMs: [], clickPistaId: pad.id, acentoClaro: true }
+  aplicarPaneoAutomatico(proyecto)
+  assert.equal(panDe('Pad'), 0)
+  proyecto.tempo = { ...proyecto.tempo, clickPistaId: proyecto.pistas.find((x) => x.nombre === 'Bajo')!.id }
+  aplicarPaneoAutomatico(proyecto)
+  assert.equal(panDe('Bajo'), -100, 'la que sigue en automatico se reacomoda')
+
+  // cancion guardada con una version anterior (sin la marca, todo al centro): al abrirla se acomoda y se guarda
+  for (const x of proyecto.pistas) {
+    delete x.panAutomatico
+    x.pan = 0
+  }
+  proyecto.tempo = null
+  await migrarProyecto(proyecto)
+  assert.deepEqual(
+    proyecto.pistas.map((x) => x.pan),
+    [-100, -100, 100, 100]
+  )
+  const enDisco = JSON.parse(fs.readFileSync(path.join(process.env.MULTITRACK_APP_DIR!, 'proyectos', proyecto.id, 'proyecto.json'), 'utf-8')) as Proyecto
+  assert.deepEqual(
+    enDisco.pistas.map((x) => [x.pan, x.panAutomatico]),
+    [
+      [-100, true],
+      [-100, true],
+      [100, true],
+      [100, true]
+    ]
+  )
+  await env.cerrar()
 })
 
 test('mezcla por celular: la compu arma UNA pista estéreo con la mezcla pedida (paneo, ganancias, otra frecuencia, límite)', async (t) => {

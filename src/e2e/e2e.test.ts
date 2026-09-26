@@ -565,7 +565,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
       const codigo = `registerProcessor('grabador', class extends AudioWorkletProcessor {
         constructor() { super(); this.lote = [] }
         process(inputs) {
-          const x = inputs[0] && inputs[0][0]
+          const x = inputs[0] && inputs[0][1]
           if (x) this.lote.push([currentTime, x[0]])
           if (this.lote.length >= 8) { this.port.postMessage(this.lote); this.lote = [] }
           return true
@@ -641,8 +641,9 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
 
     if (process.env.E2E_VOLCADO) fs.writeFileSync(process.env.E2E_VOLCADO, JSON.stringify({ muestras, vol: tab.proyecto.pistas.find((p) => p.nombre === 'Posicion')!.volumen }))
     const vol = tab.proyecto.pistas.find((p) => p.nombre === 'Posicion')!.volumen / 100
-    // fader (curva cuadratica), paneo al centro de una pista mono y los dos pasos por 16 bits (x32767 / 32768)
-    const escala = 0.9 * vol * vol * Math.SQRT1_2 * (32767 / 32768) ** 2
+    // fader (curva cuadratica), paneo por defecto de la banda (una pista mono toda a la derecha: se graba ese canal)
+    // y los dos pasos por 16 bits (x32767 / 32768)
+    const escala = 0.9 * vol * vol * (32767 / 32768) ** 2
     const bloque = 128 / (await cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext } } } }).__mt.engineRef.current.ctx.sampleRate))
     const difs: number[] = []
     let saltos = 0
@@ -669,7 +670,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     assert.deepEqual(pedidosMedia, [], 'el celular no baja pistas sueltas')
   })
 
-  await t.test('celular: click y guía a la izquierda y la banda a la derecha; en la compu se marcan a mano', async () => {
+  await t.test('paneo por defecto: click en L y la banda en R, sin tocar nada; lo que se mueve en la compu queda', async () => {
     const cel = celulares[1]
     const tab = server.state.getActiveTab()!
     const id = (nombre: string): string => tab.proyecto.pistas.find((p) => p.nombre === nombre)!.id
@@ -686,22 +687,23 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
       }
       assert.deepEqual(await paneos(), esperado)
     }
-    await cel.getByRole('switch', { name: /Click y guía a la izquierda/ }).click()
-    // el click se detecto por como suena; "Posicion" y "Pad" son banda
-    await cel.getByText('Izquierda: Click. Derecha: el resto de la banda.').waitFor()
-    await esperarPaneos({ [id('Click')]: -100, [id('Posicion')]: 100, [id('Pad')]: 100 })
-    assert.equal(await cel.locator('.m-canal-lado', { hasText: 'izq.' }).count(), 1)
+    // en la compu se ve en los paneos de la mezcla (el click, por su nombre; la banda a la derecha)
+    const paneoEnCompu = async (i: number): Promise<string> => (await compu.locator('.canal').nth(i).getByRole('slider', { name: 'Paneo' }).getAttribute('aria-valuenow'))!
+    assert.deepEqual(
+      await compu.locator('.canal-nombre').allTextContents(),
+      tab.proyecto.pistas.map((p) => p.nombre)
+    )
+    for (const [i, p] of tab.proyecto.pistas.entries()) assert.equal(await paneoEnCompu(i), p.nombre === 'Click' ? '-100' : '100', p.nombre)
+    // y es lo que suena en los celulares (el celular 2 no tiene nada en "Mi mezcla")
+    await esperarPaneos({ [id('Click')]: -100, [id('Posicion')]: 100 })
+    assert.equal(await cel.getByText(/Click y guía a la izquierda/).count(), 0, 'sin interruptor en el celular')
+    assert.equal(await compu.getByRole('button', { name: /click o guía/ }).count(), 0, 'sin orejita en la compu')
 
-    // en la compu: "Pad" se marca como guia y el "Click" como que no lo es
-    await compu.getByRole('button', { name: 'Pad: click o guía' }).click()
-    await compu.getByRole('button', { name: 'Click: click o guía' }).click()
-    await esperarPaneos({ [id('Click')]: 100, [id('Posicion')]: 100, [id('Pad')]: -100 })
-    await cel.getByText('Izquierda: Pad. Derecha: el resto de la banda.').waitFor()
-    assert.equal(server.state.getActiveTab()!.proyecto.pistas.find((p) => p.nombre === 'Click')!.rol, 'normal')
-
-    // se apaga: vuelve el paneo del director
-    await cel.getByRole('switch', { name: /Click y guía a la izquierda/ }).click()
-    await esperarPaneos({ [id('Click')]: 0, [id('Posicion')]: 0, [id('Pad')]: 0 })
+    // doble click en el paneo del Click: al centro, y queda asi
+    const i = tab.proyecto.pistas.findIndex((p) => p.nombre === 'Click')
+    await compu.locator('.canal').nth(i).getByRole('slider', { name: 'Paneo' }).dblclick()
+    await esperarPaneos({ [id('Click')]: 0, [id('Posicion')]: 100 })
+    assert.equal(tab.proyecto.pistas[i].panAutomatico, false)
   })
 
   await t.test('WiFi lento (3 Mbps): con la mezcla de la compu suena sin cortes; con 8 pistas sueltas no alcanza', async (tt) => {

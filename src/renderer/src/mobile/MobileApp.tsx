@@ -32,8 +32,6 @@ import { FaderTactil } from '../ui/FaderTactil'
 import { useConfirmar } from '../ui/Confirmar'
 import { useWakeLock } from './useWakeLock'
 import { Hoja, HojaAjustes } from './Hojas'
-import { Toggle } from '../ui/Toggle'
-import { pistasClickYGuia } from '@shared/mezcla'
 import { AccesoFijo, HojaInvitar, PantallaCodigo, PantallaLicencia } from './Conectar'
 import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion'
 
@@ -197,9 +195,6 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
   const mezcla = controller.mezclaPersonal
   const hayCambios = Object.keys(mezcla).length > 0
   const haySolo = proyecto.pistas.some((p) => p.solo)
-  const separar = controller.clickIzquierda
-  const izquierda = useMemo(() => pistasClickYGuia(proyecto), [proyecto])
-  const nombresIzquierda = proyecto.pistas.filter((p) => izquierda.has(p.id)).map((p) => p.nombre)
 
   function set(nombre: string, patch: Partial<{ ganancia: number; mute: boolean }>): void {
     const clave = clavePista(nombre)
@@ -223,18 +218,6 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
         </button>
       </div>
       <CanalGeneral controller={controller} />
-      <div className={`m-split ${separar ? 'activo' : ''}`}>
-        <Toggle activo={separar} onCambiar={controller.setClickIzquierda}>
-          Click y guía a la izquierda
-        </Toggle>
-        <span className="m-split-detalle">
-          {nombresIzquierda.length === 0
-            ? 'En esta canción no se encontró el click ni la guía (se pueden marcar en la compu).'
-            : separar
-              ? `Izquierda: ${nombresIzquierda.join(', ')}. Derecha: el resto de la banda.`
-              : `Mandá ${nombresIzquierda.join(', ')} al oído izquierdo y la banda al derecho.`}
-        </span>
-      </div>
       {proyecto.pistas.map((p) => {
         const ajuste = mezcla[clavePista(p.nombre)] ?? { ganancia: 1, mute: false }
         const pct = Math.round(ajuste.ganancia * 100)
@@ -245,7 +228,6 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
               <span className="punto" style={{ background: p.color }} />
               <span className="m-canal-nombre">{p.nombre}</span>
               {apagadaEnCompu && <span className="m-canal-aviso">apagada en la compu</span>}
-              {separar && !apagadaEnCompu && <span className="m-canal-lado">{izquierda.has(p.id) ? 'izq.' : 'der.'}</span>}
               <small className="num">{ajuste.mute ? 'muda' : textoGanancia(pct)}</small>
             </div>
             <div className="m-canal-control">

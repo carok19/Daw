@@ -3,6 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import type { Marcador, PedidoVoz, Proyecto, TempoProyecto } from '../../shared/types'
 import { projectDir } from '../projects'
+import { aplicarPaneoAutomatico } from '../../shared/mezcla'
 import { decodificarMono } from './decodificar'
 import { calcularTempo, detectarGolpes, pareceNombreDeClick, puntajeClick, PUNTAJE_MIN_CLICK, SR_ANALISIS } from './tempo'
 import { detectarFrases, guardarFrases, pareceNombreDeGuia, SR_VOZ } from './guia'
@@ -108,6 +109,8 @@ export class Analizador {
     const tempo = await detectarTempo(p, dir)
     if (!this.hooks.obtener(proyectoId)) return // se borro mientras tanto
     p.tempo = tempo
+    // el click pudo detectarse por como suena (no por el nombre): pasa a la izquierda
+    aplicarPaneoAutomatico(p)
     acceso.guardar()
     this.hooks.cambio(p.id)
 

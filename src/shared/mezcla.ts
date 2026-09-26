@@ -47,10 +47,9 @@ export function pareceNombreDeGuia(nombre: string): boolean {
 }
 
 /**
- * ¿Es click o guia? (lo que va al oido izquierdo con "Click y guia a la
- * izquierda"). Manda lo que se marco a mano en la compu; si no, lo que
- * detecto el analisis (la pista del click por como suena, la de la guia) o
- * el nombre de la pista.
+ * ¿Es click o guia? (lo que va al oido izquierdo en el paneo automatico).
+ * Manda la marca de la pista, si tiene; si no, lo que detecto el analisis (la
+ * pista del click por como suena, la de la guia) o el nombre de la pista.
  */
 export function esClickOGuia(proyecto: Pick<Proyecto, 'tempo' | 'analisis'>, pista: Pista): boolean {
   if (pista.rol === 'normal') return false
@@ -59,9 +58,34 @@ export function esClickOGuia(proyecto: Pick<Proyecto, 'tempo' | 'analisis'>, pis
   return pareceNombreDeClick(pista.nombre) || pareceNombreDeGuia(pista.nombre)
 }
 
-/** Ids de las pistas que van a la izquierda con "Click y guia a la izquierda". */
-export function pistasClickYGuia(proyecto: Pick<Proyecto, 'pistas' | 'tempo' | 'analisis'>): Set<string> {
-  return new Set(proyecto.pistas.filter((p) => esClickOGuia(proyecto, p)).map((p) => p.id))
+/** Paneo por defecto (como en los reproductores de multitracks para vivo): click y guia al oido izquierdo... */
+export const PAN_CLICK_GUIA = -100
+/** ...y el resto de la banda al derecho. */
+export const PAN_BANDA = 100
+
+/**
+ * Pone el paneo por defecto en las pistas que no se tocaron a mano (click y
+ * guia en L, el resto en R). Las canciones de antes (sin marca en ninguna
+ * pista) se acomodan solo si nadie toco el paneo (todo al centro); si alguna
+ * estaba paneada a mano, se dejan como estan. Devuelve si cambio algo.
+ */
+export function aplicarPaneoAutomatico(proyecto: Pick<Proyecto, 'pistas' | 'tempo' | 'analisis'>): boolean {
+  let cambio = false
+  const sinMarca = proyecto.pistas.filter((p) => p.panAutomatico === undefined)
+  if (sinMarca.length) {
+    const intactas = sinMarca.every((p) => p.pan === 0)
+    for (const p of sinMarca) p.panAutomatico = intactas
+    cambio = true
+  }
+  for (const p of proyecto.pistas) {
+    if (!p.panAutomatico) continue
+    const pan = esClickOGuia(proyecto, p) ? PAN_CLICK_GUIA : PAN_BANDA
+    if (p.pan !== pan) {
+      p.pan = pan
+      cambio = true
+    }
+  }
+  return cambio
 }
 
 /** Una pista dentro de la mezcla: ganancia lineal final y paneo (-1 izquierda, 1 derecha). */
@@ -74,16 +98,11 @@ export interface CanalMezcla {
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
 
 /**
- * Ganancia y paneo finales de cada pista: fader del director (curva
+ * Ganancia y paneo finales de cada pista: fader y paneo del director (curva
  * cuadratica), mute/solo del director y "Mi mezcla" del dispositivo. Las
  * pistas que no suenan no se incluyen (el servidor ni las lee).
- *
- * `izquierda` ("Click y guia a la izquierda"): esas pistas van todas al oido
- * izquierdo y el resto de la banda al derecho, 3 dB mas bajo (al pasar una
- * pista del centro a un solo lado suena 3 dB mas fuerte de ese lado: asi el
- * volumen queda parejo).
  */
-export function mezclaEfectiva(pistas: Pista[], personal: MezclaPersonal = {}, izquierda: Set<string> | null = null): CanalMezcla[] {
+export function mezclaEfectiva(pistas: Pista[], personal: MezclaPersonal = {}): CanalMezcla[] {
   const haySolo = pistas.some((p) => p.solo)
   const res: CanalMezcla[] = []
   for (const p of pistas) {
@@ -92,8 +111,7 @@ export function mezclaEfectiva(pistas: Pista[], personal: MezclaPersonal = {}, i
     const v = clamp(p.volumen, 0, 100) / 100
     const ganancia = v * v * (ajuste ? clamp(ajuste.ganancia, 0, 2) : 1)
     if (ganancia <= 0) continue
-    if (izquierda) res.push({ pistaId: p.id, ganancia: ganancia * Math.SQRT1_2, pan: izquierda.has(p.id) ? -1 : 1 })
-    else res.push({ pistaId: p.id, ganancia, pan: clamp(p.pan, -100, 100) / 100 })
+    res.push({ pistaId: p.id, ganancia, pan: clamp(p.pan, -100, 100) / 100 })
   }
   return res
 }

@@ -1,7 +1,7 @@
 import type { ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 import { WAV_HEADER_FETCH_BYTES, WavHeaderError, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from '@shared/wav'
 import { posicionActualMs } from '@shared/playback'
-import { codificarMezcla, mezclaEfectiva, pistasClickYGuia } from '@shared/mezcla'
+import { codificarMezcla, mezclaEfectiva } from '@shared/mezcla'
 import type { MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
@@ -144,10 +144,8 @@ export class StreamingEngine implements PlaybackEngine {
   private ctx: AudioContext
   private masterGain: GainNode
   private canales = new Map<string, Canal>()
-  /** la cancion activa, tal como la mezcla la compu (pistas, click y guia detectados) */
+  /** la cancion activa, tal como la mezcla la compu */
   private ultimoProyecto: Proyecto | null = null
-  /** "Click y guia a la izquierda, banda a la derecha" */
-  private clickGuiaIzquierda = false
   private mezclaPersonal: MezclaPersonal = {}
   /** mezcla con la que se piden los segmentos (modo mezcla) */
   private claveMezcla = ''
@@ -231,20 +229,13 @@ export class StreamingEngine implements PlaybackEngine {
     if (this.modo === 'mezcla' && this.precarga) this.reiniciarPrecarga()
   }
 
-  setClickGuiaIzquierda(activo: boolean): void {
-    if (this.clickGuiaIzquierda === activo) return
-    this.clickGuiaIzquierda = activo
-    if (this.ultimoProyecto) this.aplicarMezcla(this.ultimoProyecto)
-    if (this.modo === 'mezcla' && this.precarga) this.reiniciarPrecarga()
-  }
-
   onRequiereResync(cb: () => void): void {
     this.onResyncCb = cb
   }
 
   /** Ganancia y paneo de cada pista en ESTE dispositivo (director + "Mi mezcla" + click y guia a un lado). */
   private mezclaDe(proyecto: Proyecto) {
-    return mezclaEfectiva(proyecto.pistas, this.mezclaPersonal, this.clickGuiaIzquierda ? pistasClickYGuia(proyecto) : null)
+    return mezclaEfectiva(proyecto.pistas, this.mezclaPersonal)
   }
 
   private claveDe(proyecto: Proyecto): string {

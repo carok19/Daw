@@ -20,8 +20,6 @@ export interface PlaybackEngine {
   precargar(proyecto: Proyecto | null, posicionMs?: number): void
   /** mezcla del director de la cancion activa (y su click/guia detectados) */
   aplicarMezcla(proyecto: Proyecto): void
-  /** "Click y guia a la izquierda, banda a la derecha" en este dispositivo */
-  setClickGuiaIzquierda(activo: boolean): void
   /** tiempos (ms) cuyo arranque conviene tener precargado (marcadores) */
   setCues(tiemposMs: number[]): void
 

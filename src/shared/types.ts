@@ -15,10 +15,16 @@ export interface Pista {
   /** color de la pista en la UI (#rrggbb), asignado al importar por orden */
   color: string
   /**
-   * marcada a mano en la compu: 'click'/'guia' van al oido izquierdo con "Click y
-   * guia a la izquierda"; 'normal' = no (aunque el nombre lo parezca). Sin marca: automatico.
+   * 'click'/'guia' = va al oido izquierdo en el paneo automatico; 'normal' = no
+   * (aunque el nombre lo parezca). Sin marca: se detecta sola.
    */
   rol?: RolPista
+  /**
+   * el paneo lo puso la app (click y guia a la izquierda, el resto a la
+   * derecha) y se reacomoda si cambia la deteccion; false = se movio a mano
+   * y no se toca mas. Sin marca: cancion de antes (ver aplicarPaneoAutomatico).
+   */
+  panAutomatico?: boolean
 }
 
 export type RolPista = 'click' | 'guia' | 'normal'

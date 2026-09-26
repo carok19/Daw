@@ -4,6 +4,7 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import type { Proyecto, ProyectoResumen, SetlistResumen } from '../shared/types'
 import { FORMATO_PROYECTO_ACTUAL } from '../shared/types'
+import { aplicarPaneoAutomatico } from '../shared/mezcla'
 import { enParalelo, normalizarAWav } from './audio'
 
 /**
@@ -180,9 +181,11 @@ export function necesitaMigracion(proyecto: Proyecto): boolean {
  * Lleva un proyecto guardado con una version anterior al formato actual:
  * convierte a WAV normalizado las pistas que no lo sean (p.ej. .mp3 que antes
  * no sonaban en los celulares), recalcula la duracion en el servidor y asigna
- * colores. Idempotente.
+ * colores y el paneo por defecto. Idempotente.
  */
 export async function migrarProyecto(proyecto: Proyecto): Promise<Proyecto> {
+  // canciones de antes del paneo automatico: si nadie toco el paneo, click y guia a la izquierda y la banda a la derecha
+  if (aplicarPaneoAutomatico(proyecto)) saveProyecto(proyecto)
   if (!necesitaMigracion(proyecto)) return proyecto
   const dir = projectDir(proyecto.id)
   const duraciones = await enParalelo(proyecto.pistas, 2, async (pista) => {

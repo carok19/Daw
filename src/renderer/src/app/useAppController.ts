@@ -146,7 +146,6 @@ export function useAppController() {
   const [volumenGeneral, setVolumenGeneralState] = useState<number>(() => leerPref('volumen', 100))
   const [ajusteManualMs, setAjusteManualMsState] = useState<number>(() => leerPref('ajuste-fino-ms', 0))
   const [mezclaPersonal, setMezclaPersonalState] = useState<MezclaPersonal>(() => leerPref('mezcla-personal', {}))
-  const [clickIzquierda, setClickIzquierdaState] = useState<boolean>(() => origen === 'celular' && leerPref('click-izquierda', false))
   const [nombreDispositivo, setNombreDispositivoState] = useState<string>(() => leerPref('nombre', ''))
 
   /** la compu pide el codigo de la banda (n: cuantas veces, para reaccionar a cada rechazo) */
@@ -185,8 +184,8 @@ export function useAppController() {
   // espejo del estado, para callbacks/intervalos registrados una sola vez
   const estadoRef = useRef<EstadoCompleto | null>(null)
   estadoRef.current = estado
-  const prefsRef = useRef({ volumenGeneral, ajusteManualMs, mezclaPersonal, clickIzquierda })
-  prefsRef.current = { volumenGeneral, ajusteManualMs, mezclaPersonal, clickIzquierda }
+  const prefsRef = useRef({ volumenGeneral, ajusteManualMs, mezclaPersonal })
+  prefsRef.current = { volumenGeneral, ajusteManualMs, mezclaPersonal }
 
   // diagnostico: con ?debug en la URL se exponen el motor y el estado en window.__mt (pruebas de campo)
   useEffect(() => {
@@ -261,7 +260,6 @@ export function useAppController() {
     engine.setVolumenGeneral(p.volumenGeneral)
     engine.setAjusteManualMs(p.ajusteManualMs)
     engine.setMezclaPersonal(origen === 'celular' ? p.mezclaPersonal : {})
-    engine.setClickGuiaIzquierda(origen === 'celular' && p.clickIzquierda)
     engine.onRequiereResync(() => {
       const socket = socketRef.current
       const actual = estadoRef.current
@@ -556,11 +554,6 @@ export function useAppController() {
           reingresarEnSync(engineRef.current, socket, playback, estadoRef.current?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS)
         }
       },
-      setClickIzquierda(v: boolean): void {
-        setClickIzquierdaState(v)
-        guardarPref('click-izquierda', v)
-        engineRef.current?.setClickGuiaIzquierda(v)
-      },
       setMezclaPersonal(m: MezclaPersonal): void {
         setMezclaPersonalState(m)
         guardarPref('mezcla-personal', m)
@@ -841,7 +834,6 @@ export function useAppController() {
     volumenGeneral,
     ajusteManualMs,
     mezclaPersonal,
-    clickIzquierda,
     nombreDispositivo,
     ...acciones
   }

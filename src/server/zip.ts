@@ -8,6 +8,7 @@ import { colorPorIndice, deleteProyecto, esIdValido, loadProyecto, projectAudioD
 import { EXTENSIONES_AUDIO, enParalelo, normalizarAWav } from './audio'
 import { EXTENSIONES_MARCADORES, marcadoresDelZip } from './analisis/archivos'
 import { clavePista } from './clavePista'
+import { aplicarPaneoAutomatico } from '../shared/mezcla'
 import { baseDeComprimido, ErrorComprimido, extraerComprimido, primerVolumen } from './comprimidos'
 import { esNombreDeFicha, interpretarFicha, leerFicha, rutaFicha, type FichaCancion } from './ficha'
 
@@ -163,7 +164,9 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
         mute: previa?.mute ?? false,
         solo: previa?.solo ?? false,
         color: previa?.color ?? colorPorIndice(i),
-        ...(previa?.rol === 'click' || previa?.rol === 'guia' || previa?.rol === 'normal' ? { rol: previa.rol } : {})
+        ...(previa?.rol === 'click' || previa?.rol === 'guia' || previa?.rol === 'normal' ? { rol: previa.rol } : {}),
+        // pista nueva: paneo automatico (click y guia a la izquierda, la banda a la derecha)
+        ...(!previa ? { panAutomatico: true } : typeof previa.panAutomatico === 'boolean' ? { panAutomatico: previa.panAutomatico } : {})
       }
     })
 
@@ -198,6 +201,8 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
           ? { estado: 'analizando', fuente: 'archivo', guiaPistaId: null }
           : { estado: 'analizando', fuente: null, guiaPistaId: null }
     }
+
+    aplicarPaneoAutomatico(proyecto)
 
     if (anterior) {
       const viejo = `${audioFinal}.viejo-${Date.now()}`
