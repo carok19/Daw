@@ -162,7 +162,8 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
         pan: previa?.pan ?? 0,
         mute: previa?.mute ?? false,
         solo: previa?.solo ?? false,
-        color: previa?.color ?? colorPorIndice(i)
+        color: previa?.color ?? colorPorIndice(i),
+        ...(previa?.rol === 'click' || previa?.rol === 'guia' || previa?.rol === 'normal' ? { rol: previa.rol } : {})
       }
     })
 

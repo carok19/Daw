@@ -18,7 +18,10 @@ export interface PlaybackEngine {
   activarProyecto(proyecto: Proyecto, posicionMs: number): void
   /** baja de a poco el arranque (desde `posicionMs`) de la proxima cancion del setlist (null = ninguna) */
   precargar(proyecto: Proyecto | null, posicionMs?: number): void
-  aplicarMezcla(pistas: Pista[]): void
+  /** mezcla del director de la cancion activa (y su click/guia detectados) */
+  aplicarMezcla(proyecto: Proyecto): void
+  /** "Click y guia a la izquierda, banda a la derecha" en este dispositivo */
+  setClickGuiaIzquierda(activo: boolean): void
   /** tiempos (ms) cuyo arranque conviene tener precargado (marcadores) */
   setCues(tiemposMs: number[]): void
 

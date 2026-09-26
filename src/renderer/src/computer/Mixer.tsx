@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { Ear } from 'lucide-react'
 import type { PatchPista, Pista, Proyecto } from '@shared/types'
+import { esClickOGuia, pareceNombreDeGuia } from '@shared/mezcla'
 import { formatDb, formatPan } from '../format'
 
 /** Mismos colores que asigna el servidor al importar (server/projects.ts). */
@@ -35,6 +37,7 @@ export function Mixer({ proyecto, onUpdate, onReorder }: Props) {
           key={pista.id}
           pista={pista}
           silenciadaPorSolo={haySolo && !pista.solo}
+          clickOGuia={esClickOGuia(proyecto, pista)}
           arrastrando={arrastrando === pista.id}
           destino={destino === pista.id && arrastrando !== pista.id}
           onUpdate={(patch) => onUpdate(pista.id, patch)}
@@ -54,6 +57,7 @@ export function Mixer({ proyecto, onUpdate, onReorder }: Props) {
 function Canal({
   pista,
   silenciadaPorSolo,
+  clickOGuia,
   arrastrando,
   destino,
   onUpdate,
@@ -64,6 +68,8 @@ function Canal({
 }: {
   pista: Pista
   silenciadaPorSolo: boolean
+  /** va al oido izquierdo en los celulares con "Click y guia a la izquierda" */
+  clickOGuia: boolean
   arrastrando: boolean
   destino: boolean
   onUpdate: (patch: PatchPista) => void
@@ -165,6 +171,19 @@ function Canal({
           aria-pressed={pista.solo}
         >
           S
+        </button>
+        <button
+          className={`btn-oido ${clickOGuia ? 'activo' : ''}`}
+          onClick={() => onUpdate({ rol: clickOGuia ? 'normal' : pareceNombreDeGuia(pista.nombre) ? 'guia' : 'click' })}
+          title={
+            clickOGuia
+              ? 'Click/guía: en los celulares con “Click y guía a la izquierda” va al oído izquierdo. Tocá si no lo es.'
+              : 'Tocá si esta pista es click o guía (en los celulares con “Click y guía a la izquierda” va al oído izquierdo)'
+          }
+          aria-pressed={clickOGuia}
+          aria-label={`${pista.nombre}: click o guía`}
+        >
+          <Ear size={14} />
         </button>
       </div>
     </div>

@@ -163,6 +163,8 @@ export class AppState {
     const nombre = limpiarNombre(patch.nombre, 40)
     if (nombre) pista.nombre = nombre
     if (typeof patch.color === 'string' && /^#[0-9a-f]{6}$/i.test(patch.color)) pista.color = patch.color
+    if (patch.rol === null) delete pista.rol
+    else if (patch.rol === 'click' || patch.rol === 'guia' || patch.rol === 'normal') pista.rol = patch.rol
     this.guardarConDebounce(tab.proyecto)
     return pista
   }

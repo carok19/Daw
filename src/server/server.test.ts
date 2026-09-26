@@ -15,7 +15,8 @@ import dgram from 'node:dgram'
 import dnsPacket from 'dns-packet'
 import { responderMdns } from './descubrimiento'
 import { decodePcmSegment, parseWavHeader } from '../shared/wav'
-import { codificarMezcla, coeficientesPaneo, type CanalMezcla } from '../shared/mezcla'
+import { codificarMezcla, coeficientesPaneo, mezclaEfectiva, pistasClickYGuia, type CanalMezcla } from '../shared/mezcla'
+import { fichaDesdeProyecto, interpretarFicha } from './ficha'
 import { wav16 } from './__fixtures__/sintetico'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
@@ -26,6 +27,8 @@ import type {
   DispositivoInfo,
   EstadoCompleto,
   MixerActualizadoPayload,
+  Pista,
+  Proyecto,
   ProyectoResumen,
   SetlistResumen
 } from '../shared/types'
@@ -562,6 +565,48 @@ function wavEstereoConstante(l: number, r: number, segundos: number, sr: number)
   h.writeUInt32LE(data.length, 40)
   return Buffer.concat([h, data])
 }
+
+test('click y guía a la izquierda: se detectan por nombre, por el análisis o a mano; la banda va a la derecha 3 dB más baja', () => {
+  const pista = (id: string, nombre: string, extra: Partial<Pista> = {}): Pista => ({
+    id,
+    nombre,
+    archivo: `${id}.wav`,
+    volumen: 100,
+    pan: 30,
+    mute: false,
+    solo: false,
+    color: '#ffffff',
+    ...extra
+  })
+  const proyecto = {
+    pistas: [
+      pista('a', 'Click 120'),
+      pista('b', 'Voz Guía'),
+      pista('c', 'Metrónomo', { rol: 'normal' }), // marcada a mano como que no
+      pista('d', 'Pista 7'), // es el click segun el analisis (por como suena)
+      pista('e', 'Cues2'), // otra guia, marcada a mano
+      pista('f', 'Bajo'),
+      pista('g', 'Guitarra')
+    ],
+    tempo: { bpm: 120, compas: 4, compasesMs: [], clickPistaId: 'd', acentoClaro: true },
+    analisis: { estado: 'listo' as const, fuente: null, guiaPistaId: null }
+  }
+  proyecto.pistas[4].rol = 'guia'
+  const izq = pistasClickYGuia(proyecto)
+  assert.deepEqual([...izq].sort(), ['a', 'b', 'd', 'e'])
+  const m = new Map(mezclaEfectiva(proyecto.pistas, {}, izq).map((c) => [c.pistaId, c]))
+  assert.equal(m.get('a')!.pan, -1)
+  assert.equal(m.get('f')!.pan, 1)
+  assert.equal(m.get('c')!.pan, 1)
+  assert.ok(Math.abs(m.get('g')!.ganancia - Math.SQRT1_2) < 1e-9, 'la banda va 3 dB más baja (suena de un solo lado)')
+  // sin la opcion: el paneo del director
+  assert.equal(mezclaEfectiva(proyecto.pistas)[0].pan, 0.3)
+  // la marca a mano se guarda en la ficha de la cancion
+  const ficha = interpretarFicha(JSON.stringify(fichaDesdeProyecto({ ...proyecto, id: 'x', nombre: 'x', duracionTotalMs: 1000, marcadores: [] } as unknown as Proyecto)))!
+  assert.equal(ficha.pistas.find((p) => p.nombre === 'Metrónomo')!.rol, 'normal')
+  assert.equal(ficha.pistas.find((p) => p.nombre === 'Cues2')!.rol, 'guia')
+  assert.equal(ficha.pistas.find((p) => p.nombre === 'Bajo')!.rol, undefined)
+})
 
 test('mezcla por celular: la compu arma UNA pista estéreo con la mezcla pedida (paneo, ganancias, otra frecuencia, límite)', async (t) => {
   const env = await entorno(t)

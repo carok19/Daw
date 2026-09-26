@@ -13,13 +13,7 @@ import { ceder } from './decodificar'
 
 export const SR_VOZ = 16000
 
-export function pareceNombreDeGuia(nombre: string): boolean {
-  const n = nombre
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-  return /(^|[^a-z])(guia|guias|guide|guides|cue|cues|cueing|guia hablada|voz guia|spoken)([^a-z]|$)/.test(n)
-}
+export { pareceNombreDeGuia } from '../../shared/mezcla'
 
 export interface Frase {
   inicioMs: number

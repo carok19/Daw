@@ -14,7 +14,14 @@ export interface Pista {
   solo: boolean
   /** color de la pista en la UI (#rrggbb), asignado al importar por orden */
   color: string
+  /**
+   * marcada a mano en la compu: 'click'/'guia' van al oido izquierdo con "Click y
+   * guia a la izquierda"; 'normal' = no (aunque el nombre lo parezca). Sin marca: automatico.
+   */
+  rol?: RolPista
 }
+
+export type RolPista = 'click' | 'guia' | 'normal'
 
 export interface Marcador {
   id: string
@@ -313,7 +320,7 @@ export interface MarcadorRestaurarPayload {
   marcador: Marcador
 }
 
-export type PatchPista = Partial<Pick<Pista, 'volumen' | 'pan' | 'mute' | 'solo' | 'nombre' | 'color'>>
+export type PatchPista = Partial<Pick<Pista, 'volumen' | 'pan' | 'mute' | 'solo' | 'nombre' | 'color'>> & { rol?: RolPista | null }
 
 export interface MixerActualizarPayload {
   pistaId: string

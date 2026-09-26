@@ -111,14 +111,7 @@ export function puntajeClick(golpes: Golpe[], silencio: number): number {
 
 export const PUNTAJE_MIN_CLICK = 0.45
 
-/** Nombres tipicos de la pista de click. */
-export function pareceNombreDeClick(nombre: string): boolean {
-  const n = nombre
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-  return /(^|[^a-z])(click|clic|clik|clk|metronomo|metronome|metro)([^a-z]|$)/.test(n)
-}
+export { pareceNombreDeClick } from '../../shared/mezcla'
 
 /**
  * Tempo, compas y tiempos fuertes a partir de los golpes del click.

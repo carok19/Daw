@@ -18,6 +18,7 @@ import type {
   MotivoCodigo,
   OrigenCliente,
   PatchPista,
+  Pista,
   PlaybackState,
   Proyecto,
   ProyectoResumen,
@@ -144,6 +145,7 @@ export function useAppController() {
   const [volumenGeneral, setVolumenGeneralState] = useState<number>(() => leerPref('volumen', 100))
   const [ajusteManualMs, setAjusteManualMsState] = useState<number>(() => leerPref('ajuste-fino-ms', 0))
   const [mezclaPersonal, setMezclaPersonalState] = useState<MezclaPersonal>(() => leerPref('mezcla-personal', {}))
+  const [clickIzquierda, setClickIzquierdaState] = useState<boolean>(() => origen === 'celular' && leerPref('click-izquierda', false))
   const [nombreDispositivo, setNombreDispositivoState] = useState<string>(() => leerPref('nombre', ''))
 
   /** la compu pide el codigo de la banda (n: cuantas veces, para reaccionar a cada rechazo) */
@@ -178,8 +180,8 @@ export function useAppController() {
   // espejo del estado, para callbacks/intervalos registrados una sola vez
   const estadoRef = useRef<EstadoCompleto | null>(null)
   estadoRef.current = estado
-  const prefsRef = useRef({ volumenGeneral, ajusteManualMs, mezclaPersonal })
-  prefsRef.current = { volumenGeneral, ajusteManualMs, mezclaPersonal }
+  const prefsRef = useRef({ volumenGeneral, ajusteManualMs, mezclaPersonal, clickIzquierda })
+  prefsRef.current = { volumenGeneral, ajusteManualMs, mezclaPersonal, clickIzquierda }
 
   // diagnostico: con ?debug en la URL se exponen el motor y el estado en window.__mt (pruebas de campo)
   useEffect(() => {
@@ -219,7 +221,7 @@ export function useAppController() {
         reingresarEnSync(engine, socket, nuevo.playbackActivo, nuevo.activeTabId ?? '', margenReingreso, proyecto.tempo?.compasesMs)
       }
     } else {
-      engine.aplicarMezcla(proyecto.pistas)
+      engine.aplicarMezcla(proyecto)
       engine.setCues(proyecto.marcadores.map((m) => m.tiempoMs))
       if (reconciliar) {
         const pb = nuevo.playbackActivo
@@ -254,6 +256,7 @@ export function useAppController() {
     engine.setVolumenGeneral(p.volumenGeneral)
     engine.setAjusteManualMs(p.ajusteManualMs)
     engine.setMezclaPersonal(origen === 'celular' ? p.mezclaPersonal : {})
+    engine.setClickGuiaIzquierda(origen === 'celular' && p.clickIzquierda)
     engine.onRequiereResync(() => {
       const socket = socketRef.current
       const actual = estadoRef.current
@@ -330,7 +333,7 @@ export function useAppController() {
         estadoRef.current = nuevo
         setEstado(nuevo)
         if (engineRef.current?.proyectoIdCargado === m.proyectoId && nuevo.proyectoActivo) {
-          engineRef.current.aplicarMezcla(nuevo.proyectoActivo.pistas)
+          engineRef.current.aplicarMezcla(nuevo.proyectoActivo)
         }
       }),
       socket.onRechazado((err) => avisar({ tipo: 'error', texto: err.mensaje })),
@@ -534,6 +537,11 @@ export function useAppController() {
           reingresarEnSync(engineRef.current, socket, playback, estadoRef.current?.activeTabId ?? '', MARGEN_RESYNC_DURO_MS)
         }
       },
+      setClickIzquierda(v: boolean): void {
+        setClickIzquierdaState(v)
+        guardarPref('click-izquierda', v)
+        engineRef.current?.setClickGuiaIzquierda(v)
+      },
       setMezclaPersonal(m: MezclaPersonal): void {
         setMezclaPersonalState(m)
         guardarPref('mezcla-personal', m)
@@ -627,10 +635,14 @@ export function useAppController() {
         const proyecto = actual?.proyectoActivo
         const pista = proyecto?.pistas.find((p) => p.id === pistaId)
         if (actual && proyecto && pista) {
-          const nuevo = conPistaActualizada(actual, { proyectoId: proyecto.id, pista: { ...pista, ...patch } })
+          const { rol, ...resto } = patch
+          const cambiada: Pista = { ...pista, ...resto }
+          if (rol === null) delete cambiada.rol
+          else if (rol) cambiada.rol = rol
+          const nuevo = conPistaActualizada(actual, { proyectoId: proyecto.id, pista: cambiada })
           estadoRef.current = nuevo
           setEstado(nuevo)
-          if (engineRef.current?.proyectoIdCargado === proyecto.id) engineRef.current.aplicarMezcla(nuevo.proyectoActivo!.pistas)
+          if (engineRef.current?.proyectoIdCargado === proyecto.id) engineRef.current.aplicarMezcla(nuevo.proyectoActivo!)
         }
         mixerPendiente.current.set(pistaId, { ...mixerPendiente.current.get(pistaId), ...patch })
         if (!mixerTimer.current) mixerTimer.current = setTimeout(flushMixer, THROTTLE_MIXER_MS)
@@ -793,6 +805,7 @@ export function useAppController() {
     volumenGeneral,
     ajusteManualMs,
     mezclaPersonal,
+    clickIzquierda,
     nombreDispositivo,
     ...acciones
   }

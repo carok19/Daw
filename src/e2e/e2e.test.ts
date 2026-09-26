@@ -666,6 +666,41 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     assert.deepEqual(pedidosMedia, [], 'el celular no baja pistas sueltas')
   })
 
+  await t.test('celular: click y guía a la izquierda y la banda a la derecha; en la compu se marcan a mano', async () => {
+    const cel = celulares[1]
+    const tab = server.state.getActiveTab()!
+    const id = (nombre: string): string => tab.proyecto.pistas.find((p) => p.nombre === nombre)!.id
+    // paneo (en centesimos) que el celular le pide a la compu para cada pista
+    const paneos = async (): Promise<Record<string, number>> => {
+      const clave = await cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): { clave: string } } } } }).__mt.engineRef.current.diagnostico().clave)
+      return Object.fromEntries(clave.split('.').filter(Boolean).map((c) => [c.split('_')[0], Number(c.split('_')[2])]))
+    }
+    async function esperarPaneos(esperado: Record<string, number>): Promise<void> {
+      for (let i = 0; i < 40; i++) {
+        const p = await paneos()
+        if (Object.entries(esperado).every(([k, v]) => p[k] === v)) return
+        await esperar(150)
+      }
+      assert.deepEqual(await paneos(), esperado)
+    }
+    await cel.getByRole('switch', { name: /Click y guía a la izquierda/ }).click()
+    // el click se detecto por como suena; "Posicion" y "Pad" son banda
+    await cel.getByText('Izquierda: Click. Derecha: el resto de la banda.').waitFor()
+    await esperarPaneos({ [id('Click')]: -100, [id('Posicion')]: 100, [id('Pad')]: 100 })
+    assert.equal(await cel.locator('.m-canal-lado', { hasText: 'izq.' }).count(), 1)
+
+    // en la compu: "Pad" se marca como guia y el "Click" como que no lo es
+    await compu.getByRole('button', { name: 'Pad: click o guía' }).click()
+    await compu.getByRole('button', { name: 'Click: click o guía' }).click()
+    await esperarPaneos({ [id('Click')]: 100, [id('Posicion')]: 100, [id('Pad')]: -100 })
+    await cel.getByText('Izquierda: Pad. Derecha: el resto de la banda.').waitFor()
+    assert.equal(server.state.getActiveTab()!.proyecto.pistas.find((p) => p.nombre === 'Click')!.rol, 'normal')
+
+    // se apaga: vuelve el paneo del director
+    await cel.getByRole('switch', { name: /Click y guía a la izquierda/ }).click()
+    await esperarPaneos({ [id('Click')]: 0, [id('Posicion')]: 0, [id('Pad')]: 0 })
+  })
+
   await t.test('WiFi lento (3 Mbps): con la mezcla de la compu suena sin cortes; con 8 pistas sueltas no alcanza', async (tt) => {
     // cancion "pesada": 8 pistas estereo (L != R, no se pasan a mono) = 11 Mbps con pistas sueltas, 1,4 con la mezcla
     const SEG = 24

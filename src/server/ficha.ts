@@ -24,7 +24,7 @@ export interface FichaCancion {
   marcadores: Pick<Marcador, 'nombre' | 'tiempoMs' | 'origen' | 'color'>[]
   seccionesEditadas: boolean
   /** mezcla por nombre de pista (los ids de pista se regeneran al importar) */
-  pistas: Pick<Pista, 'nombre' | 'volumen' | 'pan' | 'mute' | 'solo' | 'color'>[]
+  pistas: Pick<Pista, 'nombre' | 'volumen' | 'pan' | 'mute' | 'solo' | 'color' | 'rol'>[]
   tempo: TempoProyecto | null
   fuenteSecciones: 'archivo' | 'guia' | null
 }
@@ -46,7 +46,7 @@ export function fichaDesdeProyecto(p: Proyecto): FichaCancion {
     duracionTotalMs: p.duracionTotalMs,
     marcadores: p.marcadores.map(({ nombre, tiempoMs, origen, color }) => ({ nombre, tiempoMs, origen, ...(color ? { color } : {}) })),
     seccionesEditadas: !!p.seccionesEditadas,
-    pistas: p.pistas.map(({ nombre, volumen, pan, mute, solo, color }) => ({ nombre, volumen, pan, mute, solo, color })),
+    pistas: p.pistas.map(({ nombre, volumen, pan, mute, solo, color, rol }) => ({ nombre, volumen, pan, mute, solo, color, ...(rol ? { rol } : {}) })),
     tempo: p.tempo ?? null,
     fuenteSecciones: p.analisis?.fuente ?? null
   }
@@ -60,7 +60,12 @@ export function interpretarFicha(texto: string): FichaCancion | null {
     const marcadores = f.marcadores.filter(
       (m) => m && typeof m.nombre === 'string' && typeof m.tiempoMs === 'number' && Number.isFinite(m.tiempoMs) && m.tiempoMs >= 0
     )
-    const pistas = f.pistas.filter((p) => p && typeof p.nombre === 'string')
+    const pistas = f.pistas
+      .filter((p) => p && typeof p.nombre === 'string')
+      .map((p) => {
+        const { rol, ...resto } = p
+        return rol === 'click' || rol === 'guia' || rol === 'normal' ? { ...resto, rol } : resto
+      })
     const tempo =
       f.tempo && typeof f.tempo.bpm === 'number' && Array.isArray(f.tempo.compasesMs) && f.tempo.compasesMs.every((c) => typeof c === 'number')
         ? f.tempo

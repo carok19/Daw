@@ -1,4 +1,4 @@
-import type { Pista } from './types'
+import type { Pista, Proyecto } from './types'
 
 /**
  * Mezcla hecha en la compu para cada celular: en vez de bajar todas las
@@ -30,6 +30,40 @@ export function clavePista(nombre: string): string {
     .trim()
 }
 
+const sinAcentos = (nombre: string): string =>
+  nombre
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+
+/** Nombres tipicos de la pista de click. */
+export function pareceNombreDeClick(nombre: string): boolean {
+  return /(^|[^a-z])(click|clic|clik|clk|metronomo|metronome|metro)([^a-z]|$)/.test(sinAcentos(nombre))
+}
+
+/** Nombres tipicos de la pista de voz guia (la que anuncia "Verso", "Coro"...). */
+export function pareceNombreDeGuia(nombre: string): boolean {
+  return /(^|[^a-z])(guia|guias|guide|guides|cue|cues|cueing|guia hablada|voz guia|spoken)([^a-z]|$)/.test(sinAcentos(nombre))
+}
+
+/**
+ * ¿Es click o guia? (lo que va al oido izquierdo con "Click y guia a la
+ * izquierda"). Manda lo que se marco a mano en la compu; si no, lo que
+ * detecto el analisis (la pista del click por como suena, la de la guia) o
+ * el nombre de la pista.
+ */
+export function esClickOGuia(proyecto: Pick<Proyecto, 'tempo' | 'analisis'>, pista: Pista): boolean {
+  if (pista.rol === 'normal') return false
+  if (pista.rol === 'click' || pista.rol === 'guia') return true
+  if (proyecto.tempo?.clickPistaId === pista.id || proyecto.analisis?.guiaPistaId === pista.id) return true
+  return pareceNombreDeClick(pista.nombre) || pareceNombreDeGuia(pista.nombre)
+}
+
+/** Ids de las pistas que van a la izquierda con "Click y guia a la izquierda". */
+export function pistasClickYGuia(proyecto: Pick<Proyecto, 'pistas' | 'tempo' | 'analisis'>): Set<string> {
+  return new Set(proyecto.pistas.filter((p) => esClickOGuia(proyecto, p)).map((p) => p.id))
+}
+
 /** Una pista dentro de la mezcla: ganancia lineal final y paneo (-1 izquierda, 1 derecha). */
 export interface CanalMezcla {
   pistaId: string
@@ -43,8 +77,13 @@ const clamp = (v: number, min: number, max: number): number => Math.min(max, Mat
  * Ganancia y paneo finales de cada pista: fader del director (curva
  * cuadratica), mute/solo del director y "Mi mezcla" del dispositivo. Las
  * pistas que no suenan no se incluyen (el servidor ni las lee).
+ *
+ * `izquierda` ("Click y guia a la izquierda"): esas pistas van todas al oido
+ * izquierdo y el resto de la banda al derecho, 3 dB mas bajo (al pasar una
+ * pista del centro a un solo lado suena 3 dB mas fuerte de ese lado: asi el
+ * volumen queda parejo).
  */
-export function mezclaEfectiva(pistas: Pista[], personal: MezclaPersonal = {}): CanalMezcla[] {
+export function mezclaEfectiva(pistas: Pista[], personal: MezclaPersonal = {}, izquierda: Set<string> | null = null): CanalMezcla[] {
   const haySolo = pistas.some((p) => p.solo)
   const res: CanalMezcla[] = []
   for (const p of pistas) {
@@ -53,7 +92,8 @@ export function mezclaEfectiva(pistas: Pista[], personal: MezclaPersonal = {}): 
     const v = clamp(p.volumen, 0, 100) / 100
     const ganancia = v * v * (ajuste ? clamp(ajuste.ganancia, 0, 2) : 1)
     if (ganancia <= 0) continue
-    res.push({ pistaId: p.id, ganancia, pan: clamp(p.pan, -100, 100) / 100 })
+    if (izquierda) res.push({ pistaId: p.id, ganancia: ganancia * Math.SQRT1_2, pan: izquierda.has(p.id) ? -1 : 1 })
+    else res.push({ pistaId: p.id, ganancia, pan: clamp(p.pan, -100, 100) / 100 })
   }
   return res
 }

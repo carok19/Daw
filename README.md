@@ -144,6 +144,14 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
    suelto no cambia nada (doble toque: vuelve a “igual”). La canción, la
    sección y el transporte van en una **barra flotante** abajo, con las
    secciones y las canciones del setlist a un toque.
+   **Click y guía a la izquierda** (arriba de *Mi mezcla*): el click y la
+   guía van al oído izquierdo y el resto de la banda al derecho, con el
+   volumen compensado (lo que queda de un solo lado no suena más fuerte).
+   Cada músico lo prende o no en su celular. El click y la guía se detectan
+   solos (el click por cómo suena, la guía y los nombres típicos: *Click*,
+   *Metrónomo*, *Guía*, *Guide*, *Cues*…); en la compu, el botón con la oreja
+   de cada pista los marca o desmarca a mano, y queda guardado en la ficha de
+   la canción.
 9. **Elegir una sección con la canción sonando** no corta: la sección
    actual termina y la música sigue directo en la elegida (se ve “→ Coro en
    5 s” en la compu y en los celulares). Se puede cambiar por otra, o

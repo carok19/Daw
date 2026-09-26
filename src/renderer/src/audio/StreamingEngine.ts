@@ -1,8 +1,8 @@
 import type { ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 import { WAV_HEADER_FETCH_BYTES, WavHeaderError, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from '@shared/wav'
 import { posicionActualMs } from '@shared/playback'
-import { codificarMezcla, mezclaEfectiva } from '@shared/mezcla'
-import { clavePista, type MezclaPersonal, type PlaybackEngine } from './PlaybackEngine'
+import { codificarMezcla, mezclaEfectiva, pistasClickYGuia } from '@shared/mezcla'
+import type { MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
   BUFFER_MIN_START_SEC,
@@ -144,7 +144,10 @@ export class StreamingEngine implements PlaybackEngine {
   private ctx: AudioContext
   private masterGain: GainNode
   private canales = new Map<string, Canal>()
-  private ultimasPistas: Pista[] = []
+  /** la cancion activa, tal como la mezcla la compu (pistas, click y guia detectados) */
+  private ultimoProyecto: Proyecto | null = null
+  /** "Click y guia a la izquierda, banda a la derecha" */
+  private clickGuiaIzquierda = false
   private mezclaPersonal: MezclaPersonal = {}
   /** mezcla con la que se piden los segmentos (modo mezcla) */
   private claveMezcla = ''
@@ -224,7 +227,14 @@ export class StreamingEngine implements PlaybackEngine {
 
   setMezclaPersonal(mezcla: MezclaPersonal): void {
     this.mezclaPersonal = mezcla
-    this.aplicarMezcla(this.ultimasPistas)
+    if (this.ultimoProyecto) this.aplicarMezcla(this.ultimoProyecto)
+    if (this.modo === 'mezcla' && this.precarga) this.reiniciarPrecarga()
+  }
+
+  setClickGuiaIzquierda(activo: boolean): void {
+    if (this.clickGuiaIzquierda === activo) return
+    this.clickGuiaIzquierda = activo
+    if (this.ultimoProyecto) this.aplicarMezcla(this.ultimoProyecto)
     if (this.modo === 'mezcla' && this.precarga) this.reiniciarPrecarga()
   }
 
@@ -232,8 +242,13 @@ export class StreamingEngine implements PlaybackEngine {
     this.onResyncCb = cb
   }
 
-  private claveDe(pistas: Pista[]): string {
-    return this.modo === 'mezcla' ? codificarMezcla(mezclaEfectiva(pistas, this.mezclaPersonal)) : ''
+  /** Ganancia y paneo de cada pista en ESTE dispositivo (director + "Mi mezcla" + click y guia a un lado). */
+  private mezclaDe(proyecto: Proyecto) {
+    return mezclaEfectiva(proyecto.pistas, this.mezclaPersonal, this.clickGuiaIzquierda ? pistasClickYGuia(proyecto) : null)
+  }
+
+  private claveDe(proyecto: Proyecto): string {
+    return this.modo === 'mezcla' ? codificarMezcla(this.mezclaDe(proyecto)) : ''
   }
 
   private crearCanal(id: string, nombre: string, archivo: string | null): Canal {
@@ -297,9 +312,9 @@ export class StreamingEngine implements PlaybackEngine {
         }
         this.canales.set(f.id, canal)
       }
-      this.claveMezcla = this.claveDeseada = this.claveDe(proyecto.pistas)
+      this.claveMezcla = this.claveDeseada = this.claveDe(proyecto)
     }
-    this.aplicarMezcla(proyecto.pistas)
+    this.aplicarMezcla(proyecto)
     this.setCues(proyecto.marcadores.map((m) => m.tiempoMs))
     if (!this.reproduciendo) this.prepararEn(posicionMs)
   }
@@ -311,7 +326,7 @@ export class StreamingEngine implements PlaybackEngine {
       return
     }
     const indiceInicio = Math.floor(Math.max(0, posicionMs) / 1000 / SEGMENT_DURATION_SEC)
-    const clave = this.claveDe(proyecto.pistas)
+    const clave = this.claveDe(proyecto)
     const pre = this.precarga
     if (pre?.proyectoId === proyecto.id && pre.revision === revision && pre.indiceInicio === indiceInicio && pre.clave === clave) return
     this.cancelarPrecarga()
@@ -342,26 +357,24 @@ export class StreamingEngine implements PlaybackEngine {
     this.precarga = null
   }
 
-  aplicarMezcla(pistasProyecto: Pista[]): void {
-    this.ultimasPistas = pistasProyecto
+  aplicarMezcla(proyecto: Proyecto): void {
+    if (proyecto.id !== this.proyectoId) return
+    this.ultimoProyecto = proyecto
     if (this.modo === 'mezcla') {
-      this.pedirCambioDeMezcla(this.claveDe(pistasProyecto))
+      this.pedirCambioDeMezcla(this.claveDe(proyecto))
       return
     }
-    const haySolo = pistasProyecto.some((p) => p.solo)
+    // pistas sueltas: la misma cuenta que hace la compu para los celulares (curva de fader, mute/solo, "Mi mezcla")
+    const mezcla = new Map(this.mezclaDe(proyecto).map((c) => [c.pistaId, c]))
     const t = this.ctx.currentTime
-    for (const pista of pistasProyecto) {
+    for (const pista of proyecto.pistas) {
       const canal = this.canales.get(pista.id)
       if (!canal) continue
       canal.nombre = pista.nombre
-      const personal = this.mezclaPersonal[clavePista(pista.nombre)]
-      const silenciado = pista.mute || (haySolo && !pista.solo) || !!personal?.mute
-      const v = clamp(pista.volumen, 0, 100) / 100
-      // curva de fader tipo audio (cuadratica): el recorrido del fader se siente parejo al oido
-      const ganancia = silenciado ? 0 : v * v * (personal ? clamp(personal.ganancia, 0, 2) : 1)
+      const c = mezcla.get(pista.id)
       // rampa corta: sin "clicks" al mover un fader o mutear
-      canal.gainNode.gain.setTargetAtTime(ganancia, t, 0.015)
-      canal.pannerNode?.pan.setTargetAtTime(clamp(pista.pan, -100, 100) / 100, t, 0.015)
+      canal.gainNode.gain.setTargetAtTime(c?.ganancia ?? 0, t, 0.015)
+      canal.pannerNode?.pan.setTargetAtTime(c?.pan ?? clamp(pista.pan, -100, 100) / 100, t, 0.015)
     }
   }
 
