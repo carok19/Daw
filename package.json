@@ -51,11 +51,11 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
   },
-  "productName": "Multitrack Alabanza",
-  "author": "Multitrack Alabanza",
+  "productName": "AirTracks Wireless Monitor",
+  "author": "AirTracks",
   "build": {
     "appId": "com.multitrack.alabanza",
-    "productName": "Multitrack Alabanza",
+    "productName": "AirTracks Wireless Monitor",
     "directories": {
       "output": "dist"
     },
@@ -75,8 +75,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Multitrack Alabanza",
-      "artifactName": "Multitrack-Alabanza-Instalador.${ext}",
+      "shortcutName": "AirTracks Wireless Monitor",
+      "artifactName": "AirTracks-Wireless-Monitor-Instalador.${ext}",
       "include": "build/installer.nsh"
     },
     "mac": {
@@ -100,7 +100,7 @@
         "from": "extras",
         "to": "extras",
         "filter": [
-          "alabanza.apk"
+          "airtracks.apk"
         ]
       }
     ]

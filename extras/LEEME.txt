@@ -1,9 +1,9 @@
-Acá va la app Android (alabanza.apk) para incluirla en el instalador: la compu
-se la ofrece a los celulares en http://IP:4848/app/alabanza.apk (botón
+Acá va la app Android (airtracks.apk) para incluirla en el instalador: la compu
+se la ofrece a los celulares en http://IP:4848/app/airtracks.apk (botón
 "Bajar la app para Android" y mensaje de "Invitar").
 
 GitHub Actions la arma y la copia acá sola antes de armar el instalador. A mano:
 
     gradle -p android assembleRelease
-    copiar android/app/build/outputs/apk/release/app-release.apk a extras/alabanza.apk
+    copiar android/app/build/outputs/apk/release/app-release.apk a extras/airtracks.apk
     npm run dist

@@ -264,7 +264,7 @@ export interface DatosInvitacion {
   url: string
   /** http://IP, si la compu pudo usar el puerto 80 */
   urlCorta: string | null
-  /** http://alabanza.local(:puerto): no cambia aunque cambie la IP (iPhone y la app Android) */
+  /** http://airtracks.local(:puerto): no cambia aunque cambie la IP (iPhone y la app Android) */
   urlFija: string
   codigo: string | null
   wifi: { ssid: string; clave: string } | null

@@ -122,7 +122,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
 
       {!controller.audioActivo && mostrarActivar && (
         <div className="activar">
-          <h1>{proyecto?.nombre ?? 'Multitrack Alabanza'}</h1>
+          <h1>{proyecto?.nombre ?? 'AirTracks'}</h1>
           <p>Conectá los auriculares y tocá el botón. La pantalla va a quedar encendida mientras uses la app.</p>
           <button className="activar-boton" onClick={empezar}>
             <Headphones size={40} />

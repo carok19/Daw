@@ -36,7 +36,7 @@ export function enPantallaDeInicio(): boolean {
   return window.matchMedia?.('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone === true
 }
 
-/** La pagina se abrio con una IP ("192.168.1.35"), no con un nombre (alabanza.local). */
+/** La pagina se abrio con una IP ("192.168.1.35"), no con un nombre (airtracks.local). */
 export function abiertaPorIp(): boolean {
   return /^\d+\.\d+\.\d+\.\d+$/.test(window.location.hostname)
 }
@@ -92,7 +92,7 @@ export function mensajeInvitacion(d: DatosInvitacion): string {
     `Para escuchar la pista en tu celular: conectate al WiFi${d.wifi ? ` “${d.wifi.ssid}”` : ' de la iglesia'} y abrí ${enlaceConCodigo(d.url, d.codigo)}`
   ]
   if (d.codigo) partes.push(`Código de la banda: ${d.codigo}`)
-  if (d.apk) partes.push(`Con Android podés bajar la app (encuentra la compu sola): ${d.url}/app/alabanza.apk`)
+  if (d.apk) partes.push(`Con Android podés bajar la app (encuentra la compu sola): ${d.url}/app/airtracks.apk`)
   return partes.join('\n\n')
 }
 

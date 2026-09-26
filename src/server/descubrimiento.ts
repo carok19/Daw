@@ -6,24 +6,32 @@ import { ipParaCliente } from './network'
 /**
  * Como encuentran los celulares a la compu sin QR (todo por el WiFi, sin internet):
  *
- *  - Nombre fijo "alabanza.local" (mDNS/Bonjour): la compu responde con su IP
+ *  - Nombre fijo "airtracks.local" (mDNS/Bonjour): la compu responde con su IP
  *    a quien pregunte por ese nombre. En iPhone funciona en Safari, asi que
  *    el icono guardado en la pantalla de inicio anda aunque cambie la IP.
+ *    Tambien contesta "alabanza.local", el de antes del cambio de nombre
+ *    (iconos ya guardados, hojas impresas).
  *  - Servicio "_multitrack._tcp" (mDNS): lo busca la app Android (NsdManager).
  *  - Pregunta por difusion UDP ("MULTITRACK-ALABANZA?" al puerto 48480): el
  *    respaldo de la app Android para los celulares o routers donde mDNS falla.
+ *
+ * El servicio, la pregunta UDP y `app=multitrack-alabanza` son ids internos
+ * (de cuando la app se llamaba Multitrack Alabanza): no cambiarlos, los buscan
+ * las apps Android ya instaladas.
  *
  * A cada uno se le responde con la IP de la compu que esta en SU misma red
  * (una compu con varios adaptadores no da una IP inalcanzable).
  */
 
-export const NOMBRE_FIJO = 'alabanza.local'
+export const NOMBRE_FIJO = 'airtracks.local'
+/** nombres de antes que se siguen contestando */
+export const NOMBRES_ANTERIORES = ['alabanza.local']
 export const TIPO_SERVICIO = '_multitrack._tcp.local'
 export const PUERTO_DESCUBRIMIENTO = 48480
 export const PREGUNTA_UDP = 'MULTITRACK-ALABANZA?'
 
 export interface InfoAnuncio {
-  /** nombre visible ("Multitrack Alabanza · PC-IGLESIA") */
+  /** nombre visible ("AirTracks · PC-IGLESIA") */
   nombre: string
   puerto: number
   id: string
@@ -66,6 +74,7 @@ export function responderMdns(
     const nombre = q.name.toLowerCase().replace(/\.$/, '')
     const tipo = q.type
     if (nombre === NOMBRE_FIJO && (tipo === 'A' || tipo === 'ANY')) answers.push(a)
+    else if (NOMBRES_ANTERIORES.includes(nombre) && (tipo === 'A' || tipo === 'ANY')) answers.push({ ...a, name: nombre })
     else if (nombre === TIPO_SERVICIO && (tipo === 'PTR' || tipo === 'ANY')) {
       answers.push(ptr)
       additionals.push(srv, txt, a)

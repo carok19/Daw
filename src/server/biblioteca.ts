@@ -18,10 +18,11 @@ function firmaDe(abs: string): { size: number; mtimeMs: number } {
 }
 
 /**
- * Biblioteca en carpetas: una carpeta (por defecto Documentos/Multitrack
- * Alabanza) donde cada .zip es una cancion. Se vigila sola: un zip nuevo se
- * importa, uno reemplazado se reimporta (conservando mezcla y secciones
- * puestas a mano), uno movido de subcarpeta cambia de categoria. Las
+ * Biblioteca en carpetas: una carpeta (por defecto Documentos/AirTracks, o
+ * Documentos/Multitrack Alabanza si ya existia de antes) donde cada .zip es
+ * una cancion. Se vigila sola: un zip nuevo se importa, uno reemplazado se
+ * reimporta (conservando mezcla y secciones puestas a mano), uno movido de
+ * subcarpeta cambia de categoria. Las
  * subcarpetas ("Adoración", "Navidad/2024") son las categorias de la lista.
  *
  * Nunca importa mientras suena una cancion (la conversion usa CPU y disco):

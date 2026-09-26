@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, shell } from 'electron'
 import { createServer, type AppServer } from '../server'
@@ -9,6 +10,12 @@ const PUERTO_PREFERIDO = 4848
 let mainWindow: BrowserWindow | null = null
 let server: AppServer | null = null
 let puertoActivo = PUERTO_PREFERIDO
+
+// La app antes se llamaba "Multitrack Alabanza": si ya estaba instalada, se siguen usando sus carpetas
+// (preferencias de la compu y canciones), asi al actualizar no se pierde nada.
+const NOMBRE_ANTERIOR = 'Multitrack Alabanza'
+const datosAnteriores = path.join(app.getPath('appData'), NOMBRE_ANTERIOR)
+if (fs.existsSync(datosAnteriores)) app.setPath('userData', datosAnteriores)
 
 // una sola instancia: dos copias de la app pelearian por el puerto y por el setlist
 const tieneLock = app.requestSingleInstanceLock()
@@ -30,7 +37,7 @@ async function crearVentana(url: string): Promise<void> {
     minWidth: 1024,
     minHeight: 640,
     backgroundColor: '#0e1016',
-    title: 'Multitrack Alabanza',
+    title: 'AirTracks Wireless Monitor',
     icon: path.join(__dirname, '../renderer/apple-touch-icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
@@ -69,7 +76,8 @@ app.whenReady().then(async () => {
   server = createServer(rendererDir, { dirModelos, dirExtras, version: app.getVersion() })
   await server.restaurarSesion()
   puertoActivo = await server.start(PUERTO_PREFERIDO)
-  server.iniciarServicios(path.join(app.getPath('documents'), 'Multitrack Alabanza'))
+  const bibliotecaAnterior = path.join(app.getPath('documents'), NOMBRE_ANTERIOR)
+  server.iniciarServicios(fs.existsSync(bibliotecaAnterior) ? bibliotecaAnterior : path.join(app.getPath('documents'), 'AirTracks'))
 
   // la pantalla de la compu no se apaga ni entra en reposo mientras la app esta abierta
   powerSaveBlocker.start('prevent-display-sleep')

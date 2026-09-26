@@ -1,4 +1,8 @@
-# App Android de Multitrack Alabanza
+# App Android de AirTracks Wireless Monitor
+
+(Antes se llamaba Multitrack Alabanza: el paquete `com.multitrack.alabanza`, la
+firma y el puente `window.AlabanzaApp` siguen iguales para que la app ya
+instalada se actualice sin desinstalarla.)
 
 App chiquita (Java, sin librerías externas) que:
 
@@ -16,7 +20,7 @@ App chiquita (Java, sin librerías externas) que:
 
 La arma GitHub Actions (`.github/workflows/instaladores.yml`) y la publica en
 la página de Descargas junto con el instalador de Windows. La compu la ofrece
-a los celulares en `http://IP:4848/app/alabanza.apk`.
+a los celulares en `http://IP:4848/app/airtracks.apk`.
 
 A mano (con el SDK de Android y JDK 17):
 

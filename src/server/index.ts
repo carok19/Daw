@@ -40,7 +40,7 @@ export interface AppServer {
   /**
    * Arranca la biblioteca (carpeta vigilada), retoma los analisis que
    * quedaron a medias y deja a la compu "encontrable" por los celulares
-   * (alabanza.local, la app Android y la direccion corta en el puerto 80).
+   * (airtracks.local, la app Android y la direccion corta en el puerto 80).
    */
   iniciarServicios(bibliotecaPorDefecto: string | null, opciones?: OpcionesServicios): void
   /** ajustes de conexion (codigo de la banda, WiFi) */
@@ -51,7 +51,7 @@ export interface AppServer {
 }
 
 export interface OpcionesServicios {
-  /** anunciarse por mDNS (alabanza.local) y responder a la busqueda de la app Android (por defecto si) */
+  /** anunciarse por mDNS (airtracks.local) y responder a la busqueda de la app Android (por defecto si) */
   descubrimiento?: boolean
   /** puertos del descubrimiento (los tests usan otros) */
   puertoMdns?: number
@@ -66,7 +66,7 @@ export interface OpcionesServidor {
   dirModelos?: string | null
   /** analizar tempo/secciones al importar (por defecto si; los tests que no lo prueban lo apagan) */
   analisisAutomatico?: boolean
-  /** carpeta con la app Android (alabanza.apk) incluida en el instalador (resources/extras) */
+  /** carpeta con la app Android (airtracks.apk) incluida en el instalador (resources/extras) */
   dirExtras?: string | null
   /** version de la app (se informa a la app Android) */
   version?: string
@@ -91,24 +91,27 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
   const ajustes = leerAjustes()
   const licencias = new Licencias(opciones.clavePublicaLicencias)
   const version = opciones.version ?? '0.0.0'
-  const rutaApk = opciones.dirExtras ? path.join(opciones.dirExtras, 'alabanza.apk') : null
+  const rutaApk = opciones.dirExtras ? path.join(opciones.dirExtras, 'airtracks.apk') : null
   const hayApk = (): boolean => !!rutaApk && fs.existsSync(rutaApk)
   let puertoCortoActivo: number | null = null
-  const nombreVisible = `Multitrack Alabanza · ${os.hostname()}`.slice(0, 60)
+  const nombreVisible = `AirTracks · ${os.hostname()}`.slice(0, 60)
 
-  // para la app Android (y la pagina, que prueba si anda alabanza.local): que app es y si pide codigo
+  // para la app Android (y la pagina, que prueba si anda airtracks.local): que app es y si pide codigo.
+  // `app` es un id interno (de cuando se llamaba Multitrack Alabanza): no cambiarlo, lo buscan las apps ya instaladas.
   app.get('/api/info', (_req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Cache-Control', 'no-store')
     res.json({ app: 'multitrack-alabanza', nombre: nombreVisible, version, id: ajustes.idInstalacion, requiereCodigo: !!ajustes.codigoBanda, apk: hayApk() })
   })
   // la app Android se baja de la misma compu (sin Play Store ni internet)
-  app.get('/app/alabanza.apk', (_req, res) => {
+  app.get('/app/airtracks.apk', (_req, res) => {
     if (!rutaApk || !hayApk()) return res.status(404).end()
     res.setHeader('Content-Type', 'application/vnd.android.package-archive')
-    res.setHeader('Content-Disposition', 'attachment; filename="alabanza.apk"')
+    res.setHeader('Content-Disposition', 'attachment; filename="AirTracks.apk"')
     res.sendFile(rutaApk)
   })
+  // el enlace de antes del cambio de nombre (hojas impresas, mensajes viejos)
+  app.get('/app/alabanza.apk', (_req, res) => res.redirect(302, '/app/airtracks.apk'))
 
   // mezcla de cada celular: el segmento <n> (2 s) de la cancion como UN WAV estereo, con la mezcla que pide
   // (?m=... = ganancia y paneo por pista, ver shared/mezcla.ts). Asi cada celular baja ~1,4 Mbps y no 20+.
@@ -225,7 +228,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
       descubrimiento.iniciar()
     }
 
-    // direccion corta: http://192.168.1.35 (o http://alabanza.local) sin ":4848", que redirige al puerto real.
+    // direccion corta: http://192.168.1.35 (o http://airtracks.local) sin ":4848", que redirige al puerto real.
     // Si el puerto 80 esta ocupado o no se puede usar, no pasa nada: queda la direccion con puerto.
     const puertoCorto = op.puertoCorto === undefined ? 80 : op.puertoCorto
     if (puertoCorto !== null) {

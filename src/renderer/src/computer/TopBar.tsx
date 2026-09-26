@@ -67,7 +67,7 @@ export function TopBar(p: Props) {
     <header className="topbar">
       <div className="marca">
         <span className="marca-punto" />
-        Multitrack
+        AirTracks
       </div>
 
       <nav className="setlist" aria-label="Setlist">

@@ -65,7 +65,7 @@ function lineaDispositivo(d: DispositivoInfo): string {
 /** Informe completo para pegar en un chat (lo que hace falta para entender que paso en un ensayo). */
 export function informeTexto(s: DiagnosticoServidor, ahora = new Date()): string {
   const lineas = [
-    `Diagnóstico Multitrack Alabanza — ${ahora.toLocaleString('es-AR')}`,
+    `Diagnóstico AirTracks Wireless Monitor — ${ahora.toLocaleString('es-AR')}`,
     `Compu: versión ${s.version || '?'} · ${s.sistema}`,
     `Direcciones: ${s.direcciones.map((ip) => `${ip}:${s.puerto}`).join(', ') || 'sin red'}${s.puertoCorto ? ` · dirección corta en el puerto ${s.puertoCorto}` : ''}`
   ]

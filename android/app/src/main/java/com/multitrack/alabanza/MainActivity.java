@@ -50,7 +50,7 @@ public final class MainActivity extends Activity implements Buscador.Oyente {
 
     private final Runnable sinResultados = () -> {
         if (encontradas.isEmpty() && !abriendo) {
-            estado.setText("Todavía no aparece. ¿La computadora tiene abierto Multitrack Alabanza y está en este mismo WiFi?");
+            estado.setText("Todavía no aparece. ¿La computadora tiene abierto AirTracks y está en este mismo WiFi?");
         }
     };
 
@@ -125,7 +125,7 @@ public final class MainActivity extends Activity implements Buscador.Oyente {
         pIcono.gravity = Gravity.CENTER_HORIZONTAL;
         col.addView(icono, pIcono);
 
-        TextView titulo = Estilo.texto(this, "Alabanza", 28, Estilo.TEXTO, true);
+        TextView titulo = Estilo.texto(this, "AirTracks", 28, Estilo.TEXTO, true);
         titulo.setGravity(Gravity.CENTER);
         col.addView(titulo, conMargen(ViewGroup.LayoutParams.MATCH_PARENT, 14, 0));
         TextView sub = Estilo.texto(this, "La pista de la banda en tu celular", 15, Estilo.TEXTO_2, false);
@@ -164,7 +164,7 @@ public final class MainActivity extends Activity implements Buscador.Oyente {
         col.addView(escribir, conMargen(ViewGroup.LayoutParams.MATCH_PARENT, 0, 18));
 
         TextView ayuda = Estilo.texto(this,
-                "La computadora tiene que tener abierto Multitrack Alabanza y estar en el mismo WiFi que este celular (o conectada al "
+                "La computadora tiene que tener abierto AirTracks y estar en el mismo WiFi que este celular (o conectada al "
                         + "punto de acceso de este celular). No hace falta internet.",
                 13, Estilo.TEXTO_3, false);
         col.addView(ayuda, conMargen(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0));

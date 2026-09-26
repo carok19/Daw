@@ -45,7 +45,7 @@ final class Red {
 
     /**
      * Lo que escribio el usuario ("192.168.1.35", "192.168.1.35:4848",
-     * "http://alabanza.local") como http://host:puerto. Null si no se entiende.
+     * "http://airtracks.local") como http://host:puerto. Null si no se entiende.
      */
     static String normalizarDireccion(String texto) {
         if (texto == null) return null;

@@ -254,12 +254,12 @@ export function HojaInvitar({ controller, onCerrar }: { controller: AppControlle
 /**
  * La forma de no escanear el QR en cada ensayo, segun el celular: la app en
  * Android; en iPhone, el icono en la pantalla de inicio con la direccion
- * fija (alabanza.local no cambia aunque cambie la IP de la compu).
+ * fija (airtracks.local no cambia aunque cambie la IP de la compu).
  */
 export function AccesoFijo({ controller }: { controller: AppController }) {
   const app = puenteAndroid()
   const [datos, setDatos] = useState<DatosInvitacion | null>(null)
-  /** null: probando; true: alabanza.local responde y es ESTA compu */
+  /** null: probando; true: airtracks.local responde y es ESTA compu */
   const [fijaAnda, setFijaAnda] = useState<boolean | null>(null)
 
   const pedir = controller.datosInvitacion
@@ -305,7 +305,7 @@ export function AccesoFijo({ controller }: { controller: AppController }) {
         <p className="ayuda" style={{ marginTop: 0 }}>
           Bajá la app para Android: en cada ensayo la abrís y encuentra la computadora sola (sin QR ni internet). Recuerda tu nombre y tu mezcla.
         </p>
-        <a className="boton-enlace btn-primario" href="/app/alabanza.apk" download>
+        <a className="boton-enlace btn-primario" href="/app/airtracks.apk" download>
           <Download size={17} /> Bajar la app para Android
         </a>
         <p className="ayuda" style={{ marginBottom: 0 }}>
@@ -365,7 +365,7 @@ export function AccesoFijo({ controller }: { controller: AppController }) {
 
   return (
     <p className="ayuda" style={{ margin: 0 }}>
-      Guardá esta página en favoritos. Dirección fija (si la red la permite): <b>{datos ? direccionVisible(datos.urlFija) : 'alabanza.local'}</b>
+      Guardá esta página en favoritos. Dirección fija (si la red la permite): <b>{datos ? direccionVisible(datos.urlFija) : 'airtracks.local'}</b>
     </p>
   )
 }

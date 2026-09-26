@@ -471,7 +471,7 @@ test('código de la banda: sin el código un celular no entra (la compu sí); 5 
   const inv = await emitAck<DatosInvitacion>(cel, 'invitacion:datos', {})
   assert.equal(inv.codigo, '1234')
   assert.match(inv.url, new RegExp(`^http://.+:${env.port}$`))
-  assert.match(inv.urlFija, /alabanza\.local/)
+  assert.match(inv.urlFija, /airtracks\.local/)
   cel.close()
 
   // adivinar probando: al quinto intento fallido queda frenado (aunque despues ponga el bueno)
@@ -491,9 +491,9 @@ test('código de la banda: sin el código un celular no entra (la compu sí); 5 
   await env.cerrar()
 })
 
-test('la compu se deja encontrar: alabanza.local (mDNS), búsqueda de la app Android (UDP), dirección corta y la app para bajar', async (t) => {
+test('la compu se deja encontrar: airtracks.local (y alabanza.local, el de antes) por mDNS, búsqueda de la app Android (UDP), dirección corta y la app para bajar', async (t) => {
   const extras = tmpDir('multitrack-extras-')
-  fs.writeFileSync(path.join(extras, 'alabanza.apk'), Buffer.from('PK apk de prueba'))
+  fs.writeFileSync(path.join(extras, 'airtracks.apk'), Buffer.from('PK apk de prueba'))
   const env = await entorno(t, tmpDir('multitrack-test-'), { dirExtras: extras })
   const puertoMdns = 40000 + Math.floor(Math.random() * 10000)
   const puertoUdp = puertoMdns + 1
@@ -511,20 +511,22 @@ test('la compu se deja encontrar: alabanza.local (mDNS), búsqueda de la app And
   assert.equal(r.id, env.server.ajustes.idInstalacion)
   assert.equal(r.version, '9.9.9')
 
-  // alabanza.local: una pregunta mDNS (directa) se contesta con la IP de la compu
-  const q = dnsPacket.encode({ type: 'query', id: 7, questions: [{ name: 'alabanza.local', type: 'A' }] })
+  // airtracks.local (y alabanza.local, el nombre de antes): una pregunta mDNS (directa) se contesta con la IP de la compu
   const mdns = dgram.createSocket('udp4')
   t.after(() => mdns.close())
-  const resp = new Promise<dnsPacket.Packet>((res) => mdns.once('message', (m) => res(dnsPacket.decode(m))))
-  mdns.send(q, puertoMdns, '127.0.0.1')
-  const a = (await resp).answers?.find((x) => x.type === 'A') as { name: string; data: string } | undefined
-  assert.ok(a && a.name === 'alabanza.local' && /^\d+\.\d+\.\d+\.\d+$/.test(a.data), 'responde la IP')
+  for (const nombre of ['airtracks.local', 'alabanza.local']) {
+    const q = dnsPacket.encode({ type: 'query', id: 7, questions: [{ name: nombre, type: 'A' }] })
+    const resp = new Promise<dnsPacket.Packet>((res) => mdns.once('message', (m) => res(dnsPacket.decode(m))))
+    mdns.send(q, puertoMdns, '127.0.0.1')
+    const a = (await resp).answers?.find((x) => x.type === 'A') as { name: string; data: string } | undefined
+    assert.ok(a && a.name === nombre && /^\d+\.\d+\.\d+\.\d+$/.test(a.data), `responde la IP a ${nombre}`)
+  }
 
   // el servicio que busca la app Android: PTR con SRV (puerto) y TXT (id)
-  const r2 = responderMdns([{ name: '_multitrack._tcp.local', type: 'PTR' }], { nombre: 'Multitrack Alabanza · PC', puerto: 4848, id: 'abc', version: '1', requiereCodigo: true }, '192.168.1.35')!
+  const r2 = responderMdns([{ name: '_multitrack._tcp.local', type: 'PTR' }], { nombre: 'AirTracks · PC', puerto: 4848, id: 'abc', version: '1', requiereCodigo: true }, '192.168.1.35')!
   const srv = r2.additionals.find((x) => x.type === 'SRV') as { data: { port: number; target: string } }
   assert.equal(srv.data.port, 4848)
-  assert.equal(srv.data.target, 'alabanza.local')
+  assert.equal(srv.data.target, 'airtracks.local')
   assert.ok((r2.additionals.find((x) => x.type === 'TXT') as { data: string[] }).data.includes('id=abc'))
   assert.equal(responderMdns([{ name: 'otra.local', type: 'A' }], { nombre: 'x', puerto: 1, id: 'i', version: '1', requiereCodigo: false }, '1.2.3.4'), null)
 
@@ -538,9 +540,14 @@ test('la compu se deja encontrar: alabanza.local (mDNS), búsqueda de la app And
   // la app Android se baja de la compu
   const info = (await (await fetch(`http://localhost:${env.port}/api/info`)).json()) as { apk: boolean }
   assert.equal(info.apk, true)
-  const apk = await fetch(`http://localhost:${env.port}/app/alabanza.apk`)
+  const apk = await fetch(`http://localhost:${env.port}/app/airtracks.apk`)
   assert.equal(apk.status, 200)
   assert.equal(apk.headers.get('content-type'), 'application/vnd.android.package-archive')
+  assert.match(apk.headers.get('content-disposition')!, /AirTracks\.apk/)
+  // el enlace de antes del cambio de nombre sigue andando
+  const vieja = await fetch(`http://localhost:${env.port}/app/alabanza.apk`)
+  assert.equal(vieja.status, 200)
+  assert.equal(vieja.url, `http://localhost:${env.port}/app/airtracks.apk`)
   await env.cerrar()
 })
 

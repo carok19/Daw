@@ -491,7 +491,7 @@ export function useAppController() {
   useEffect(() => {
     if (origen !== 'celular' || typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
     const proyecto = estado?.proyectoActivo
-    if (proyecto) navigator.mediaSession.metadata = new MediaMetadata({ title: proyecto.nombre, artist: 'Multitrack Alabanza' })
+    if (proyecto) navigator.mediaSession.metadata = new MediaMetadata({ title: proyecto.nombre, artist: 'AirTracks Wireless Monitor' })
     const e = estado?.playbackActivo?.estado
     navigator.mediaSession.playbackState = e === 'playing' ? 'playing' : e === 'paused' ? 'paused' : 'none'
   }, [origen, estado?.proyectoActivo?.id, estado?.proyectoActivo?.nombre, estado?.playbackActivo?.estado])

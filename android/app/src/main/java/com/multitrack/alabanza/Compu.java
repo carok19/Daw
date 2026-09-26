@@ -2,11 +2,11 @@ package com.multitrack.alabanza;
 
 import org.json.JSONObject;
 
-/** Una computadora con Multitrack Alabanza encontrada en el WiFi. */
+/** Una computadora con AirTracks encontrada en el WiFi. */
 final class Compu {
     /** id de la instalacion: no cambia aunque cambie la IP */
     final String id;
-    /** "Multitrack Alabanza · PC-IGLESIA" */
+    /** "AirTracks · PC-IGLESIA" */
     final String nombre;
     /** http://IP:puerto */
     final String url;
@@ -21,6 +21,7 @@ final class Compu {
 
     /** Desde la respuesta de /api/info (o de la busqueda por UDP). Null si no es de esta app. */
     static Compu desdeInfo(JSONObject o, String url) {
+        // id interno (de cuando la app se llamaba Multitrack Alabanza): no cambiarlo
         if (o == null || !"multitrack-alabanza".equals(o.optString("app"))) return null;
         return new Compu(o.optString("id"), o.optString("nombre"), url, o.optBoolean("requiereCodigo"));
     }

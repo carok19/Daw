@@ -26,7 +26,7 @@ import java.util.concurrent.Executors;
 import org.json.JSONObject;
 
 /**
- * Busca las computadoras con Multitrack Alabanza en el WiFi, sin internet ni
+ * Busca las computadoras con AirTracks en el WiFi, sin internet ni
  * nube (como DroidCam), de tres formas a la vez:
  *
  *  1. Pregunta por difusion UDP ("MULTITRACK-ALABANZA?" al puerto 48480): la

@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <!-- para recibir los anuncios mDNS de la compu (alabanza.local / _multitrack._tcp) -->
+    <!-- para recibir los anuncios mDNS de la compu (airtracks.local / _multitrack._tcp) -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <application

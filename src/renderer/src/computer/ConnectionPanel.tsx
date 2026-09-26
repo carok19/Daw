@@ -363,7 +363,7 @@ function HojaImpresa({ datos }: { datos: DatosInvitacion }) {
   let n = 0
   return (
     <div className="hoja-impresa" aria-hidden>
-      <h1>Multitrack Alabanza</h1>
+      <h1>AirTracks Wireless Monitor</h1>
       <p className="impresa-sub">La pista de la banda en tu celular, con tu propia mezcla</p>
       <div className="impresa-qrs">
         {datos.wifi && (
@@ -403,7 +403,7 @@ function HojaImpresa({ datos }: { datos: DatosInvitacion }) {
         </li>
         {datos.apk && (
           <li>
-            <b>Android:</b> bajá la app desde “Invitar” o en <b>{direccionVisible(datos.url)}/app/alabanza.apk</b>: en cada ensayo encuentra la compu
+            <b>Android:</b> bajá la app desde “Invitar” o en <b>{direccionVisible(datos.url)}/app/airtracks.apk</b>: en cada ensayo encuentra la compu
             sola.
           </li>
         )}

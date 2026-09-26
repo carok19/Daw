@@ -776,7 +776,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await compu.getByRole('button', { name: /Copiar diagnóstico/ }).click()
     await compu.getByRole('button', { name: 'Copiado' }).waitFor()
     const informe = await compu.evaluate(() => navigator.clipboard.readText())
-    assert.match(informe, /Diagnóstico Multitrack Alabanza/)
+    assert.match(informe, /Diagnóstico AirTracks Wireless Monitor/)
     assert.match(informe, /Canción: Ocho Pistas · 8 pistas/)
     assert.match(informe, /modo mezcla de la compu · usa 1,41 Mbps/)
     await compu.keyboard.press('Escape')

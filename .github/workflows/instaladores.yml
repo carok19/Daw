@@ -69,11 +69,11 @@ jobs:
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      - run: cp android/app/build/outputs/apk/release/app-release.apk alabanza.apk
+      - run: cp android/app/build/outputs/apk/release/app-release.apk airtracks.apk
       - uses: actions/upload-artifact@v4
         with:
           name: app-android
-          path: alabanza.apk
+          path: airtracks.apk
           if-no-files-found: error
 
   windows:
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: instalador-windows
-          path: dist/Multitrack-Alabanza-Instalador.exe
+          path: dist/AirTracks-Wireless-Monitor-Instalador.exe
           if-no-files-found: error
 
   publicar:
@@ -131,14 +131,19 @@ jobs:
           cat > notas.md <<EOF
           **Versión del $(date -u +%d/%m/%Y)** · rama \`${GITHUB_REF_NAME}\` · commit ${GITHUB_SHA::7}
 
-          - **Multitrack-Alabanza-Instalador.exe**: para la computadora (Windows). Incluye el reconocedor de voz y la app Android para ofrecerla a los celulares.
-          - **alabanza.apk**: app para Android. También se baja desde la compu (en el celular: "Invitar" o "La próxima vez sin QR").
+          - **AirTracks-Wireless-Monitor-Instalador.exe**: para la computadora (Windows). Incluye el reconocedor de voz y la app Android para ofrecerla a los celulares.
+          - **AirTracks.apk**: app para Android. También se baja desde la compu (en el celular: "Invitar" o "La próxima vez sin QR").
 
           Windows puede avisar que el instalador "no es común": tocá **Más información → Ejecutar de todas formas**.
           EOF
+          mv descargas/airtracks.apk descargas/AirTracks.apk
           if gh release view descargas --repo "$REPO" > /dev/null 2>&1; then
-            gh release upload descargas descargas/Multitrack-Alabanza-Instalador.exe descargas/alabanza.apk --repo "$REPO" --clobber
+            gh release upload descargas descargas/AirTracks-Wireless-Monitor-Instalador.exe descargas/AirTracks.apk --repo "$REPO" --clobber
             gh release edit descargas --repo "$REPO" --title "Descargas" --notes-file notas.md
+            # los de antes del cambio de nombre (Multitrack Alabanza): que nadie baje una version vieja
+            for viejo in Multitrack-Alabanza-Instalador.exe alabanza.apk; do
+              gh release delete-asset descargas "$viejo" --repo "$REPO" --yes 2> /dev/null || true
+            done
           else
-            gh release create descargas descargas/Multitrack-Alabanza-Instalador.exe descargas/alabanza.apk --repo "$REPO" --target "$GITHUB_SHA" --title "Descargas" --notes-file notas.md
+            gh release create descargas descargas/AirTracks-Wireless-Monitor-Instalador.exe descargas/AirTracks.apk --repo "$REPO" --target "$GITHUB_SHA" --title "Descargas" --notes-file notas.md
           fi

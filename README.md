@@ -1,4 +1,4 @@
-# Multitrack Alabanza
+# AirTracks Wireless Monitor
 
 App de escritorio (Electron) para reproducir pistas multitrack en vivo donde
 **el audio sale de los celulares de los músicos**, todos sincronizados. La
@@ -18,9 +18,9 @@ durante un culto.
 Página de descargas (se actualiza sola con cada cambio, los enlaces no cambian):
 **https://github.com/carok19/Daw/releases/tag/descargas**
 
-- Computadora (Windows): [Multitrack-Alabanza-Instalador.exe](https://github.com/carok19/Daw/releases/download/descargas/Multitrack-Alabanza-Instalador.exe)
+- Computadora (Windows): [AirTracks-Wireless-Monitor-Instalador.exe](https://github.com/carok19/Daw/releases/download/descargas/AirTracks-Wireless-Monitor-Instalador.exe)
   — incluye el reconocedor de voz y la app Android (la compu se la ofrece a los celulares).
-- Celulares Android: [alabanza.apk](https://github.com/carok19/Daw/releases/download/descargas/alabanza.apk)
+- Celulares Android: [AirTracks.apk](https://github.com/carok19/Daw/releases/download/descargas/AirTracks.apk)
   — también se baja desde la compu, sin internet.
 
 Los arma GitHub Actions (`.github/workflows/instaladores.yml`): pruebas, app
@@ -40,7 +40,7 @@ operativo, o en un CI con Windows/macOS):
 
 ```bash
 npm run modelos        # (opcional, una vez) incluye el reconocedor de voz en el instalador
-npm run dist:win       # instalador .exe (NSIS); con extras/alabanza.apk incluye la app Android
+npm run dist:win       # instalador .exe (NSIS); con extras/airtracks.apk incluye la app Android
 npm run dist:mac       # .dmg
 npm run dist:linux     # AppImage
 ```
@@ -56,7 +56,15 @@ canciones abiertas, para recuperarlas si la app se cierra a mitad de un
 culto). `MULTITRACK_APP_DIR` cambia esa carpeta (lo usan los tests).
 `~/MultitrackApp/modelos/` guarda el reconocedor de voz si se bajó desde la
 app. La **carpeta de canciones** (biblioteca) es, por defecto,
-`Documentos/Multitrack Alabanza`.
+`Documentos/AirTracks`.
+
+**Antes se llamaba Multitrack Alabanza.** Al actualizar no se pierde nada: si
+ya existían, se siguen usando la carpeta `Documentos/Multitrack Alabanza` y
+las preferencias de la compu; `alabanza.local` y el enlace viejo de la app
+Android siguen andando, y la app Android ya instalada se actualiza (mismo
+paquete y firma). Los ids internos (`multitrack-alabanza` en la búsqueda,
+`_multitrack._tcp`, `~/MultitrackApp`, las fichas `.multitrack.json`) no
+cambian a propósito.
 
 ### Desarrollo
 
@@ -111,11 +119,11 @@ app. La **carpeta de canciones** (biblioteca) es, por defecto,
    **“Tocá para empezar”** → conectar auriculares. En ⚙ cada músico puede
    ponerle nombre a su celular (“Batería”, “Bajo”…). Para no escanear en cada
    ensayo:
-   - **Android:** la app (`alabanza.apk`, se baja desde la compu). Se abre y
+   - **Android:** la app (`AirTracks.apk`, se baja desde la compu). Se abre y
      encuentra la compu sola en el WiFi (sin QR ni internet, como DroidCam);
      la próxima vez entra directo, aunque la compu cambie de IP.
-   - **iPhone:** la dirección fija **`alabanza.local`** (no cambia con la IP)
-     y *Compartir → Agregar a inicio*: queda el ícono “Alabanza”. El celular
+   - **iPhone:** la dirección fija **`airtracks.local`** (no cambia con la IP)
+     y *Compartir → Agregar a inicio*: queda el ícono “AirTracks”. El celular
      lo explica solo en “¿La próxima vez sin escanear el QR?”.
    - **El que llega tarde**, con la banda ya tocando: cualquiera que ya esté
      conectado toca **Invitar** en su celular y le muestra el QR (o se lo
@@ -271,7 +279,7 @@ pausado mientras suena música.
 
 ### Carpeta de canciones (biblioteca)
 
-La app vigila una carpeta (por defecto `Documentos/Multitrack Alabanza`, se
+La app vigila una carpeta (por defecto `Documentos/AirTracks`, se
 cambia en **+ Canción**): cada `.zip` o `.rar` que se copia ahí se importa solo
 (un `.rar` en partes, una sola vez y recién cuando están todas), y las
 **subcarpetas son categorías** (*Adoración*, *Alabanza*, *Navidad/2024*…).
@@ -398,14 +406,15 @@ Todo por la WiFi local, sin internet ni servidores externos:
   ese celular (WiFi/Ethernet reales antes que adaptadores virtuales o VPN).
 - **Puerto 80**: si está libre, un servidor chico redirige `http://IP` al
   puerto de la app (dirección corta).
-- **mDNS/Bonjour**: la compu responde `alabanza.local` (iPhone lo resuelve en
+- **mDNS/Bonjour**: la compu responde `airtracks.local` (y `alabanza.local`, el
+  nombre de antes, para los íconos ya guardados; iPhone lo resuelve en
   Safari y en el ícono de inicio) y anuncia el servicio `_multitrack._tcp`
   (lo busca la app Android). Si hay dos compus con la app en la misma red,
   las dos responden ese nombre: la app Android igual las distingue por su id.
 - **Búsqueda UDP**: la app Android pregunta `MULTITRACK-ALABANZA?` por
   difusión al puerto 48480 y cada compu contesta con su nombre, puerto e id.
   Si el router filtra difusión y mDNS, la app prueba las direcciones de la red.
-- `/api/info` (nombre, versión, id, si pide código) y `/app/alabanza.apk`
+- `/api/info` (nombre, versión, id, si pide código) y `/app/airtracks.apk`
   (la app Android incluida en el instalador).
 
 ### Seguridad
@@ -512,7 +521,7 @@ habitual de los programas que se venden sin conexión.
    no estaba se pausó o se saltó, lo aplica en el momento).
 9. **Puerto fijo:** 4848, y si está ocupado 4849, 4850… (misma dirección y
    mismo QR de un día al otro). La app Android y el ícono de iPhone no
-   dependen de la IP (id de la instalación / `alabanza.local`).
+   dependen de la IP (id de la instalación / `airtracks.local`).
 10. **Sin base de datos externa:** todo en archivos JSON locales con
     escritura atómica. Funciona sin internet (una base en la nube, como
     Supabase, haría depender el culto de internet sin aportar nada acá).
@@ -542,5 +551,5 @@ habitual de los programas que se venden sin conexión.
   probarlo en celulares reales (búsqueda en distintos routers, audio en
   segundo plano). La firma por defecto es pública a propósito (ver
   `android/LEEME.md`).
-- `alabanza.local` depende de que el router deje pasar mDNS (la mayoría lo
+- `airtracks.local` depende de que el router deje pasar mDNS (la mayoría lo
   hace); el celular lo prueba antes de ofrecerlo.
