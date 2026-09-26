@@ -353,6 +353,27 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await cel.touchscreen.tap(punto.x, punto.y)
     await esperar(300)
     assert.equal(await valor(), 100, 'doble toque vuelve a 100%')
+
+    // volumen del celular: se puede subir por encima de 100 % (hasta 200 %, +6 dB, con limitador)
+    const general = cel.locator('.m-canal-general .fader-tactil')
+    await general.scrollIntoViewIfNeeded()
+    assert.equal(await general.getAttribute('aria-valuemax'), '200')
+    const cg = (await general.boundingBox())!
+    await deslizar(cel, { x: cg.x + cg.width / 2, y: cg.y + cg.height / 2 }, cg.width * 0.45, 2)
+    await esperar(400)
+    const vol = Number(await general.getAttribute('aria-valuenow'))
+    assert.ok(vol > 150, `se sube por encima de 100 % (quedó en ${vol})`)
+    await cel.getByText(/suena más fuerte que lo normal/).waitFor()
+    const ganancia = await cel.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { masterGain: GainNode } } } }).__mt.engineRef.current.masterGain.gain.value)
+    assert.ok(Math.abs(ganancia - 10 ** ((((vol - 100) / 100) * 6) / 20)) < 0.05, `ganancia ${ganancia} para ${vol}%`)
+    // vuelve a 100 % con doble toque
+    const cg2 = (await general.boundingBox())!
+    const p2 = { x: cg2.x + cg2.width * 0.2, y: cg2.y + cg2.height / 2 }
+    await cel.touchscreen.tap(p2.x, p2.y)
+    await esperar(80)
+    await cel.touchscreen.tap(p2.x, p2.y)
+    await esperar(300)
+    assert.equal(await general.getAttribute('aria-valuenow'), '100')
   })
 
   await t.test('bloqueo: los celulares no pueden controlar', async () => {

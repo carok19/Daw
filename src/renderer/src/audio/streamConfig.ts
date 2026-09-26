@@ -55,3 +55,6 @@ export const INTERVALO_CAMBIO_MEZCLA_MS = 300
 
 /** Fundido al pasar a la mezcla nueva (sin "clicks"). */
 export const FUNDIDO_MEZCLA_SEC = 0.02
+
+/** Volumen del dispositivo: 100 = tal cual; por encima, hasta +6 dB en 200 (un limitador evita que sature). */
+export const VOLUMEN_MAX = 200

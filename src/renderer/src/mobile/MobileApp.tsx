@@ -25,6 +25,7 @@ import type { AppController } from '../app/useAppController'
 import { usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
 import { leerPref } from '../app/preferencias'
 import { clavePista } from '../audio/PlaybackEngine'
+import { VOLUMEN_MAX } from '../audio/streamConfig'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
 import { Avisos } from '../ui/Avisos'
@@ -186,7 +187,8 @@ function CanalGeneral({ controller }: { controller: AppController }) {
         <span className="m-canal-nombre">Volumen de este celular</span>
         <small className="num">{v}%</small>
       </div>
-      <FaderTactil valor={v} min={0} max={100} etiqueta="Volumen de este celular" onCambio={controller.setVolumenGeneral} />
+      <FaderTactil valor={v} min={0} max={VOLUMEN_MAX} neutro={100} etiqueta="Volumen de este celular" onCambio={controller.setVolumenGeneral} />
+      {v > 100 && <p className="m-volumen-extra">Por encima de 100 % suena más fuerte que lo normal (sin saturar). Cuidá los oídos.</p>}
     </div>
   )
 }

@@ -3362,3 +3362,9 @@ input[type='date'] {
 .lista-editor-pie > span:first-child {
   flex: 1;
 }
+
+.m-volumen-extra {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--warn);
+}

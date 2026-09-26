@@ -15,7 +15,8 @@ import {
   MAX_FETCHES_POR_PISTA,
   SEGMENT_DURATION_SEC,
   SEGMENTOS_POR_CUE,
-  SEGMENTOS_PRECARGA_SIGUIENTE
+  SEGMENTOS_PRECARGA_SIGUIENTE,
+  VOLUMEN_MAX
 } from './streamConfig'
 
 /**
@@ -99,6 +100,13 @@ interface Precarga {
 }
 
 const INTERVALO_TICK_MS = 250
+/**
+ * El limitador (DynamicsCompressorNode) mira 6 ms hacia adelante: todo sale
+ * 6 ms despues de pasar por el. Es igual en todos los navegadores (el mismo
+ * codigo de base) y se descuenta al programar, asi el sync no se corre.
+ */
+const DEMORA_LIMITADOR_SEC = 0.006
+
 /** 0,4%: correccion de drift inaudible */
 const MAX_RATE_DEV = 0.004
 const RAMPA_CORRECCION_SEC = 0.15
@@ -201,7 +209,15 @@ export class StreamingEngine implements PlaybackEngine {
   constructor(readonly modo: ModoMotor = 'pistas') {
     this.ctx = new AudioContext()
     this.masterGain = this.ctx.createGain()
-    this.masterGain.connect(this.ctx.destination)
+    // limitador al final: con el volumen por encima de 100 % (o muchas pistas juntas) no satura ni distorsiona
+    const limitador = this.ctx.createDynamicsCompressor()
+    limitador.threshold.value = -1.5
+    limitador.knee.value = 0
+    limitador.ratio.value = 20
+    limitador.attack.value = 0.003
+    limitador.release.value = 0.15
+    this.masterGain.connect(limitador)
+    limitador.connect(this.ctx.destination)
     this.intervalo = setInterval(() => this.tick(), INTERVALO_TICK_MS)
   }
 
@@ -209,9 +225,11 @@ export class StreamingEngine implements PlaybackEngine {
     if (this.ctx.state === 'suspended') await this.ctx.resume()
   }
 
-  setVolumenGeneral(volumen0a100: number): void {
-    const v = clamp(volumen0a100, 0, 100) / 100
-    this.masterGain.gain.setTargetAtTime(v * v, this.ctx.currentTime, 0.02)
+  /** 0-200: hasta 100 la curva de siempre (cuadratica); de 100 a 200, de 0 a +6 dB. */
+  setVolumenGeneral(volumen: number): void {
+    const v = clamp(volumen, 0, VOLUMEN_MAX)
+    const g = v <= 100 ? (v / 100) ** 2 : 10 ** ((((v - 100) / 100) * 6) / 20)
+    this.masterGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.02)
   }
 
   setAjusteManualMs(ms: number): void {
@@ -567,10 +585,13 @@ export class StreamingEngine implements PlaybackEngine {
     return this.ctxSaliendoAhora() !== null
   }
 
-  /** Instante del AudioContext que se ESCUCHA ahora: el que sale por el parlante, menos el ajuste fino manual. */
+  /**
+   * Instante del AudioContext (de lo programado) que se ESCUCHA ahora: el que
+   * sale por el parlante, menos la demora del limitador y el ajuste fino manual.
+   */
   private ctxEscuchadoAhora(): number {
     const saliendo = this.ctxSaliendoAhora() ?? this.ctx.currentTime - this.latenciaDeSalidaSec()
-    return saliendo - this.ajusteManualMs / 1000
+    return saliendo - DEMORA_LIMITADOR_SEC - this.ajusteManualMs / 1000
   }
 
   /**
