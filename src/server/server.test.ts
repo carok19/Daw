@@ -18,6 +18,7 @@ import { decodePcmSegment, parseWavHeader } from '../shared/wav'
 import { aplicarPaneoAutomatico, codificarMezcla, coeficientesPaneo, mezclaEfectiva, type CanalMezcla } from '../shared/mezcla'
 import { migrarProyecto } from './projects'
 import { fichaDesdeProyecto, interpretarFicha } from './ficha'
+import { Mezclador } from './mezclador'
 import { armarLicencia, datosAFirmar, type DatosLicencia } from '../shared/licencia'
 import { Licencias } from './licencia'
 import { wav16 } from './__fixtures__/sintetico'
@@ -763,6 +764,41 @@ test('paneo por defecto: click y guía a la izquierda y la banda a la derecha (p
       [100, true]
     ]
   )
+  await env.cerrar()
+})
+
+test('mezcla en hilos de trabajo (igual al hilo principal) y lo más urgente primero', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const tono = (f: number, seg: number): Buffer => {
+    const x = new Float32Array(seg * 44100)
+    for (let i = 0; i < x.length; i++) x[i] = 0.3 * Math.sin((2 * Math.PI * f * i) / 44100)
+    return wav16(x, 44100)
+  }
+  const estado = await cargarZip(compu, crearZip('Hilos', { 'Bajo.wav': tono(80, 20), 'Pad.wav': tono(330, 20), 'Guia.wav': tono(700, 20) }))
+  const p = estado.proyectoActivo!
+  const canales = mezclaEfectiva(p.pistas, { pad: { ganancia: 1.5, mute: false } })
+  const texto = codificarMezcla(canales)
+  const dir = (id: string): string => path.join(env.appDir, 'proyectos', id)
+
+  // el del servidor usa hilos de trabajo: el resultado es identico, byte a byte, al del hilo principal
+  assert.ok(env.server.mezclador.paralelo >= 1)
+  const principal = new Mezclador(dir, () => 0, false)
+  t.after(() => principal.cerrar())
+  for (const i of [0, 3, 9]) {
+    const a = await env.server.mezclador.segmento(p, i, canales, texto)
+    const b = await principal.segmento(p, i, canales, texto)
+    assert.ok(a && b && a.wav.equals(b.wav), `segmento ${i} distinto`)
+  }
+
+  // con todo ocupado, sale primero el que va a sonar antes (no el que se pidio primero)
+  const orden: number[] = []
+  const urgente = new Mezclador(dir, (_id, indice) => indice, false) // 2 a la vez, en el hilo principal
+  t.after(() => urgente.cerrar())
+  const pedidos = [9, 8, 7, 6, 5, 1, 0].map((i) => urgente.segmento(p, i, canales, `${texto}#${i}`).then(() => orden.push(i)))
+  await Promise.all(pedidos)
+  // los 2 primeros entran enseguida (9 y 8); del resto, primero el 0 y el 1
+  assert.deepEqual(orden.slice(2, 4).sort(), [0, 1], `orden: ${orden.join(', ')}`)
   await env.cerrar()
 })
 

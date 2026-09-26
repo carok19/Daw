@@ -1,27 +1,34 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import { Worker } from 'node:worker_threads'
 import type { Proyecto } from '../shared/types'
-import { coeficientesPaneo, SEGMENTO_SEC, type CanalMezcla } from '../shared/mezcla'
-import { bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, WAV_HEADER_FETCH_BYTES, type WavInfo } from '../shared/wav'
+import { SEGMENTO_SEC, type CanalMezcla } from '../shared/mezcla'
+import { parseWavHeader, totalFrames, WAV_HEADER_FETCH_BYTES } from '../shared/wav'
+import { calcularMezcla, type InfoPista, type TrabajoMezcla } from './mezclaCalculo'
+
+/** El hilo de trabajo (mezclaWorker.ts) compilado como texto por scripts/build-main.mjs (si no esta: se mezcla aca). */
+declare const __CODIGO_WORKER_MEZCLA__: string | undefined
+const CODIGO_WORKER = typeof __CODIGO_WORKER_MEZCLA__ === 'string' ? __CODIGO_WORKER_MEZCLA__ : null
 
 /**
  * Mezcla, en la compu, el segmento `indice` (2 s) de una cancion con la mezcla
  * que pide cada celular, y lo devuelve como un WAV estereo de 16 bits.
  *
- * - No bloquea el servidor: se cede el turno entre pista y pista (los
- *   mensajes de sincronizacion siguen saliendo a tiempo).
+ * - Mezcla en hilos de trabajo, en varios nucleos a la vez: con muchos
+ *   celulares el servidor no se traba (los mensajes de sincronizacion siguen
+ *   saliendo a tiempo). Sin hilos (no deberia pasar), mezcla aca cediendo el
+ *   turno entre pista y pista.
+ * - Lo mas urgente primero: con muchos pedidos esperando, sale antes el
+ *   segmento que va a sonar antes (no el que se pidio primero): al arrancar
+ *   una cancion, el principio de todos los celulares antes que el colchon de
+ *   20 s de cada uno.
  * - Cache chica en memoria: los celulares con la misma mezcla (lo mas comun)
  *   comparten los segmentos, y dos pedidos iguales al mismo tiempo se
  *   calculan una sola vez.
  * - Si la suma pasa de 0 dB, un limitador suave en el ultimo 10% evita el
  *   recorte duro (hasta ahi es identico a lo que hacia el celular).
  */
-
-interface InfoPista {
-  ruta: string
-  info: WavInfo
-  frames: number
-}
 
 export interface SegmentoMezclado {
   wav: Buffer
@@ -40,9 +47,87 @@ export interface EstadisticasMezcla {
 }
 
 const BYTES_CACHE = 96 * 1024 * 1024
-/** Mezclas calculandose a la vez: mas no es mas rapido (es CPU) y harian esperar a los mensajes de sync. */
-const MEZCLAS_A_LA_VEZ = 2
+/** Sin hilos: mezclas a la vez en el hilo principal (mas no es mas rapido y harian esperar a los mensajes de sync). */
+const MEZCLAS_A_LA_VEZ_SIN_HILOS = 2
+/** Hilos de trabajo: los nucleos menos uno (el del servidor y la interfaz), entre 1 y 4. */
+const HILOS = Math.max(1, Math.min(4, (os.cpus()?.length ?? 2) - 1))
 const cederTurno = (): Promise<void> => new Promise((r) => setImmediate(r))
+
+interface Tarea {
+  trabajo: TrabajoMezcla
+  /** cuanto falta para que suene (ms; menos = mas urgente), calculado al momento de elegir */
+  urgencia: () => number
+  resolve: (r: { wav: Buffer; ms: number }) => void
+  reject: (e: Error) => void
+}
+
+/** Donde se mezcla: un hilo de trabajo, o el hilo principal (sin hilos). */
+interface Lugar {
+  tarea: Tarea | null
+  ejecutar(t: Tarea): void
+  cerrar(): void
+}
+
+class HiloDeTrabajo implements Lugar {
+  tarea: Tarea | null = null
+  private worker: Worker | null = null
+  private siguienteId = 1
+
+  constructor(
+    private readonly codigo: string,
+    private readonly libre: () => void
+  ) {}
+
+  private crear(): Worker {
+    const w = new Worker(this.codigo, { eval: true })
+    w.unref() // no mantiene vivo el proceso (tests, cierre de la app)
+    w.on('message', (m: { id: number; wav?: ArrayBuffer; ms?: number; error?: string }) => {
+      const t = this.tarea
+      this.tarea = null
+      if (t) {
+        if (m.wav) t.resolve({ wav: Buffer.from(m.wav), ms: m.ms ?? 0 })
+        else t.reject(new Error(m.error ?? 'no se pudo mezclar'))
+      }
+      this.libre()
+    })
+    w.on('error', (err) => {
+      // el hilo se cayo: se rechaza lo que tenia y se crea otro con el proximo trabajo
+      this.worker = null
+      const t = this.tarea
+      this.tarea = null
+      t?.reject(err instanceof Error ? err : new Error(String(err)))
+      this.libre()
+    })
+    return w
+  }
+
+  ejecutar(t: Tarea): void {
+    this.tarea = t
+    this.worker ??= this.crear()
+    this.worker.postMessage({ id: this.siguienteId++, trabajo: t.trabajo })
+  }
+
+  cerrar(): void {
+    void this.worker?.terminate()
+    this.worker = null
+  }
+}
+
+class HiloPrincipal implements Lugar {
+  tarea: Tarea | null = null
+  constructor(private readonly libre: () => void) {}
+  ejecutar(t: Tarea): void {
+    this.tarea = t
+    const t0 = performance.now()
+    calcularMezcla(t.trabajo, cederTurno)
+      .then((wav) => t.resolve({ wav, ms: performance.now() - t0 }), (e: unknown) => t.reject(e instanceof Error ? e : new Error(String(e))))
+      .finally(() => {
+        this.tarea = null
+        this.libre()
+      })
+  }
+  cerrar(): void {}
+}
 
 export class Mezclador {
   private infos = new Map<string, Promise<InfoPista>>()
@@ -50,10 +135,53 @@ export class Mezclador {
   private bytesEnCache = 0
   private enCurso = new Map<string, Promise<SegmentoMezclado | null>>()
   private stats = { pedidos: 0, aciertosCache: 0, mezclados: 0, msTotal: 0, msMax: 0, bytes: 0 }
-  private activas = 0
-  private enEspera: (() => void)[] = []
+  private cola: Tarea[] = []
+  private lugares: Lugar[]
 
-  constructor(private readonly dirProyecto: (id: string) => string) {}
+  /**
+   * `urgencia(proyectoId, indice)`: cuantos ms faltan para que suene ese
+   * segmento (menos = antes). Sin ella, en el orden en que llegan.
+   * `hilos`: false = mezclar en el hilo principal (tests).
+   */
+  constructor(
+    private readonly dirProyecto: (id: string) => string,
+    private readonly urgencia: (proyectoId: string, indice: number) => number = () => 0,
+    hilos = process.env.MULTITRACK_HILOS_MEZCLA !== '0'
+  ) {
+    const libre = (): void => this.despachar()
+    this.lugares =
+      hilos && CODIGO_WORKER
+        ? Array.from({ length: HILOS }, () => new HiloDeTrabajo(CODIGO_WORKER, libre))
+        : Array.from({ length: MEZCLAS_A_LA_VEZ_SIN_HILOS }, () => new HiloPrincipal(libre))
+  }
+
+  /** Cuantas mezclas se pueden hacer a la vez (hilos de trabajo, o 2 en el hilo principal). */
+  get paralelo(): number {
+    return this.lugares.length
+  }
+
+  cerrar(): void {
+    for (const l of this.lugares) l.cerrar()
+    for (const t of this.cola.splice(0)) t.reject(new Error('mezclador cerrado'))
+  }
+
+  /** Reparte los trabajos que esperan a los lugares libres: el mas urgente primero. */
+  private despachar(): void {
+    for (;;) {
+      const lugar = this.lugares.find((l) => !l.tarea)
+      if (!lugar || this.cola.length === 0) return
+      let k = 0
+      let mejor = Infinity
+      for (let i = 0; i < this.cola.length; i++) {
+        const u = this.cola[i].urgencia()
+        if (u < mejor) {
+          mejor = u
+          k = i
+        }
+      }
+      lugar.ejecutar(this.cola.splice(k, 1)[0])
+    }
+  }
 
   estadisticas(): EstadisticasMezcla {
     const s = this.stats
@@ -142,18 +270,6 @@ export class Mezclador {
   }
 
   private async mezclar(proyecto: Proyecto, indice: number, canales: CanalMezcla[]): Promise<SegmentoMezclado | null> {
-    if (this.activas >= MEZCLAS_A_LA_VEZ) await new Promise<void>((r) => this.enEspera.push(r))
-    this.activas++
-    try {
-      return await this.mezclarYa(proyecto, indice, canales)
-    } finally {
-      this.activas--
-      this.enEspera.shift()?.()
-    }
-  }
-
-  private async mezclarYa(proyecto: Proyecto, indice: number, canales: CanalMezcla[]): Promise<SegmentoMezclado | null> {
-    const t0 = performance.now()
     // todas las pistas (no solo las que suenan): la frecuencia y el largo de la mezcla no cambian al mutear
     const infos = new Map<string, InfoPista>()
     for (const p of proyecto.pistas) {
@@ -171,17 +287,16 @@ export class Mezclador {
     if (desde >= framesTotales) return null
     const cantidad = Math.min(Math.round(SEGMENTO_SEC * sr), framesTotales - desde)
 
-    const L = new Float32Array(cantidad)
-    const R = new Float32Array(cantidad)
-    for (const canal of canales) {
-      const pista = infos.get(canal.pistaId)
-      if (!pista || canal.ganancia <= 0) continue
-      await sumarPista(pista, canal, sr, desde, cantidad, L, R)
-      await cederTurno()
+    const pistas: Record<string, InfoPista> = {}
+    for (const c of canales) {
+      const p = infos.get(c.pistaId)
+      if (p && c.ganancia > 0) pistas[c.pistaId] = p
     }
-
-    const wav = aWav16(L, R, sr)
-    const ms = performance.now() - t0
+    const trabajo: TrabajoMezcla = { pistas, canales, sr, desde, cantidad }
+    const { wav, ms } = await new Promise<{ wav: Buffer; ms: number }>((resolve, reject) => {
+      this.cola.push({ trabajo, urgencia: () => this.urgencia(proyecto.id, indice), resolve, reject })
+      this.despachar()
+    })
     this.stats.mezclados++
     this.stats.msTotal += ms
     this.stats.msMax = Math.max(this.stats.msMax, ms)
@@ -201,138 +316,4 @@ function frecuenciaMasComun(pistas: InfoPista[]): number {
     }
   }
   return mejor
-}
-
-/** Lee `frames` frames desde `desdeFrame` (lo que exista: al final de la pista, menos). */
-async function leerFrames(pista: InfoPista, desdeFrame: number, frames: number): Promise<Buffer> {
-  const bpf = bytesPorFrame(pista.info)
-  const hasta = Math.min(pista.frames, desdeFrame + frames)
-  if (hasta <= desdeFrame) return Buffer.alloc(0)
-  const largo = (hasta - desdeFrame) * bpf
-  // memoria propia (offset 0): se puede ver como Int16Array sin copiar
-  const buf = Buffer.from(new ArrayBuffer(largo))
-  const fh = await fs.promises.open(pista.ruta, 'r')
-  try {
-    let leidos = 0
-    while (leidos < largo) {
-      const { bytesRead } = await fh.read(buf, leidos, largo - leidos, pista.info.dataOffset + desdeFrame * bpf + leidos)
-      if (bytesRead <= 0) break
-      leidos += bytesRead
-    }
-    return leidos === largo ? buf : buf.subarray(0, leidos - (leidos % bpf))
-  } finally {
-    await fh.close()
-  }
-}
-
-/** Canales de la pista como Float32 (-1..1). Camino rapido para PCM 16 bits (el formato de las canciones importadas). */
-function aFloat(pista: InfoPista, bytes: Buffer): Float32Array[] {
-  const ch = pista.info.numChannels
-  const frames = Math.floor(bytes.length / bytesPorFrame(pista.info))
-  if (pista.info.audioFormat === 1 && pista.info.bitsPerSample === 16 && bytes.byteOffset % 2 === 0) {
-    const s = new Int16Array(bytes.buffer, bytes.byteOffset, frames * ch)
-    const res = Array.from({ length: ch }, () => new Float32Array(frames))
-    for (let c = 0; c < ch; c++) {
-      const out = res[c]
-      for (let i = 0, j = c; i < frames; i++, j += ch) out[i] = s[j] / 32768
-    }
-    return res
-  }
-  const copia = new Uint8Array(frames * bytesPorFrame(pista.info))
-  copia.set(bytes.subarray(0, copia.length))
-  return decodePcmSegment(pista.info, copia.buffer)
-}
-
-async function sumarPista(pista: InfoPista, canal: CanalMezcla, sr: number, desde: number, cantidad: number, L: Float32Array, R: Float32Array): Promise<void> {
-  const ch = Math.min(2, pista.info.numChannels)
-  const { aLL, aLR, aRL, aRR } = coeficientesPaneo(canal.pan, ch)
-  const g = canal.ganancia
-  const srPista = pista.info.sampleRate
-
-  // camino rapido (las canciones importadas: PCM 16 bits): se suma directo desde los enteros, sin copias
-  if (srPista === sr && pista.info.audioFormat === 1 && pista.info.bitsPerSample === 16 && pista.info.numChannels <= 2) {
-    const bytes = await leerFrames(pista, desde, cantidad)
-    const n = Math.min(cantidad, Math.floor(bytes.length / (2 * ch)))
-    const s = new Int16Array(bytes.buffer, bytes.byteOffset, n * ch)
-    const k = g / 32768
-    if (ch === 1) {
-      const gl = k * aLL
-      const gr = k * aRR
-      for (let i = 0; i < n; i++) {
-        const x = s[i]
-        L[i] += x * gl
-        R[i] += x * gr
-      }
-    } else {
-      const a = k * aLL
-      const b = k * aLR
-      const c = k * aRL
-      const d = k * aRR
-      for (let i = 0, j = 0; i < n; i++, j += 2) {
-        const l = s[j]
-        const r = s[j + 1]
-        L[i] += a * l + b * r
-        R[i] += c * l + d * r
-      }
-    }
-    return
-  }
-
-  // otros formatos u otra frecuencia de muestreo (raro): a float e interpolacion lineal
-  const factor = srPista / sr
-  const base = Math.floor(desde * factor) // primer frame (de la pista) leido
-  const necesarios = Math.ceil((desde + cantidad) * factor) - base + 2
-  const canalesF = aFloat(pista, await leerFrames(pista, base, necesarios))
-  const entradaL = canalesF[0] ?? new Float32Array(0)
-  const entradaR = canalesF[ch === 2 ? 1 : 0] ?? entradaL
-  const disponibles = entradaL.length
-  for (let i = 0; i < cantidad; i++) {
-    const pos = (desde + i) * factor - base
-    const i0 = Math.floor(pos)
-    if (i0 >= disponibles) break
-    const f = pos - i0
-    const i1 = Math.min(i0 + 1, disponibles - 1)
-    const l = entradaL[i0] + (entradaL[i1] - entradaL[i0]) * f
-    if (ch === 1) {
-      L[i] += l * g * aLL
-      R[i] += l * g * aRR
-    } else {
-      const r = entradaR[i0] + (entradaR[i1] - entradaR[i0]) * f
-      L[i] += g * (aLL * l + aLR * r)
-      R[i] += g * (aRL * l + aRR * r)
-    }
-  }
-}
-
-/** Limitador suave: lineal hasta 0,9 y despues se acerca a 1 sin pasarse (sin recorte duro). */
-function limitar(x: number): number {
-  const a = Math.abs(x)
-  if (a <= 0.9) return x
-  const y = 0.9 + 0.1 * Math.tanh((a - 0.9) / 0.1)
-  return x < 0 ? -y : y
-}
-
-function aWav16(L: Float32Array, R: Float32Array, sr: number): Buffer {
-  const frames = L.length
-  const datos = frames * 4
-  const buf = Buffer.alloc(44 + datos)
-  buf.write('RIFF', 0, 'ascii')
-  buf.writeUInt32LE(36 + datos, 4)
-  buf.write('WAVE', 8, 'ascii')
-  buf.write('fmt ', 12, 'ascii')
-  buf.writeUInt32LE(16, 16)
-  buf.writeUInt16LE(1, 20)
-  buf.writeUInt16LE(2, 22)
-  buf.writeUInt32LE(sr, 24)
-  buf.writeUInt32LE(sr * 4, 28)
-  buf.writeUInt16LE(4, 32)
-  buf.writeUInt16LE(16, 34)
-  buf.write('data', 36, 'ascii')
-  buf.writeUInt32LE(datos, 40)
-  const s = new Int16Array(buf.buffer, buf.byteOffset + 44, frames * 2)
-  for (let i = 0, j = 0; i < frames; i++, j += 2) {
-    s[j] = Math.round(limitar(L[i]) * 32767)
-    s[j + 1] = Math.round(limitar(R[i]) * 32767)
-  }
-  return buf
 }

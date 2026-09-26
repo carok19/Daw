@@ -17,7 +17,8 @@ import { leerAjustes, type Ajustes } from './ajustes'
 import { Descubrimiento } from './descubrimiento'
 import { Mezclador } from './mezclador'
 import { Licencias } from './licencia'
-import { decodificarMezcla } from '../shared/mezcla'
+import { decodificarMezcla, SEGMENTO_SEC } from '../shared/mezcla'
+import { posicionActualMs } from '../shared/playback'
 
 export interface AppServer {
   app: express.Express
@@ -120,7 +121,12 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
 
   // mezcla de cada celular: el segmento <n> (2 s) de la cancion como UN WAV estereo, con la mezcla que pide
   // (?m=... = ganancia y paneo por pista, ver shared/mezcla.ts). Asi cada celular baja ~1,4 Mbps y no 20+.
-  const mezclador = new Mezclador(projectDir)
+  // lo mas urgente primero: el segmento que va a sonar antes (de la cancion que esta arriba; las demas, al final)
+  const mezclador = new Mezclador(projectDir, (proyectoId, indice) => {
+    const tab = state.getActiveTab()
+    if (!tab || tab.proyecto.id !== proyectoId) return 1e9 + indice
+    return indice * SEGMENTO_SEC * 1000 - posicionActualMs(tab.playback, Date.now())
+  })
   app.get('/mezcla/:proyectoId/:segmento', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store')
     const { proyectoId, segmento } = req.params
@@ -257,6 +263,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
 
   async function close(): Promise<void> {
     clearInterval(latido)
+    mezclador.cerrar()
     descubrimiento?.detener()
     servidorCorto?.close()
     biblioteca.apagar()

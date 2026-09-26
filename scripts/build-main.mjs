@@ -1,16 +1,25 @@
 import * as esbuild from 'esbuild'
 import { existsSync } from 'node:fs'
 
-const common = {
+const base = {
   bundle: true,
   platform: 'node',
   target: 'node20',
   format: 'cjs',
   packages: 'external',
-  sourcemap: true,
   logLevel: 'info',
   // licencias/clave-publica.txt va adentro del programa (no es un archivo aparte que se pueda cambiar)
   loader: { '.txt': 'text' }
+}
+
+// hilo de trabajo del mezclador: va incrustado como texto (new Worker(codigo, { eval: true })), asi
+// funciona igual dentro del instalador (app.asar) sin un archivo suelto
+const worker = await esbuild.build({ ...base, entryPoints: ['src/server/mezclaWorker.ts'], write: false, logLevel: 'warning' })
+
+const common = {
+  ...base,
+  sourcemap: true,
+  define: { __CODIGO_WORKER_MEZCLA__: JSON.stringify(worker.outputFiles[0].text) }
 }
 
 await esbuild.build({
