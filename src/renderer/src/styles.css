@@ -513,6 +513,17 @@ kbd {
   flex-direction: column;
   gap: 6px;
 }
+.transporte-titulo-fila {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.transporte-titulo-fila > .cancion-titulo,
+.transporte-titulo-fila > .cancion-titulo-input {
+  flex: 0 1 auto;
+  min-width: 0;
+}
 .cancion-titulo {
   font-size: 20px;
   font-weight: 700;
@@ -1845,6 +1856,118 @@ input[type='range'].slider::-moz-range-thumb {
   background: var(--accent-soft);
   color: var(--accent-hover);
 }
+/* ---------- tono (semitonos) ---------- */
+.chip-tono {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--panel-3);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  padding: 2px 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.chip-tono.cambiado {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+.boton-tono {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+}
+.boton-tono:hover:not(:disabled) {
+  background: var(--panel-4);
+  color: var(--text);
+}
+.boton-tono:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.tono-original {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+}
+.tono-original:hover {
+  background: var(--panel-4);
+}
+.tono-original option {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.tono-destino {
+  border: none;
+  background: transparent;
+  color: var(--warn);
+  font: inherit;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 6px;
+}
+.tono-destino b {
+  font-weight: 700;
+}
+.tono-destino:hover:not(:disabled) {
+  background: var(--warn-soft);
+}
+.tono-destino:disabled {
+  cursor: default;
+}
+.tono-progreso {
+  position: relative;
+  overflow: hidden;
+  margin: 0 4px 0 2px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 11px;
+}
+.tono-progreso i {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--warn);
+  transition: width 0.3s;
+}
+.m-barra-tono {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--panel-3);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.m-barra-tono.cambiado {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.m-barra-tono small {
+  margin-left: 3px;
+  font-size: 11px;
+}
+
 .timeline-compases {
   position: absolute;
   left: 0;

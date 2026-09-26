@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Marcador, Pista, Proyecto, TempoProyecto } from '../shared/types'
 import { baseDeComprimido } from './comprimidos'
+import { normalizarTonalidad, TONO_MAX, TONO_MIN } from '../shared/tonalidad'
 
 /**
  * "Ficha" de una cancion: un archivito JSON al lado de su .zip/.rar en la
@@ -27,6 +28,9 @@ export interface FichaCancion {
   pistas: Pick<Pista, 'nombre' | 'volumen' | 'pan' | 'mute' | 'solo' | 'color' | 'rol' | 'panAutomatico'>[]
   tempo: TempoProyecto | null
   fuenteSecciones: 'archivo' | 'guia' | null
+  /** tono elegido (semitonos) y tonalidad original puesta a mano */
+  tono?: number
+  tonalidad?: string
 }
 
 export function rutaFicha(rutaComprimido: string): string {
@@ -57,7 +61,9 @@ export function fichaDesdeProyecto(p: Proyecto): FichaCancion {
       ...(typeof panAutomatico === 'boolean' ? { panAutomatico } : {})
     })),
     tempo: p.tempo ?? null,
-    fuenteSecciones: p.analisis?.fuente ?? null
+    fuenteSecciones: p.analisis?.fuente ?? null,
+    ...(p.tono ? { tono: p.tono } : {}),
+    ...(p.tonalidad ? { tonalidad: p.tonalidad } : {})
   }
 }
 
@@ -97,7 +103,9 @@ export function interpretarFicha(texto: string): FichaCancion | null {
       seccionesEditadas: !!f.seccionesEditadas,
       pistas,
       tempo,
-      fuenteSecciones: f.fuenteSecciones === 'guia' || f.fuenteSecciones === 'archivo' ? f.fuenteSecciones : null
+      fuenteSecciones: f.fuenteSecciones === 'guia' || f.fuenteSecciones === 'archivo' ? f.fuenteSecciones : null,
+      ...(typeof f.tono === 'number' && Number.isInteger(f.tono) && f.tono >= TONO_MIN && f.tono <= TONO_MAX && f.tono !== 0 ? { tono: f.tono } : {}),
+      ...(normalizarTonalidad(f.tonalidad) ? { tonalidad: normalizarTonalidad(f.tonalidad)! } : {})
     }
   } catch {
     return null

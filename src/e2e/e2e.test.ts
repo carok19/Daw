@@ -1373,3 +1373,89 @@ test('cambiar de canción y pausa → play: la compu (con sonido) y los celulare
     )
   }
 })
+
+test('tono: − / + en la compu prepara la canción en el tono nuevo; los celulares lo ven y siguen en sync', { timeout: 4 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-tono-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const zip = generarZip(tmp, 'Digno - A', [['Click', 900], ['Bajo', 110], ['Pad', 220]], 20, 'wav')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+    g.__zip = null
+    g.electronAPI = { isElectron: true, compuToken: 'e2e', pickZipFile: async () => g.__zip, getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }) }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(base)
+  await compu.evaluate((z) => ((globalThis as unknown as { __zip: string }).__zip = z), zip)
+  await compu.getByRole('button', { name: /Importar o abrir canción/ }).click()
+  await compu.getByRole('button', { name: /Importar \.zip/ }).click()
+  await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
+  await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Digno - A')
+
+  const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
+  ctxCel.setDefaultTimeout(15000)
+  await ctxCel.addInitScript(espiaAudio)
+  const cel = await ctxCel.newPage()
+  cel.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
+  await cel.goto(`${base}/?debug`)
+  await cel.getByRole('button', { name: /Tocá para empezar/ }).click()
+  const tonoCelular = (): Promise<string | null> => cel.locator('.m-barra-tono').textContent()
+
+  await t.test('la tonalidad sale del nombre de la canción', async () => {
+    const chip = compu.getByTestId('control-tono')
+    assert.equal(await chip.getByLabel('Tonalidad original').locator('option:checked').textContent(), 'A')
+    await cel.waitForFunction(() => document.querySelector('.m-barra-tono')?.textContent === 'A')
+  })
+
+  await t.test('+ + : la compu prepara las pistas y la canción pasa a B (+2)', async () => {
+    const chip = compu.getByTestId('control-tono')
+    await chip.getByRole('button', { name: 'Subir medio tono' }).click()
+    await chip.getByRole('button', { name: 'Subir medio tono' }).click()
+    await compu.waitForFunction(() => document.querySelector('.tono-destino')?.textContent?.replace(/\s+/g, ' ').trim() === '→ B +2')
+    // mientras se prepara se ve el progreso; despues desaparece
+    await compu.waitForSelector('.tono-progreso', { timeout: 10000 })
+    await compu.waitForSelector('.tono-progreso', { state: 'detached', timeout: 90000 })
+    await cel.waitForFunction(() => document.querySelector('.m-barra-tono')?.textContent === 'B+2', null, { timeout: 15000 })
+    const p = server.state.getActiveTab()!.proyecto
+    assert.equal(p.tonoAplicado, 2)
+    assert.equal(p.tonoPistas!.length, 2, 'el bajo y el pad (el click no)')
+  })
+
+  await t.test('suena en sync en el tono nuevo; sonando, el tono no se puede tocar', async () => {
+    await compu.getByRole('button', { name: 'Reproducir' }).click()
+    await enSync([cel], 'tras cambiar el tono')
+    assert.ok((await vivas(cel)) > 0, 'el celular suena')
+    const chip = compu.getByTestId('control-tono')
+    assert.equal(await chip.getByRole('button', { name: 'Subir medio tono' }).isDisabled(), true)
+    assert.equal(await chip.getByRole('button', { name: 'Bajar medio tono' }).isDisabled(), true)
+    await compu.getByRole('button', { name: 'Stop' }).click()
+  })
+
+  await t.test('tocar "→ B +2" vuelve al tono original', async () => {
+    await compu.locator('.tono-destino').click()
+    await compu.waitForSelector('.tono-destino', { state: 'detached' })
+    await cel.waitForFunction(() => document.querySelector('.m-barra-tono')?.textContent === 'A')
+    assert.equal(server.state.getActiveTab()!.proyecto.tonoAplicado, 0)
+  })
+
+  await t.test('la tonalidad original se puede corregir a mano', async () => {
+    await compu.getByLabel('Tonalidad original').selectOption('G')
+    await cel.waitForFunction(() => document.querySelector('.m-barra-tono')?.textContent === 'G')
+    assert.equal(await tonoCelular(), 'G')
+    await compu.getByLabel('Tonalidad original').selectOption('')
+    await cel.waitForFunction(() => document.querySelector('.m-barra-tono')?.textContent === 'A')
+    assert.deepEqual(errores, [])
+  })
+})

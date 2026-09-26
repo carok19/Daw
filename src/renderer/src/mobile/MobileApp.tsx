@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import type { Proyecto, SaltoPendiente } from '@shared/types'
 import { seccionEn } from '@shared/playback'
+import { textoSemitonos, tonalidadOriginal, transponerTonalidad } from '@shared/tonalidad'
 import type { AppController } from '../app/useAppController'
 import { usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
 import { leerPref } from '../app/preferencias'
@@ -272,6 +273,19 @@ function faltaPara(salto: SaltoPendiente, pos: number): string {
   return s <= 0 ? 'ya' : `en ${s} s`
 }
 
+/** Tonalidad en la que suena la cancion ("B +2"): asi la banda sabe en que tono esta tocando. */
+function TonoQueSuena({ proyecto }: { proyecto: Proyecto }) {
+  const n = proyecto.tonoAplicado ?? 0
+  const original = tonalidadOriginal(proyecto)
+  if (!original && !n) return null
+  return (
+    <span className={`m-barra-tono num ${n ? 'cambiado' : ''}`} title={n ? `Tono cambiado ${textoSemitonos(n)} semitonos` : 'Tonalidad'}>
+      {original && transponerTonalidad(original, n)}
+      {n !== 0 && <small>{textoSemitonos(n)}</small>}
+    </span>
+  )
+}
+
 function BarraFlotante({ controller, onHoja }: { controller: AppController; onHoja: (h: HojaAbierta) => void }) {
   const { estado, secciones } = controller
   const proyecto = estado!.proyectoActivo!
@@ -289,6 +303,7 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
       <button className="m-barra-info" onClick={() => onHoja('secciones')} aria-label="Ver secciones">
         <span className="m-barra-fila">
           <span className="m-barra-cancion">{proyecto.nombre}</span>
+          <TonoQueSuena proyecto={proyecto} />
           <span className="m-barra-tiempo num">
             {formatMmSs(pos)} / {formatMmSs(proyecto.duracionTotalMs)}
           </span>

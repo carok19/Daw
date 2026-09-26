@@ -21,6 +21,8 @@ import { fichaDesdeProyecto, interpretarFicha } from './ficha'
 import { Mezclador } from './mezclador'
 import { armarLicencia, datosAFirmar, type DatosLicencia } from '../shared/licencia'
 import { Licencias } from './licencia'
+import { demoraEntre, pistasQueCambianDeTono } from './tono'
+import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { wav16 } from './__fixtures__/sintetico'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
@@ -32,6 +34,7 @@ import type {
   DispositivoInfo,
   EstadoCompleto,
   MixerActualizadoPayload,
+  ProgresoTono,
   Pista,
   Proyecto,
   ProyectoResumen,
@@ -764,6 +767,187 @@ test('paneo por defecto: click y guía a la izquierda y la banda a la derecha (p
       [100, true]
     ]
   )
+  await env.cerrar()
+})
+
+/** Energia de `x` en la frecuencia `f` (Goertzel). */
+function energiaEn(x: Float32Array, f: number, sr: number): number {
+  const w = (2 * Math.PI * f) / sr
+  const c = 2 * Math.cos(w)
+  let s1 = 0
+  let s2 = 0
+  for (let i = 0; i < x.length; i++) {
+    const s0 = x[i] + c * s1 - s2
+    s2 = s1
+    s1 = s0
+  }
+  return s1 * s1 + s2 * s2 - c * s1 * s2
+}
+
+test('tono: tonalidad del nombre, qué pistas cambian y cómo se escribe', () => {
+  assert.equal(tonalidadDesdeNombre('Gracia Sublime Es - 98 bpm - A'), 'A')
+  assert.equal(tonalidadDesdeNombre('Digno (Bb)'), 'Bb')
+  assert.equal(tonalidadDesdeNombre('Oceans - Key of D'), 'D')
+  assert.equal(tonalidadDesdeNombre('Way Maker - F#m'), 'F#m')
+  assert.equal(tonalidadDesdeNombre('Santo - tono G'), 'G')
+  assert.equal(tonalidadDesdeNombre('Abba Padre - A#'), 'Bb')
+  assert.equal(tonalidadDesdeNombre('Rey de Reyes [Dbm]'), 'C#m')
+  assert.equal(tonalidadDesdeNombre('Cuan Grande Es Él'), null)
+  assert.equal(tonalidadDesdeNombre('Mi Dios es Grande'), null)
+  assert.equal(tonalidadDesdeNombre('Alabanza 2'), null)
+  assert.equal(normalizarTonalidad('a#'), 'Bb')
+  assert.equal(normalizarTonalidad('gmin'), 'Gm')
+  assert.equal(normalizarTonalidad('D menor'), 'Dm')
+  assert.equal(normalizarTonalidad('H'), null)
+  assert.equal(normalizarTonalidad(3), null)
+  assert.equal(transponerTonalidad('A', 2), 'B')
+  assert.equal(transponerTonalidad('Am', -1), 'G#m')
+  assert.equal(transponerTonalidad('F#', 6), 'C')
+  assert.equal(transponerTonalidad('Bb', -6), 'E')
+  assert.equal(tonalidadOriginal({ nombre: 'Digno - A', tonalidad: 'C' }), 'C', 'la puesta a mano manda')
+
+  assert.ok(pareceVoz('Coros') && pareceVoz('BGV 2') && pareceVoz('Voz Principal') && pareceVoz('Choir'))
+  assert.ok(!pareceVoz('Guitarra') && !pareceVoz('Bajo'))
+  assert.ok(pareceBateria('Drums') && pareceBateria('Batería') && pareceBateria('Kick In') && pareceBateria('OH L') && pareceBateria('Percusión'))
+  assert.ok(!pareceBateria('Bajo') && !pareceBateria('Pad') && !pareceBateria('Hosanna'))
+  const pista = (id: string, nombre: string, extra: Partial<Pista> = {}): Pista => ({ id, nombre, archivo: `${id}.wav`, volumen: 80, pan: 0, mute: false, solo: false, color: '#fff', ...extra })
+  const p = {
+    pistas: [pista('a', 'Click'), pista('b', 'Guía'), pista('c', 'Drums'), pista('d', 'Bajo'), pista('e', 'Coros'), pista('f', 'Pista 7'), pista('g', 'Metrónomo', { rol: 'normal' })],
+    tempo: { bpm: 120, compas: 4, compasesMs: [], clickPistaId: 'f', acentoClaro: true }
+  } as unknown as Proyecto
+  assert.deepEqual(pistasQueCambianDeTono(p).map((x) => x.id), ['d', 'e', 'g'])
+})
+
+test('tono: la compu prepara las pistas en el tono nuevo (mismo largo, a tiempo con el click), el click y la batería quedan igual; se aplica al parar', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const sr = 44100
+  const seg = 8
+  // notas con ataque (para medir que sigan cayendo a tiempo)
+  const notas = (f: number, armonicos: number): Float32Array => {
+    const x = new Float32Array(seg * sr)
+    for (let n = 0; n < 14; n++) {
+      const i0 = Math.round((0.3 + n * 0.5 + (n % 3) * 0.07) * sr)
+      for (let i = 0; i < sr * 0.45 && i0 + i < x.length; i++) {
+        const tt = i / sr
+        let v = 0
+        for (let k = 1; k <= armonicos; k++) v += Math.sin(2 * Math.PI * f * k * tt) / k
+        x[i0 + i] += 0.3 * Math.min(1, tt / 0.004) * Math.exp(-tt / 0.15) * v
+      }
+    }
+    return x
+  }
+  const ruido = new Float32Array(seg * sr)
+  for (let i = 0; i < ruido.length; i++) ruido[i] = (i % sr) < 3000 ? 0.3 * (Math.random() * 2 - 1) * Math.exp(-(i % sr) / 800) : 0
+  const originales = { Click: wav16(notas(1000, 1), sr), Drums: wav16(ruido, sr), Bajo: wav16(notas(110, 3), sr), Coros: wav16(notas(220, 6), sr) }
+  const estado = await cargarZip(
+    compu,
+    crearZip('Digno - 72 bpm - A', Object.fromEntries(Object.entries(originales).map(([n, b]) => [`${n}.wav`, b])))
+  )
+  const p = estado.proyectoActivo!
+  assert.equal(tonalidadOriginal(p), 'A')
+  const pista = (nombre: string): Pista => p.pistas.find((x) => x.nombre === nombre)!
+  const media = async (nombre: string, revision: number): Promise<{ bytes: Buffer; x: Float32Array }> => {
+    const r = await fetch(`http://localhost:${env.port}/media/${p.id}/${pista(nombre).archivo.split('/').map(encodeURIComponent).join('/')}?v=${revision}`)
+    assert.equal(r.status, 200)
+    const bytes = Buffer.from(await r.arrayBuffer())
+    const info = parseWavHeader(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer)
+    const x = decodePcmSegment(info, bytes.buffer.slice(bytes.byteOffset + info.dataOffset, bytes.byteOffset + info.dataOffset + info.dataLength) as ArrayBuffer)[0]
+    return { bytes, x }
+  }
+  const esperarTono = (n: number, ms = 90000): Promise<EstadoCompleto> =>
+    esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => (e.proyectoActivo?.tonoAplicado ?? 0) === n, ms)
+
+  // valores que no van
+  for (const semitonos of [7, -7, 1.5, '2', null]) {
+    const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'tono:cambiar', { proyectoId: p.id, semitonos })
+    assert.equal(r.ok, false, `semitonos ${String(semitonos)}`)
+  }
+
+  // +2: se prepara (sigue sonando el original) y cuando estan todas, pasa
+  const revisionAntes = p.revision ?? 0
+  const listo = esperarTono(2)
+  const progresos: ProgresoTono[] = []
+  compu.on('tono:progreso', (x: ProgresoTono) => progresos.push(x))
+  const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'tono:cambiar', { proyectoId: p.id, semitonos: 2 })
+  assert.equal(r.ok, true, r.error)
+  const pedido = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.equal(pedido.proyectoActivo!.tono, 2)
+  assert.equal(pedido.proyectoActivo!.tonoAplicado ?? 0, 0, 'mientras se prepara suena el original')
+  const e2 = (await listo).proyectoActivo!
+  assert.equal(e2.revision, revisionAntes + 1, 'los dispositivos vuelven a cargar la cancion')
+  assert.deepEqual([...e2.tonoPistas!].sort(), [pista('Bajo').id, pista('Coros').id].sort(), 'el click y la bateria no cambian')
+  assert.ok(progresos.some((x) => x.semitonos === 2 && x.total === 2 && x.hechos === 2))
+
+  // lo que sirve /media: el bajo y los coros, un tono mas arriba (110 -> 123,5 Hz), mismo largo y a tiempo
+  const bajo = await media('Bajo', e2.revision!)
+  const bajoOriginal = decodePcmSegment(parseWavHeader(originales.Bajo.buffer.slice(originales.Bajo.byteOffset) as ArrayBuffer), originales.Bajo.buffer.slice(originales.Bajo.byteOffset + 44, originales.Bajo.byteOffset + originales.Bajo.byteLength) as ArrayBuffer)[0]
+  assert.equal(bajo.x.length, seg * sr, 'mismo largo exacto')
+  const rms = (x: Float32Array): number => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length)
+  assert.ok(Math.abs(20 * Math.log10(rms(bajo.x) / rms(bajoOriginal))) < 1, 'con el mismo volumen')
+  assert.ok(energiaEn(bajo.x, 123.47, sr) > 5 * energiaEn(bajo.x, 110, sr), 'suena un tono mas arriba')
+  const corrimiento = demoraEntre(bajoOriginal, bajo.x, sr) * 1000
+  assert.ok(Math.abs(corrimiento) < 1.5, `las notas siguen cayendo a tiempo (corrida ${corrimiento.toFixed(2)} ms)`)
+  const coros = await media('Coros', e2.revision!)
+  assert.equal(coros.x.length, seg * sr)
+  assert.ok(energiaEn(coros.x, 246.94, sr) > 5 * energiaEn(coros.x, 220, sr), 'los coros tambien')
+  const click = await media('Click', e2.revision!)
+  assert.ok(click.bytes.subarray(44).equals(originales.Click.subarray(44)), 'el click es el mismo')
+  const drums = await media('Drums', e2.revision!)
+  assert.ok(drums.bytes.subarray(44).equals(originales.Drums.subarray(44)), 'la bateria es la misma')
+  // la mezcla de los celulares usa las pistas transpuestas
+  const canales = mezclaEfectiva(e2.pistas).map((c) => ({ ...c, ganancia: c.pistaId === pista('Bajo').id ? 1 : 0 }))
+  const rm = await fetch(`http://localhost:${env.port}/mezcla/${p.id}/1.wav?v=${e2.revision}&m=${codificarMezcla(canales)}`)
+  assert.equal(rm.status, 200)
+  const bm = await rm.arrayBuffer()
+  const im = parseWavHeader(bm)
+  const [mL, mR] = decodePcmSegment(im, bm.slice(im.dataOffset))
+  const mono = mL.map((v, i) => v + mR[i])
+  assert.ok(energiaEn(mono, 123.47, sr) > 5 * energiaEn(mono, 110, sr), 'la mezcla del celular tambien suena en el tono nuevo')
+
+  // sonando no se cambia
+  compu.emit('transport:play', {})
+  await esperar(100)
+  const sonando = await emitAck<{ ok: boolean; error?: string }>(compu, 'tono:cambiar', { proyectoId: p.id, semitonos: -3 })
+  assert.equal(sonando.ok, false)
+  assert.match(sonando.error ?? '', /Pará la música/)
+  compu.emit('transport:stop', {})
+  await esperar(100)
+
+  // si le dan play mientras se prepara, el tono nuevo entra recien al parar
+  const preparado = esperarEvento<ProgresoTono>(compu, 'tono:progreso', (x) => x.semitonos === -3 && x.total > 0 && x.hechos === x.total, 90000)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'tono:cambiar', { proyectoId: p.id, semitonos: -3 })).ok, true)
+  compu.emit('transport:play', {})
+  await preparado
+  await esperar(1500)
+  let ahora = (await emitAck<EstadoCompleto>(compu, 'state:request', {})).proyectoActivo!
+  assert.equal(ahora.tonoAplicado, 2, 'sonando: sigue en el tono de antes')
+  const menos3 = esperarTono(-3, 10000)
+  compu.emit('transport:stop', {})
+  ahora = (await menos3).proyectoActivo!
+  assert.deepEqual(fs.readdirSync(path.join(env.appDir, 'proyectos', p.id, 'tono')), ['-3'], 'queda solo el ultimo tono')
+  const bajoMenos3 = (await media('Bajo', ahora.revision!)).x
+  assert.ok(energiaEn(bajoMenos3, 92.5, sr) > 5 * energiaEn(bajoMenos3, 110, sr), 'un tono y medio mas abajo')
+
+  // volver al original: enseguida, y se borran las pistas transpuestas
+  const cero = esperarTono(0, 5000)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'tono:cambiar', { proyectoId: p.id, semitonos: 0 })).ok, true)
+  ahora = (await cero).proyectoActivo!
+  assert.deepEqual(ahora.tonoPistas, [])
+  assert.equal(fs.existsSync(path.join(env.appDir, 'proyectos', p.id, 'tono')), false)
+  assert.ok((await media('Bajo', ahora.revision!)).bytes.subarray(44).equals(originales.Bajo.subarray(44)))
+
+  // tonalidad original a mano (y "la del nombre" otra vez)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'tono:tonalidad', { proyectoId: p.id, tonalidad: 'bb' })).ok, true)
+  assert.equal((await emitAck<EstadoCompleto>(compu, 'state:request', {})).proyectoActivo!.tonalidad, 'Bb')
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'tono:tonalidad', { proyectoId: p.id, tonalidad: 'X' })).ok, false)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'tono:tonalidad', { proyectoId: p.id, tonalidad: null })).ok, true)
+  assert.equal((await emitAck<EstadoCompleto>(compu, 'state:request', {})).proyectoActivo!.tonalidad, undefined)
+
+  // el tono y la tonalidad van en la ficha de la cancion
+  const ficha = interpretarFicha(JSON.stringify(fichaDesdeProyecto({ ...ahora, tono: -2, tonalidad: 'G' })))!
+  assert.equal(ficha.tono, -2)
+  assert.equal(ficha.tonalidad, 'G')
   await env.cerrar()
 })
 

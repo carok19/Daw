@@ -60,6 +60,8 @@ import type { ModelosVoz } from './modelos'
 import { guardarAjustes, normalizarCodigo, type Ajustes } from './ajustes'
 import type { EstadisticasMezcla } from './mezclador'
 import type { Licencias } from './licencia'
+import { esTonoValido, Tonos } from './tono'
+import { normalizarTonalidad, textoSemitonos, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { direccionesLan, ipParaCliente } from './network'
 import { NOMBRE_FIJO } from './descubrimiento'
 
@@ -96,6 +98,7 @@ export interface Servicios {
   transporte: Transporte
   analizador: Analizador
   biblioteca: Biblioteca
+  tonos: Tonos
 }
 
 /** Lo que la conexion de los celulares necesita del servidor (puertos, ajustes, app Android). */
@@ -268,8 +271,41 @@ export function registerSocketHandlers(
     if (info.estado === 'listo') aCompus('analisis:pedidos', analizador.pedidos())
   })
 
+  // cambio de tono: la compu prepara las pistas transpuestas y la cancion pasa al tono nuevo cuando estan todas
+  const tonos = new Tonos({
+    abiertos: () => state.listaProyectos(),
+    sonando: (id) => {
+      const activa = state.getActiveTab()
+      return !!activa && activa.proyecto.id === id && activa.playback.estado === 'playing'
+    },
+    algoSuena,
+    aplicado(p) {
+      if (proyectoExiste(p.id)) saveProyecto(p)
+      if (state.tabDeProyecto(p.id)) emitirEstadoPronto()
+      aCompus('tono:progreso', { proyectoId: p.id, semitonos: p.tonoAplicado ?? 0, hechos: 0, total: 0 })
+      const original = tonalidadOriginal(p)
+      const n = p.tonoAplicado ?? 0
+      const tono = original ? transponerTonalidad(original, n) : null
+      aCompus('aviso', {
+        tipo: 'info',
+        grupo: 'tono',
+        texto: n
+          ? `“${p.nombre}” ya suena en ${tono ? `${tono} (${textoSemitonos(n)})` : `${textoSemitonos(n)} semitonos`}`
+          : `“${p.nombre}” volvió al tono original${original ? ` (${original})` : ''}`
+      })
+    },
+    progreso: (p) => aCompus('tono:progreso', p),
+    fallo(p, mensaje) {
+      if (proyectoExiste(p.id)) saveProyecto(p)
+      if (state.tabDeProyecto(p.id)) emitirEstadoPronto()
+      aCompus('tono:progreso', { proyectoId: p.id, semitonos: p.tonoAplicado ?? 0, hechos: 0, total: 0 })
+      aCompus('aviso', { tipo: 'error', texto: `No se pudo cambiar el tono de “${p.nombre}”: ${mensaje}` })
+    }
+  })
+
   async function importarZip(zip: string, categoria: string | undefined, reemplazarId: string | null, onProgreso?: (p: ImportProgreso) => void): Promise<Proyecto> {
-    const p = await crearProyectoDesdeZip(zip, { categoria, reemplazarId: reemplazarId ?? undefined, onProgreso })
+    // mientras se reemplaza el audio no se prepara ningun tono de esa cancion (despues se rehace con el audio nuevo)
+    const p = await tonos.durante(reemplazarId, () => crearProyectoDesdeZip(zip, { categoria, reemplazarId: reemplazarId ?? undefined, onProgreso }))
     if (p.analisis?.estado !== 'listo') analizador.encolar(p.id)
     if (state.tabDeProyecto(p.id)) emitirEstadoPronto()
     aCompus('proyectos:cambio', { proyectoId: p.id })
@@ -680,6 +716,43 @@ export function registerSocketHandlers(
       if (typeof payload?.proyectoId === 'string' && state.renombrarProyecto(payload.proyectoId, payload.nombre)) emitirEstado()
     })
 
+    // ---- Tono (semitonos) ----
+
+    socket.on('tono:cambiar', (payload: { proyectoId?: unknown; semitonos?: unknown }, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede cambiar el tono' })
+      const id = payload?.proyectoId
+      const proyecto = typeof id === 'string' ? state.tabDeProyecto(id)?.proyecto : null
+      if (!proyecto) return ack?.({ ok: false, error: 'La canción no está abierta' })
+      if (!esTonoValido(payload?.semitonos)) return ack?.({ ok: false, error: 'El tono va de −6 a +6 semitonos' })
+      const activa = state.getActiveTab()
+      // el tono se prepara antes de tocar: con la cancion sonando no se cambia
+      if (activa?.proyecto.id === proyecto.id && activa.playback.estado === 'playing') return ack?.({ ok: false, error: 'Pará la música para cambiar el tono' })
+      tonos.pedir(proyecto, payload.semitonos)
+      saveProyecto(proyecto)
+      emitirEstado()
+      ack?.({ ok: true })
+    })
+
+    socket.on('tono:tonalidad', (payload: { proyectoId?: unknown; tonalidad?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      const id = payload?.proyectoId
+      const proyecto = typeof id === 'string' ? state.tabDeProyecto(id)?.proyecto : null
+      if (!proyecto) return ack?.({ ok: false })
+      // null = la del nombre de la cancion
+      const tonalidad = payload?.tonalidad === null ? null : normalizarTonalidad(payload?.tonalidad)
+      if (payload?.tonalidad !== null && !tonalidad) return ack?.({ ok: false })
+      if (tonalidad) proyecto.tonalidad = tonalidad
+      else delete proyecto.tonalidad
+      saveProyecto(proyecto)
+      emitirEstado()
+      ack?.({ ok: true })
+    })
+
+    socket.on('tono:preparando', (_payload: unknown, ack?: Ack<ReturnType<Tonos['preparando']>[]>) => {
+      if (!soloCompu(socket)) return ack?.([])
+      ack?.(state.listaProyectos().map((p) => tonos.preparando(p.id)).filter((x) => !!x))
+    })
+
     // ---- Pestanas / setlist ----
 
     // cambiar de cancion es control de transporte: los celulares pueden, salvo que la compu los bloquee
@@ -772,6 +845,7 @@ export function registerSocketHandlers(
       }
       analizador.olvidar(payload.id)
       biblioteca.olvidarProyecto(payload.id)
+      tonos.cancelar(payload.id)
       deleteProyecto(payload.id)
       transporte.reprogramarTimers()
       emitirEstado()
@@ -985,7 +1059,7 @@ export function registerSocketHandlers(
 
   })
 
-  return { transporte, analizador, biblioteca }
+  return { transporte, analizador, biblioteca, tonos }
 }
 
 /** Si la app se cerro hace menos que esto (se corto a mitad de un culto), al abrirla vuelve todo como estaba. */

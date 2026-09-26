@@ -6,6 +6,7 @@ import type { Proyecto } from '../shared/types'
 import { SEGMENTO_SEC, type CanalMezcla } from '../shared/mezcla'
 import { parseWavHeader, totalFrames, WAV_HEADER_FETCH_BYTES } from '../shared/wav'
 import { calcularMezcla, type InfoPista, type TrabajoMezcla } from './mezclaCalculo'
+import { archivoQueSuena } from './tono'
 
 /** El hilo de trabajo (mezclaWorker.ts) compilado como texto por scripts/build-main.mjs (si no esta: se mezcla aca). */
 declare const __CODIGO_WORKER_MEZCLA__: string | undefined
@@ -274,7 +275,7 @@ export class Mezclador {
     const infos = new Map<string, InfoPista>()
     for (const p of proyecto.pistas) {
       try {
-        infos.set(p.id, await this.infoDe(proyecto, p.archivo))
+        infos.set(p.id, await this.infoDe(proyecto, archivoQueSuena(proyecto, p)))
       } catch {
         // pista ilegible o que falta: queda muda (las demas suenan)
       }

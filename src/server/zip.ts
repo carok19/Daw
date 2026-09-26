@@ -4,6 +4,7 @@ import crypto from 'node:crypto'
 import os from 'node:os'
 import type { ImportProgreso, Marcador, Proyecto, Pista } from '../shared/types'
 import { FORMATO_PROYECTO_ACTUAL } from '../shared/types'
+import { DIR_TONO } from './tono'
 import { colorPorIndice, deleteProyecto, esIdValido, loadProyecto, projectAudioDir, projectDir, proyectoExiste, saveProyecto } from './projects'
 import { EXTENSIONES_AUDIO, enParalelo, normalizarAWav } from './audio'
 import { EXTENSIONES_MARCADORES, marcadoresDelZip } from './analisis/archivos'
@@ -194,6 +195,10 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
       revision: (anterior?.revision ?? 0) + (anterior ? 1 : 0),
       tempo: fichaVigente ? ficha!.tempo : null,
       seccionesEditadas: anterior?.seccionesEditadas ?? (fichaVigente ? ficha!.seccionesEditadas : false),
+      // audio nuevo: el tono elegido se vuelve a preparar con el (ver tono.ts); de la ficha, el tono y la tonalidad
+      ...(anterior ? { tonoAplicado: 0, tonoPistas: [] } : {}),
+      ...(!anterior && ficha?.tono ? { tono: ficha.tono } : {}),
+      ...(!anterior && ficha?.tonalidad ? { tonalidad: ficha.tonalidad } : {}),
       // con la ficha vigente ya esta todo: no hace falta volver a analizar
       analisis: fichaVigente
         ? { estado: 'listo', fuente: ficha!.fuenteSecciones, guiaPistaId: null }
@@ -209,6 +214,11 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
       if (fs.existsSync(audioFinal)) fs.renameSync(audioFinal, viejo)
       fs.renameSync(audioDir, audioFinal)
       fs.rmSync(viejo, { recursive: true, force: true })
+      try {
+        fs.rmSync(path.join(projectDir(id), DIR_TONO), { recursive: true, force: true })
+      } catch {
+        // algun archivo todavia abierto: se borra al aplicar el proximo tono
+      }
       // el mismo objeto en memoria (puede estar abierto en el setlist): se actualiza en el lugar
       Object.assign(anterior, proyecto)
       saveProyecto(anterior)

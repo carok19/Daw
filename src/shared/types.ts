@@ -108,6 +108,25 @@ export interface Proyecto {
    * (solo "Detectar", que lo pide explicitamente)
    */
   seccionesEditadas?: boolean
+  /** tono elegido, en semitonos (−6 a +6; sin o 0 = el original) */
+  tono?: number
+  /**
+   * tono con el que suena ahora (pistas ya preparadas): mientras se prepara
+   * el nuevo, sigue sonando este
+   */
+  tonoAplicado?: number
+  /** pistas que suenan transpuestas (el click, la guia y la bateria no) */
+  tonoPistas?: string[]
+  /** tonalidad original puesta a mano ("A", "F#m"); sin: se lee del nombre de la cancion */
+  tonalidad?: string
+}
+
+/** Cuantas pistas ya estan listas del tono que se esta preparando (total 0 = ya no se prepara nada). */
+export interface ProgresoTono {
+  proyectoId: string
+  semitonos: number
+  hechos: number
+  total: number
 }
 
 /** Resumen liviano de proyecto guardado en disco, para la lista de "Canciones guardadas". */

@@ -23,7 +23,8 @@ import type {
   PlaybackState,
   Proyecto,
   ProyectoResumen,
-  DatosListas
+  DatosListas,
+  ProgresoTono
 } from '@shared/types'
 import { calcularSecciones, estaSonando, posicionActualMs, seccionEn } from '@shared/playback'
 import { SocketClient } from '../sync/SocketClient'
@@ -136,6 +137,8 @@ export function useAppController() {
   const [modeloVoz, setModeloVoz] = useState<InfoModeloVoz>({ estado: 'falta' })
   const [biblioteca, setBiblioteca] = useState<EstadoBiblioteca | null>(null)
   const [progresoAnalisis, setProgresoAnalisis] = useState<Record<string, { hechos: number; total: number }>>({})
+  /** pistas ya preparadas del tono que se esta preparando, por cancion */
+  const [progresoTono, setProgresoTono] = useState<Record<string, ProgresoTono>>({})
   /** sube cada vez que el servidor avisa que cambio alguna cancion guardada (para refrescar listas) */
   const [versionProyectos, setVersionProyectos] = useState(0)
   /** cambia cuando cambia alguna lista del dia o carpeta (para recargar la pantalla de listas) */
@@ -353,6 +356,14 @@ export function useAppController() {
       socket.on<{ proyectoId: string; hechos: number; total: number }>('analisis:progreso', (p) =>
         setProgresoAnalisis((prev) => ({ ...prev, [p.proyectoId]: { hechos: p.hechos, total: p.total } }))
       ),
+      socket.on<ProgresoTono>('tono:progreso', (p) =>
+        setProgresoTono((prev) => {
+          const r = { ...prev }
+          if (p.total > 0) r[p.proyectoId] = p
+          else delete r[p.proyectoId]
+          return r
+        })
+      ),
       socket.on<{ tipo: 'info' | 'error'; texto: string; grupo?: string }>('aviso', (a) => avisarAgrupado(a)),
       socket.on('proyectos:cambio', () => setVersionProyectos((v) => v + 1)),
       socket.on('listas:cambio', () => setVersionListas((v) => v + 1)),
@@ -373,6 +384,11 @@ export function useAppController() {
           setPedidoCodigo(null)
           setPedidoLicencia(null)
           if (origen === 'compu') void socket.emitAck<EstadoLicencia | null>('licencia:estado', {}, 5000).then(setLicencia, () => undefined)
+          if (origen === 'compu')
+            void socket.emitAck<ProgresoTono[]>('tono:preparando', {}, 5000).then(
+              (l) => setProgresoTono(Object.fromEntries(l.map((p) => [p.proyectoId, p]))),
+              () => undefined
+            )
           // el codigo funciono: queda guardado para la proxima
           if (codigoRef.current) guardarPref('codigo-banda', codigoRef.current)
           await socket.sincronizarReloj()
@@ -686,6 +702,19 @@ export function useAppController() {
       renameProject(proyectoId: string, nombre: string): void {
         emit('project:rename', { proyectoId, nombre })
       },
+      /** Pasa la cancion a otro tono (semitonos respecto del original): la compu prepara las pistas antes. */
+      async cambiarTono(proyectoId: string, semitonos: number): Promise<void> {
+        try {
+          const r = await socket.emitAck<{ ok: boolean; error?: string }>('tono:cambiar', { proyectoId, semitonos }, 5000)
+          if (!r.ok && r.error) avisar({ tipo: 'error', texto: r.error })
+        } catch {
+          avisar({ tipo: 'error', texto: 'No se pudo cambiar el tono (sin conexión con la compu)' })
+        }
+      },
+      /** Tonalidad original de la cancion (null = la que dice el nombre). */
+      ponerTonalidad(proyectoId: string, tonalidad: string | null): void {
+        emit('tono:tonalidad', { proyectoId, tonalidad })
+      },
       setLocked(locked: boolean): void {
         emit('lock:set', { locked })
       },
@@ -860,6 +889,7 @@ export function useAppController() {
     modeloVoz,
     biblioteca,
     progresoAnalisis,
+    progresoTono,
     versionProyectos,
     versionListas,
     ajustarCompas,

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square, X } from 'lucide-react'
-import type { PlaybackState, Proyecto, SaltoPendiente } from '@shared/types'
+import type { PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadPaso } from '../app/playheadStore'
@@ -8,6 +8,7 @@ import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
 import { Timeline } from './Timeline'
 import { SyncBadge } from './SyncBadge'
+import { ControlTono } from './ControlTono'
 
 interface Props {
   proyecto: Proyecto
@@ -29,6 +30,9 @@ interface Props {
   onAjustarCompas: (v: boolean) => void
   saltoPendiente: SaltoPendiente | null
   onCancelarSalto: () => void
+  progresoTono: ProgresoTono | null
+  onCambiarTono: (semitonos: number) => void
+  onTonalidad: (tonalidad: string | null) => void
 }
 
 function textoCompas(compas: number): string {
@@ -113,31 +117,34 @@ export function Transport(p: Props) {
     <section className="transporte">
       <div className="transporte-fila">
         <div className="transporte-info">
-          {editando ? (
-            <input
-              className="cancion-titulo-input"
-              autoFocus
-              value={nombre}
-              maxLength={80}
-              onChange={(e) => setNombre(e.target.value)}
-              onBlur={confirmar}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') confirmar()
-                if (e.key === 'Escape') setEditando(false)
-              }}
-            />
-          ) : (
-            <div
-              className="cancion-titulo"
-              title="Doble click para renombrar"
-              onDoubleClick={() => {
-                setNombre(p.proyecto.nombre)
-                setEditando(true)
-              }}
-            >
-              {p.proyecto.nombre}
-            </div>
-          )}
+          <div className="transporte-titulo-fila">
+            {editando ? (
+              <input
+                className="cancion-titulo-input"
+                autoFocus
+                value={nombre}
+                maxLength={80}
+                onChange={(e) => setNombre(e.target.value)}
+                onBlur={confirmar}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') confirmar()
+                  if (e.key === 'Escape') setEditando(false)
+                }}
+              />
+            ) : (
+              <div
+                className="cancion-titulo"
+                title="Doble click para renombrar"
+                onDoubleClick={() => {
+                  setNombre(p.proyecto.nombre)
+                  setEditando(true)
+                }}
+              >
+                {p.proyecto.nombre}
+              </div>
+            )}
+            <ControlTono proyecto={p.proyecto} sonando={sonando} progreso={p.progresoTono} onCambiar={p.onCambiarTono} onTonalidad={p.onTonalidad} />
+          </div>
           <div className="transporte-meta">
             <SeccionActual secciones={p.secciones} loop={p.loop} salto={p.saltoPendiente} onCancelarSalto={p.onCancelarSalto} />
             {p.proyecto.tempo && (

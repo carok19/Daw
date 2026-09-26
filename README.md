@@ -169,6 +169,11 @@ cambian a propósito.
    suelto no cambia nada (doble toque: vuelve a “igual”). La canción, la
    sección y el transporte van en una **barra flotante** abajo, con las
    secciones y las canciones del setlist a un toque.
+   **Volumen de este celular: hasta 200 %.** Si con el celular al máximo
+   suena bajito (pasa con muchos auriculares), se sube por encima de 100 %
+   (hasta +6 dB). Un limitador en el celular evita que distorsione: los
+   golpes más fuertes se aplanan en vez de saturar. 100 % es el volumen
+   normal (doble toque vuelve ahí).
    **Paneo por defecto: click y guía en L, la banda en R.** Toda canción
    entra así, sin tocar nada, en la mezcla de la compu (se ve en los paneos
    de cada pista) y por lo tanto en todos los celulares. El click y la guía
@@ -187,6 +192,22 @@ cambian a propósito.
    (aunque la marca haya quedado unos ms corrida), un click en la línea de
    tiempo espera al próximo compás, y la vuelta de “repetir” también va de
    compás a compás. Así, aunque se salte muy lejos, el pulso no se corta.
+10. **Cambiar el tono** (de −6 a +6 semitonos): en la compu, al lado del
+    nombre de la canción, **− A +**. Cada toque sube o baja medio tono y se
+    ve “A → B +2”. La compu prepara las pistas en el tono nuevo (unos
+    segundos por pista; se ve “Preparando 3/12”) y, cuando están todas, la
+    canción pasa a ese tono en la compu y en todos los celulares (arriba del
+    celular se ve “B +2”). Conviene hacerlo antes del culto o entre
+    canciones: **con la canción sonando no se cambia** (si se le da play
+    mientras se prepara, el tono nuevo entra al parar).
+    - El **click, la guía y la batería** quedan como están; las **voces**
+      (coros, voz principal) conservan el timbre, no suenan “chillonas”.
+    - Todo sigue cayendo justo con el click: las pistas nuevas duran
+      exactamente lo mismo y la demora del cambio de tono se corrige.
+    - La canción **recuerda su tono** (también en su ficha). Tocar “→ B +2”
+      vuelve al original al instante.
+    - La tonalidad original se lee del nombre (“Digno - A”, “Oceans (Bb)”,
+      “… - Key of F#m”); si no está o está mal, se elige en el mismo botón.
 
 **Ancho de banda:** la compu le arma a cada celular **su mezcla** (la del
 director + su “Mi mezcla”) y le manda **una sola pista estéreo**: ~1,4 Mbps
@@ -335,11 +356,16 @@ cada segmento se libera apenas termina.
   `/mezcla/<canción>/<n>.wav?m=…` (ganancia y paneo de cada pista, ya con
   su “Mi mezcla”) y recibe el segmento `n` como un WAV estéreo de 16 bits
   (`server/mezclador.ts`, mismo paneo “equal power” que Web Audio y un
-  limitador suave por encima de 0,9). La compu no se traba: mezcla de a 2 por
-  vez y cede el turno entre pista y pista (los mensajes de sincronización
-  salen a tiempo), y guarda los segmentos recientes (los celulares con la
-  misma mezcla los comparten). ~20 ms por segmento con 20 pistas estéreo.
-  Colchón de 20 s por delante.
+  limitador suave por encima de 0,9). La compu no se traba: mezcla en
+  **hilos de trabajo** (uno por núcleo, hasta 4, dejando uno libre para el
+  resto de la app) y atiende **primero lo más urgente**: el segmento que va a
+  sonar antes en la canción que está arriba, aunque se haya pedido último
+  (la precarga de la siguiente canción, al final). Guarda los segmentos
+  recientes (los celulares con la misma mezcla los comparten). ~20 ms por
+  segmento con 20 pistas estéreo. Colchón de 20 s por delante. Probado con
+  48 celulares con 16 pistas, todos arrancando juntos y cambiando “Mi mezcla”
+  a la vez: ningún segmento llegó tarde (antes, con 32 ya se atrasaban).
+  `MULTITRACK_HILOS_MEZCLA=0` mezcla en el hilo principal.
 - **Cambio de mezcla sin cortes:** mientras llega la mezcla nueva sigue
   sonando la anterior; cuando llega, se pasa a ella en el mismo punto exacto
   de la canción con un fundido de 20 ms (mientras se arrastra un fader, como
@@ -378,6 +404,31 @@ cada segmento se libera apenas termina.
 | `BUFFER_MIN_START_SEC` | 3 | Mínimo para (re)arrancar |
 | `MAX_CUES` / `SEGMENTOS_POR_CUE` | 16 / 2 | Arranques de sección precargados |
 | `SEGMENTOS_PRECARGA_SIGUIENTE` | 2 | Comienzo de la próxima canción precargado |
+
+### Cambio de tono
+
+`server/tono.ts`. El tono se prepara **antes** de tocar, en la compu: por
+cada pista que cambia (todas menos click, guía y batería, detectados por el
+análisis o por el nombre) se corre ffmpeg con **rubberband**
+(`pitchq=quality`; `formant=preserved` en las voces) en procesos aparte con
+prioridad baja (hasta 3 a la vez; 1 si hay algo sonando). Las pistas nuevas
+van a `proyectos/<id>/tono/<semitonos>/` y recién cuando están todas la
+canción pasa al tono nuevo: sube la `revision` (los dispositivos vuelven a
+cargarla) y `/media` y la mezcla de los celulares sirven las transpuestas en
+lugar de las originales. Así, mientras se toca, no hay ningún trabajo extra
+y el audio es el mismo WAV de siempre.
+
+- **A tiempo con el click:** rubberband corre el audio unos milisegundos,
+  distinto en cada tono (de −20 ms a +17 ms). Se mide una vez por tono y
+  frecuencia de muestreo con una señal de prueba (correlación de
+  envolventes) y se corrige al escribir la pista, que además queda con
+  exactamente la misma cantidad de muestras que la original. Resto medido:
+  ~1 ms.
+- Se guarda solo el último tono de cada canción. Apretar varias veces
+  seguidas es un solo trabajo (se cancela el anterior). Si la app se cierra
+  a mitad, se retoma al abrir la canción; si se reemplaza el audio (zip
+  actualizado), se vuelve a preparar solo.
+- ~10 s por pista estéreo de 5 minutos en una compu común (en paralelo).
 
 ### Sincronización
 

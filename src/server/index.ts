@@ -16,6 +16,7 @@ import { ModelosVoz } from './modelos'
 import { leerAjustes, type Ajustes } from './ajustes'
 import { Descubrimiento } from './descubrimiento'
 import { Mezclador } from './mezclador'
+import { archivoQueSuena, type Tonos } from './tono'
 import { Licencias } from './licencia'
 import { decodificarMezcla, SEGMENTO_SEC } from '../shared/mezcla'
 import { posicionActualMs } from '../shared/playback'
@@ -32,6 +33,8 @@ export interface AppServer {
   modelos: ModelosVoz
   /** mezcla de cada celular (una pista estereo en vez de todas las pistas) */
   mezclador: Mezclador
+  /** cambio de tono de las canciones (prepara las pistas transpuestas) */
+  tonos: Tonos
   licencias: Licencias
   /** secreto que identifica a la ventana de Electron como "la compu" (ver socketHandlers.origenDe) */
   compuToken: string
@@ -150,6 +153,24 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     }
   })
 
+  // cancion en otro tono: las pistas transpuestas se sirven en la misma direccion que las originales
+  // (la `revision` cambia al cambiar el tono, asi nadie se queda con lo que tenia en cache)
+  app.use('/media', (req, _res, next) => {
+    const m = /^\/([^/]+)\/(.+)$/.exec(req.path)
+    const proyecto = m && esIdValido(m[1]) ? state.tabDeProyecto(m[1])?.proyecto : null
+    if (m && proyecto?.tonoAplicado) {
+      let rel: string | null = null
+      try {
+        rel = decodeURIComponent(m[2])
+      } catch {
+        // direccion mal escrita: la atiende express.static (404)
+      }
+      const pista = rel ? proyecto.pistas.find((x) => x.archivo === rel) : undefined
+      const archivo = pista ? archivoQueSuena(proyecto, pista) : null
+      if (pista && archivo !== pista.archivo) req.url = `/${m[1]}/${archivo!.split('/').map(encodeURIComponent).join('/')}${req.url.slice(req.path.length)}`
+    }
+    next()
+  })
   // audio de las pistas: express.static responde "206 Partial Content" a los pedidos Range del streaming
   app.use('/media', express.static(projectsBaseDir(), { fallthrough: false, maxAge: '1h' }))
 
@@ -169,7 +190,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     res.sendFile(path.join(rendererDir, 'index.html'))
   })
 
-  const { transporte, analizador, biblioteca } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
+  const { transporte, analizador, biblioteca, tonos } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
     ajustes,
     puerto: () => {
       const a = httpServer.address()
@@ -264,6 +285,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
   async function close(): Promise<void> {
     clearInterval(latido)
     mezclador.cerrar()
+    tonos.cerrar()
     descubrimiento?.detener()
     servidorCorto?.close()
     biblioteca.apagar()
@@ -285,6 +307,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     biblioteca,
     modelos,
     mezclador,
+    tonos,
     licencias,
     compuToken,
     ajustes,
