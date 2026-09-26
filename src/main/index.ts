@@ -2,7 +2,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, shell } from 'electron'
 import { createServer, type AppServer } from '../server'
-import { getLanIp } from '../server/network'
+import { direccionesLan, esAdaptadorVirtual, getLanIp } from '../server/network'
+import { evaluarFirewall, leerFirewall, permitirEnFirewall } from '../server/firewall'
+import type { EstadoFirewall } from '../shared/types'
 import { EXTENSIONES_COMPRIMIDO } from '../server/comprimidos'
 
 const PUERTO_PREFERIDO = 4848
@@ -29,6 +31,40 @@ app.on('second-instance', () => {
     mainWindow.focus()
   }
 })
+
+// ---- firewall de Windows (ver server/firewall.ts) ----
+
+let firewall: EstadoFirewall | null = null
+let revisandoFirewall: Promise<EstadoFirewall | null> | null = null
+
+/** Lee si Windows deja entrar a los celulares en las redes de ahora y, si cambio, avisa a la ventana. */
+function revisarFirewall(): Promise<EstadoFirewall | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null)
+  revisandoFirewall ??= (async () => {
+    const datos = await leerFirewall(process.execPath)
+    const nuevo: EstadoFirewall = datos ? evaluarFirewall(datos, esAdaptadorVirtual) : { estado: 'desconocido', redes: [], bloqueadas: [] }
+    if (JSON.stringify(nuevo) !== JSON.stringify(firewall)) mainWindow?.webContents.send('firewall:estado', nuevo)
+    firewall = nuevo
+    return nuevo
+  })().finally(() => {
+    revisandoFirewall = null
+  })
+  return revisandoFirewall
+}
+
+/** Al cambiar de red (otro WiFi, otro lugar) se vuelve a revisar: Windows tarda unos segundos en clasificarla. */
+function vigilarRed(): void {
+  if (process.platform !== 'win32') return
+  let redes = direccionesLan().join(',')
+  setTimeout(() => void revisarFirewall(), 3000)
+  setInterval(() => {
+    const ahora = direccionesLan().join(',')
+    if (ahora === redes) return
+    redes = ahora
+    setTimeout(() => void revisarFirewall(), 4000)
+    setTimeout(() => void revisarFirewall(), 20000)
+  }, 4000).unref()
+}
 
 async function crearVentana(url: string): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -110,6 +146,18 @@ app.whenReady().then(async () => {
     // solo la carpeta de la biblioteca actual (no cualquier ruta que pida la pagina)
     if (typeof ruta === 'string' && ruta === server?.biblioteca.ruta) await shell.openPath(ruta)
   })
+
+  ipcMain.handle('firewall:estado', () => {
+    if (!firewall) void revisarFirewall()
+    return firewall
+  })
+  ipcMain.handle('firewall:revisar', () => revisarFirewall())
+  ipcMain.handle('firewall:permitir', async () => {
+    const resultado = await permitirEnFirewall(process.execPath)
+    const estado = await revisarFirewall()
+    return { resultado, estado }
+  })
+  vigilarRed()
 
   ipcMain.handle('app:connection-info', () => {
     const ip = getLanIp()

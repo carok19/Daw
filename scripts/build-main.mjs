@@ -66,6 +66,14 @@ if (existsSync('src/server/automatico.test.ts')) {
   })
 }
 
+// prueba del firewall en una Windows de verdad (la corre GitHub Actions)
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/server/firewallPrueba.ts'],
+  outfile: 'out/main/firewall-prueba.cjs',
+  logLevel: 'warning'
+})
+
 await esbuild.build({
   ...common,
   entryPoints: ['src/server/modelosCli.ts'],

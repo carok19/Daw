@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { EstadoFirewall } from '../shared/types'
 
 /**
  * API expuesta a la ventana de Electron ("Modo Computadora"). Su sola presencia
@@ -16,7 +17,18 @@ const electronAPI = {
   /** dialogo nativo para elegir la carpeta de la biblioteca */
   elegirCarpeta: (): Promise<string | null> => ipcRenderer.invoke('biblioteca:elegir'),
   /** abre la carpeta de la biblioteca en el explorador de archivos */
-  abrirCarpeta: (ruta: string): Promise<void> => ipcRenderer.invoke('biblioteca:abrir', ruta)
+  abrirCarpeta: (ruta: string): Promise<void> => ipcRenderer.invoke('biblioteca:abrir', ruta),
+  /** firewall de Windows: si deja entrar a los celulares en esta red, y arreglarlo (Windows pide permiso) */
+  firewall: {
+    estado: (): Promise<EstadoFirewall | null> => ipcRenderer.invoke('firewall:estado'),
+    revisar: (): Promise<EstadoFirewall | null> => ipcRenderer.invoke('firewall:revisar'),
+    permitir: (): Promise<{ resultado: 'ok' | 'cancelado' | 'error'; estado: EstadoFirewall | null }> => ipcRenderer.invoke('firewall:permitir'),
+    alCambiar: (cb: (e: EstadoFirewall) => void): (() => void) => {
+      const f = (_e: unknown, estado: EstadoFirewall): void => cb(estado)
+      ipcRenderer.on('firewall:estado', f)
+      return () => ipcRenderer.removeListener('firewall:estado', f)
+    }
+  }
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

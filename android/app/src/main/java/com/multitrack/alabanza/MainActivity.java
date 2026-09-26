@@ -50,7 +50,10 @@ public final class MainActivity extends Activity implements Buscador.Oyente {
 
     private final Runnable sinResultados = () -> {
         if (encontradas.isEmpty() && !abriendo) {
-            estado.setText("Todavía no aparece. ¿La computadora tiene abierto AirTracks y está en este mismo WiFi?");
+            estado.setText("Todavía no aparece. Revisá:\n"
+                    + "• Que la compu tenga AirTracks abierto y esté en este mismo WiFi (sirve cualquier WiFi).\n"
+                    + "• En la compu, la ventana “Celulares”: si Windows bloquea esta red (pasa al cambiar de lugar), ahí se permite con un botón.\n"
+                    + "• Algunos WiFi de invitados no dejan que los equipos se vean: usá el punto de acceso de un celular o un router propio.");
         }
     };
 

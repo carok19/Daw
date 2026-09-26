@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { HelpCircle, KeyRound, ListMusic, Lock, LockOpen, Plus, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
+import { HelpCircle, KeyRound, ListMusic, Lock, LockOpen, Plus, ShieldAlert, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
 import type { DispositivoInfo, EstadoLicencia, ListaActiva, TabResumen } from '@shared/types'
 import { Toggle } from '../ui/Toggle'
 
@@ -24,6 +24,8 @@ interface Props {
   lista: ListaActiva | null
   viendoListas: boolean
   onListas: () => void
+  /** Windows bloquea a los celulares en esta red (firewall) */
+  redBloqueada: boolean
 }
 
 /** Resumen de salud de los celulares para el chip de la barra: verde / amarillo / rojo. */
@@ -155,11 +157,15 @@ export function TopBar(p: Props) {
           </button>
         )}
         <button
-          className={`chip-dispositivos ${salud.nivel !== 'nada' ? salud.nivel : ''}`}
+          className={`chip-dispositivos ${p.redBloqueada ? 'error' : salud.nivel !== 'nada' ? salud.nivel : ''}`}
           onClick={p.onDispositivos}
-          title={`Conectar celulares — ${salud.detalle}`}
+          title={p.redBloqueada ? 'Windows bloquea a los celulares en esta red: tocá para permitirlo' : `Conectar celulares — ${salud.detalle}`}
         >
-          <span className={`punto ${salud.nivel === 'ok' ? 'verde' : salud.nivel === 'alerta' ? 'amarillo' : salud.nivel === 'error' ? 'rojo' : 'gris'}`} />
+          {p.redBloqueada ? (
+            <ShieldAlert size={16} />
+          ) : (
+            <span className={`punto ${salud.nivel === 'ok' ? 'verde' : salud.nivel === 'alerta' ? 'amarillo' : salud.nivel === 'error' ? 'rojo' : 'gris'}`} />
+          )}
           <Smartphone size={16} />
           <span className="num">{salud.conectados}</span>
           <span className="texto-largo">{salud.conectados === 1 ? 'celular' : 'celulares'}</span>

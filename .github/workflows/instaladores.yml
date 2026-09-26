@@ -106,6 +106,10 @@ jobs:
         run: npm run dist:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Firewall de Windows (detectar el bloqueo en red pública y permitir)
+        # prueba de la funcion en una Windows de verdad; si el entorno de GitHub no la deja correr, el instalador sale igual
+        continue-on-error: true
+        run: node out/main/firewall-prueba.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: instalador-windows

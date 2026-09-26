@@ -1459,3 +1459,67 @@ test('tono: − / + en la compu prepara la canción en el tono nuevo; los celula
     assert.deepEqual(errores, [])
   })
 })
+
+test('firewall de Windows: en una red pública bloqueada la compu avisa y "Permitir en todas las redes" lo arregla', { timeout: 2 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-firewall-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const browser: Browser = await chromium.launch()
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctx.setDefaultTimeout(15000)
+  // la parte de Windows (PowerShell) simulada: la red "Iglesia" es publica y la app esta bloqueada ahi
+  await ctx.addInitScript(() => {
+    const bloqueado = { estado: 'bloqueado', redes: [{ nombre: 'Iglesia', categoria: 'publica' }], bloqueadas: [{ nombre: 'Iglesia', categoria: 'publica' }] }
+    const ok = { ...bloqueado, estado: 'ok', bloqueadas: [] }
+    const g = globalThis as unknown as { __permisos: number; electronAPI: unknown }
+    g.__permisos = 0
+    let actual: unknown = bloqueado
+    g.electronAPI = {
+      isElectron: true,
+      compuToken: 'e2e',
+      pickZipFile: async () => null,
+      getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }),
+      firewall: {
+        estado: async () => actual,
+        revisar: async () => actual,
+        permitir: async () => {
+          g.__permisos++
+          await new Promise((r) => setTimeout(r, 300)) // lo que tarda Windows en preguntar
+          actual = ok
+          return { resultado: 'ok', estado: ok }
+        },
+        alCambiar: () => () => undefined
+      }
+    }
+  })
+  const compu = await ctx.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(`http://localhost:${port}`)
+
+  await t.test('apenas abre, avisa que los celulares no van a encontrar la compu', async () => {
+    await compu.locator('.aviso', { hasText: 'Windows bloquea AirTracks en esta red (“Iglesia”)' }).waitFor()
+    assert.match((await compu.locator('.chip-dispositivos').getAttribute('title'))!, /Windows bloquea/)
+  })
+
+  await t.test('en Celulares: el aviso con la red y el botón; permitir lo arregla', async () => {
+    await compu.locator('.chip-dispositivos').click()
+    const aviso = compu.locator('.aviso-firewall')
+    await aviso.waitFor()
+    assert.match((await aviso.textContent())!, /bloquea AirTracks en “Iglesia” \(red pública\)/)
+    await aviso.getByRole('button', { name: 'Permitir en todas las redes' }).click()
+    await compu.locator('.aviso-firewall.ok', { hasText: 'Windows ya deja entrar a los celulares' }).waitFor()
+    assert.equal(await compu.evaluate(() => (globalThis as unknown as { __permisos: number }).__permisos), 1)
+    assert.doesNotMatch((await compu.locator('.chip-dispositivos').getAttribute('title'))!, /Windows bloquea/)
+    // la ayuda "¿no encuentran la compu?" dice como esta el firewall
+    await compu.locator('.conexion-no-aparece summary').click()
+    assert.match((await compu.locator('.conexion-no-aparece').textContent())!, /deja entrar a los celulares en esta red/)
+    assert.deepEqual(errores, [])
+  })
+})

@@ -10,6 +10,11 @@ interface Candidata {
 const VIRTUAL = /vethernet|virtualbox|vbox|vmware|hyper-?v|docker|wsl|loopback|bluetooth|zerotier|tailscale|hamachi|vpn|utun|tun\d|tap\d|br-|virbr|npcap/i
 const REAL = /wi-?fi|wlan|wireless|ethernet|^en\d|^eth\d|^wl/i
 
+/** Adaptador virtual (Hyper-V, VPN, VirtualBox...): por ahi no entran los celulares. */
+export function esAdaptadorVirtual(nombre: string): boolean {
+  return VIRTUAL.test(nombre)
+}
+
 function candidatas(): Candidata[] {
   const res: Candidata[] = []
   for (const [nombre, lista] of Object.entries(os.networkInterfaces())) {

@@ -1,4 +1,4 @@
-import type { DiagnosticoDispositivo, DiagnosticoServidor, DispositivoInfo } from '@shared/types'
+import type { DiagnosticoDispositivo, DiagnosticoServidor, DispositivoInfo, EstadoFirewall } from '@shared/types'
 
 /**
  * Textos del diagnostico: lo que mide cada celular (WiFi, colchon, cortes) y
@@ -63,12 +63,24 @@ function lineaDispositivo(d: DispositivoInfo): string {
 }
 
 /** Informe completo para pegar en un chat (lo que hace falta para entender que paso en un ensayo). */
-export function informeTexto(s: DiagnosticoServidor, ahora = new Date()): string {
+export function informeTexto(s: DiagnosticoServidor, ahora = new Date(), firewall: EstadoFirewall | null = null): string {
   const lineas = [
     `Diagnóstico AirTracks Wireless Monitor — ${ahora.toLocaleString('es-AR')}`,
     `Compu: versión ${s.version || '?'} · ${s.sistema}`,
     `Direcciones: ${s.direcciones.map((ip) => `${ip}:${s.puerto}`).join(', ') || 'sin red'}${s.puertoCorto ? ` · dirección corta en el puerto ${s.puertoCorto}` : ''}`
   ]
+  if (firewall) {
+    const redes = (l: EstadoFirewall['redes']): string => l.map((r) => `“${r.nombre}” (${r.categoria})`).join(', ')
+    lineas.push(
+      `Firewall de Windows: ${
+        firewall.estado === 'ok'
+          ? `deja entrar a los celulares en ${redes(firewall.redes)}`
+          : firewall.estado === 'bloqueado'
+            ? `BLOQUEA a los celulares en ${redes(firewall.bloqueadas)}`
+            : 'no se pudo revisar'
+      }`
+    )
+  }
   if (s.licencia) lineas.push(`Licencia: ${s.licencia}`)
   if (s.cancion) {
     const min = Math.floor(s.cancion.duracionMs / 60000)

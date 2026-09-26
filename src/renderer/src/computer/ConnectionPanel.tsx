@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ClipboardCopy, KeyRound, Laptop, Printer, Smartphone, Trash2, Wifi } from 'lucide-react'
-import type { AjustesConexion, DatosInvitacion, DispositivoInfo } from '@shared/types'
+import { Check, ClipboardCopy, KeyRound, Laptop, Printer, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi } from 'lucide-react'
+import type { AjustesConexion, DatosInvitacion, DispositivoInfo, EstadoFirewall } from '@shared/types'
 import type { AppController } from '../app/useAppController'
 import { copiarTexto, direccionVisible, enlaceConCodigo, textoQrWifi } from '../conexion'
 import { informeTexto, nivelDiagnostico, resumenCorto } from '../diagnostico'
@@ -54,7 +54,7 @@ function BotonDiagnostico({ controller }: { controller: AppController }) {
   async function copiar(): Promise<void> {
     try {
       const datos = await controller.diagnosticoServidor()
-      setEstado(datos && copiarTexto(informeTexto(datos)) ? 'copiado' : 'error')
+      setEstado(datos && copiarTexto(informeTexto(datos, new Date(), controller.firewall)) ? 'copiado' : 'error')
     } catch {
       setEstado('error')
     }
@@ -65,6 +65,57 @@ function BotonDiagnostico({ controller }: { controller: AppController }) {
       {estado === 'copiado' ? <Check size={16} /> : <ClipboardCopy size={16} />}
       {estado === 'copiado' ? 'Copiado' : estado === 'error' ? 'No se pudo copiar' : 'Copiar diagnóstico'}
     </button>
+  )
+}
+
+const nombreRed = (r: EstadoFirewall['redes'][number]): string =>
+  `“${r.nombre}” (red ${r.categoria === 'publica' ? 'pública' : r.categoria === 'privada' ? 'privada' : 'de dominio'})`
+
+/**
+ * Windows bloquea a AirTracks en la red de ahora (tipico al llegar a otro
+ * lugar: la WiFi nueva queda como "publica"). Un boton lo arregla.
+ */
+function AvisoFirewall({ controller }: { controller: AppController }) {
+  const [paso, setPaso] = useState<'listo' | 'esperando' | 'ok' | 'cancelado' | 'error'>('listo')
+  const f = controller.firewall
+  if (!f || (f.estado !== 'bloqueado' && paso !== 'ok')) return null
+  if (f.estado !== 'bloqueado') {
+    return (
+      <div className="aviso-firewall ok" role="status">
+        <ShieldCheck size={20} />
+        <div>
+          <b>Listo: Windows ya deja entrar a los celulares</b>, en esta red y en cualquier otra. Si un celular estaba buscando, que pruebe de nuevo.
+        </div>
+      </div>
+    )
+  }
+  async function permitir(): Promise<void> {
+    setPaso('esperando')
+    try {
+      setPaso(await controller.permitirFirewall())
+    } catch {
+      setPaso('error')
+    }
+  }
+  return (
+    <div className="aviso-firewall" role="alert">
+      <ShieldAlert size={22} />
+      <div>
+        <b>Los celulares no pueden encontrar esta compu:</b> el firewall de Windows bloquea AirTracks en{' '}
+        {f.bloqueadas.map(nombreRed).join(' y ')}. Pasa al cambiar de WiFi: Windows toma cada red nueva como pública.
+        {paso === 'esperando' && <p>Windows va a preguntar si se permite hacer cambios: tocá <b>Sí</b>.</p>}
+        {paso === 'cancelado' && <p>No se dio el permiso. Sin eso, los celulares no pueden entrar en esta red.</p>}
+        {paso === 'error' && (
+          <p>
+            No se pudo cambiar solo. A mano: Inicio → “Permitir una aplicación a través del Firewall de Windows” → Cambiar la configuración →
+            marcar <b>Privada</b> y <b>Pública</b> en “AirTracks Wireless Monitor”.
+          </p>
+        )}
+      </div>
+      <button className="btn-primario" onClick={() => void permitir()} disabled={paso === 'esperando'}>
+        {paso === 'esperando' ? 'Esperando a Windows…' : 'Permitir en todas las redes'}
+      </button>
+    </div>
   )
 }
 
@@ -106,6 +157,11 @@ export function ConnectionPanel({
   useEffect(() => {
     void refrescar()
   }, [refrescar])
+  // al abrir la ventana se vuelve a mirar el firewall (por si se cambio de WiFi recien)
+  const revisarFirewall = controller.revisarFirewall
+  useEffect(() => {
+    void revisarFirewall().catch(() => undefined)
+  }, [revisarFirewall])
 
   const enlace = datos ? enlaceConCodigo(datos.url, datos.codigo) : null
   const qr = useQr(enlace)
@@ -139,6 +195,7 @@ export function ConnectionPanel({
         </>
       }
     >
+      <AvisoFirewall controller={controller} />
       <div className="conexion">
         <div>
           {qr ? <img className="qr" src={qr} alt="Código QR para conectar un celular" data-enlace={enlace ?? ''} /> : <div className="qr" />}
@@ -174,6 +231,34 @@ export function ConnectionPanel({
               ¿No conecta? Probá con: {otras.map((u) => <code key={u}>{direccionVisible(u)}</code>)}
             </p>
           )}
+          <details className="ayuda conexion-no-aparece">
+            <summary>¿Los celulares no encuentran la compu?</summary>
+            <ul>
+              <li>
+                Tienen que estar en <b>el mismo WiFi</b> (el mismo nombre de red) que la compu. Funciona en cualquier WiFi, no solo en el
+                primero que se usó.
+              </li>
+              {controller.firewall && (
+                <li>
+                  Firewall de Windows:{' '}
+                  {controller.firewall.estado === 'ok' ? (
+                    <b className="texto-verde">deja entrar a los celulares en esta red</b>
+                  ) : controller.firewall.estado === 'bloqueado' ? (
+                    <b className="texto-rojo">los bloquea (arriba está el botón para permitirlo)</b>
+                  ) : (
+                    'no se pudo revisar'
+                  )}
+                  .
+                </li>
+              )}
+              <li>
+                Algunos WiFi (de invitados, de bares o de algunas iglesias) <b>no dejan que los equipos se vean entre sí</b>: ahí no hay
+                forma. Usá un router propio (no hace falta internet) o el <b>punto de acceso de un celular</b>, conectando la compu y los
+                demás celulares a ese.
+              </li>
+              <li>Si la compu tiene VPN o antivirus con firewall propio, puede estar bloqueando.</li>
+            </ul>
+          </details>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 8px' }}>
             <strong>

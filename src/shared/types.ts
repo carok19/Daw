@@ -121,6 +121,24 @@ export interface Proyecto {
   tonalidad?: string
 }
 
+/** Una red en la que esta la compu (Windows la marca como publica o privada). */
+export interface RedWindows {
+  /** nombre del WiFi (o "Red 2") */
+  nombre: string
+  categoria: 'publica' | 'privada' | 'dominio'
+}
+
+/**
+ * ¿El firewall de Windows deja que los celulares encuentren la compu en las
+ * redes donde esta? ('desconocido': no es Windows o no se pudo leer.)
+ */
+export interface EstadoFirewall {
+  estado: 'ok' | 'bloqueado' | 'desconocido'
+  redes: RedWindows[]
+  /** las redes donde la app esta bloqueada */
+  bloqueadas: RedWindows[]
+}
+
 /** Cuantas pistas ya estan listas del tono que se esta preparando (total 0 = ya no se prepara nada). */
 export interface ProgresoTono {
   proyectoId: string

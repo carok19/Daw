@@ -187,6 +187,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         lista={estado?.lista ?? null}
         viendoListas={vista.tipo !== 'escenario'}
         onListas={() => setVista(vista.tipo === 'escenario' ? { tipo: 'listas' } : { tipo: 'escenario' })}
+        redBloqueada={controller.firewall?.estado === 'bloqueado'}
       />
 
       {!controller.conectado && estado && (

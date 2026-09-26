@@ -24,6 +24,7 @@ import type {
   Proyecto,
   ProyectoResumen,
   DatosListas,
+  EstadoFirewall,
   ProgresoTono
 } from '@shared/types'
 import { calcularSecciones, estaSonando, posicionActualMs, seccionEn } from '@shared/playback'
@@ -159,6 +160,8 @@ export function useAppController() {
   const [pedidoLicencia, setPedidoLicencia] = useState<{ limite: number; prueba: boolean; n: number } | null>(null)
   /** compu: licencia de esta compu */
   const [licencia, setLicencia] = useState<EstadoLicencia | null>(null)
+  /** compu (Windows): si el firewall deja que los celulares encuentren la compu en esta red */
+  const [firewall, setFirewall] = useState<EstadoFirewall | null>(null)
 
   const nombreRef = useRef(nombreDispositivo)
   nombreRef.current = nombreDispositivo
@@ -204,6 +207,30 @@ export function useAppController() {
     setAvisos((prev) => [...prev.slice(-3), { ...aviso, id }])
     setTimeout(() => setAvisos((prev) => prev.filter((a) => a.id !== id)), ms)
   }, [])
+
+  // compu (Windows): el firewall bloquea a los celulares en esta red? (se revisa al abrir y al cambiar de WiFi)
+  useEffect(() => {
+    const api = window.electronAPI?.firewall
+    if (!api) return
+    let anterior: EstadoFirewall['estado'] | null = null
+    const recibir = (e: EstadoFirewall | null): void => {
+      if (!e) return
+      setFirewall(e)
+      if (e.estado === 'bloqueado' && anterior !== 'bloqueado') {
+        const red = e.bloqueadas[0]
+        avisar(
+          {
+            tipo: 'error',
+            texto: `Los celulares no van a encontrar la compu: Windows bloquea AirTracks en esta red${red ? ` (“${red.nombre}”)` : ''}. Abrí “Celulares” para permitirlo.`
+          },
+          15000
+        )
+      }
+      anterior = e.estado
+    }
+    void api.estado().then(recibir, () => undefined)
+    return api.alCambiar(recibir)
+  }, [avisar])
 
   /**
    * Deja al motor en linea con el estado: cancion activa, mezcla, cues y (si
@@ -824,6 +851,19 @@ export function useAppController() {
         codigoRef.current = codigo.replace(/\D/g, '')
         socket.reconectar()
       },
+      /** compu (Windows): vuelve a revisar el firewall (al abrir la ventana de Celulares) */
+      async revisarFirewall(): Promise<void> {
+        const e = await window.electronAPI?.firewall?.revisar()
+        if (e) setFirewall(e)
+      },
+      /** compu (Windows): deja entrar a los celulares en todas las redes (Windows pide permiso) */
+      async permitirFirewall(): Promise<'ok' | 'cancelado' | 'error'> {
+        const api = window.electronAPI?.firewall
+        if (!api) return 'error'
+        const r = await api.permitir()
+        if (r.estado) setFirewall(r.estado)
+        return r.resultado === 'ok' && r.estado?.estado === 'bloqueado' ? 'error' : r.resultado
+      },
       async datosInvitacion(): Promise<DatosInvitacion> {
         return socket.emitAck<DatosInvitacion>('invitacion:datos', {}, 5000)
       },
@@ -880,6 +920,7 @@ export function useAppController() {
     pedidoCodigo,
     pedidoLicencia,
     licencia,
+    firewall,
     estado,
     secciones,
     siguienteProyecto,

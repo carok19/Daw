@@ -22,6 +22,8 @@ import { Mezclador } from './mezclador'
 import { armarLicencia, datosAFirmar, type DatosLicencia } from '../shared/licencia'
 import { Licencias } from './licencia'
 import { demoraEntre, pistasQueCambianDeTono } from './tono'
+import { evaluarFirewall, type DatosFirewall } from './firewall'
+import { esAdaptadorVirtual } from './network'
 import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { wav16 } from './__fixtures__/sintetico'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
@@ -949,6 +951,50 @@ test('tono: la compu prepara las pistas en el tono nuevo (mismo largo, a tiempo 
   assert.equal(ficha.tono, -2)
   assert.equal(ficha.tonalidad, 'G')
   await env.cerrar()
+})
+
+test('firewall de Windows: detecta cuando bloquea a los celulares en la red de ahora (red pública nueva)', () => {
+  const perfiles = [
+    { nombre: 'Domain', activo: 'True' },
+    { nombre: 'Private', activo: 'True' },
+    { nombre: 'Public', activo: 'True' }
+  ]
+  const casa = { nombre: 'WiFi Casa', interfaz: 'Wi-Fi', categoria: 'Private' }
+  const iglesia = { nombre: 'Iglesia', interfaz: 'Wi-Fi', categoria: 'Public' }
+  // lo que deja Windows al aceptar su aviso con "redes publicas" sin marcar: permitir en privadas, BLOQUEAR en publicas
+  const delAviso = [
+    { nombre: 'AirTracks Wireless Monitor', habilitada: 'True', accion: 'Allow', perfil: 'Private' },
+    { nombre: 'AirTracks Wireless Monitor', habilitada: 'True', accion: 'Block', perfil: 'Public' }
+  ]
+  const d = (redes: DatosFirewall['redes'], reglas: DatosFirewall['reglas'], extra: Partial<DatosFirewall> = {}): DatosFirewall => ({
+    redes,
+    reglas,
+    perfiles,
+    legible: true,
+    ...extra
+  })
+
+  assert.equal(evaluarFirewall(d([casa], delAviso)).estado, 'ok', 'en casa anda')
+  const fuera = evaluarFirewall(d([iglesia], delAviso))
+  assert.equal(fuera.estado, 'bloqueado', 'en otro lugar (red publica) no')
+  assert.deepEqual(fuera.bloqueadas, [{ nombre: 'Iglesia', categoria: 'publica' }])
+  // un bloqueo gana aunque haya un permiso para todas las redes (el del instalador)
+  assert.equal(evaluarFirewall(d([iglesia], [...delAviso, { nombre: 'x', habilitada: 'True', accion: 'Allow', perfil: 'Any' }])).estado, 'bloqueado')
+  // despues de "Permitir en todas las redes": una sola regla que permite en cualquiera
+  const arreglado = [{ nombre: 'AirTracks Wireless Monitor', habilitada: 'True', accion: 'Allow', perfil: 'Any' }]
+  assert.equal(evaluarFirewall(d([iglesia], arreglado)).estado, 'ok')
+  assert.equal(evaluarFirewall(d([iglesia], [{ nombre: 'x', habilitada: 'True', accion: 'Allow', perfil: 'Private, Public' }])).estado, 'ok')
+  // sin ninguna regla, Windows bloquea; un bloqueo deshabilitado no cuenta
+  assert.equal(evaluarFirewall(d([iglesia], [])).estado, 'bloqueado')
+  assert.equal(evaluarFirewall(d([iglesia], [{ ...delAviso[1], habilitada: 'False' }, ...arreglado])).estado, 'ok')
+  // con el firewall apagado en las redes publicas no hay nada que bloquee
+  assert.equal(evaluarFirewall(d([iglesia], delAviso, { perfiles: [perfiles[0], perfiles[1], { nombre: 'Public', activo: 'False' }] })).estado, 'ok')
+  // las redes de adaptadores virtuales (Hyper-V, VPN) no cuentan: por ahi no entran los celulares
+  const hyperv = { nombre: 'Red no identificada', interfaz: 'vEthernet (Default Switch)', categoria: 'Public' }
+  assert.equal(evaluarFirewall(d([casa, hyperv], delAviso), esAdaptadorVirtual).estado, 'ok')
+  // si no se pudo leer el firewall o no hay red, no se sabe (nunca una falsa alarma)
+  assert.equal(evaluarFirewall(d([iglesia], [], { legible: false })).estado, 'desconocido')
+  assert.equal(evaluarFirewall(d([], delAviso)).estado, 'desconocido')
 })
 
 test('mezcla en hilos de trabajo (igual al hilo principal) y lo más urgente primero', async (t) => {

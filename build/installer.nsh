@@ -6,6 +6,8 @@
 !macro customInstall
   nsExec::Exec 'netsh advfirewall firewall delete rule name="Multitrack Alabanza"'
   nsExec::Exec 'netsh advfirewall firewall delete rule name="AirTracks Wireless Monitor"'
+  ; los bloqueos que Windows crea solo si al preguntar quedo sin marcar "redes publicas" (un bloqueo gana sobre el permiso)
+  nsExec::Exec 'netsh advfirewall firewall delete rule name=all dir=in program="$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
   nsExec::Exec 'netsh advfirewall firewall add rule name="AirTracks Wireless Monitor" dir=in action=allow program="$INSTDIR\${APP_EXECUTABLE_FILENAME}" enable=yes profile=any'
 !macroend
 

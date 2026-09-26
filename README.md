@@ -105,10 +105,17 @@ cambian a propósito.
 
 1. **Misma WiFi para todos.** Ideal: un router propio para el equipo de
    alabanza (5 GHz, cerca del escenario). No necesita internet.
-2. **Windows:** el instalador deja a la app pasar el firewall. Si igual
-   Windows pregunta al abrirla, marcá **las dos casillas** (redes privadas y
-   públicas: la WiFi de una iglesia suele quedar como "pública") y aceptá; si
-   no, los celulares no pueden conectarse.
+2. **Windows:** si al abrirla Windows pregunta por el firewall, marcá **las
+   dos casillas** (redes privadas y públicas) y aceptá. Funciona en
+   **cualquier WiFi**, no solo en el primero: pero Windows toma cada WiFi
+   nueva como “pública”, y si aquella vez quedó sin marcar “públicas”, en
+   otro lugar los celulares **no encuentran la compu**. La app lo detecta
+   sola (al abrir y al cambiar de WiFi): el chip de celulares se pone rojo
+   con un escudo y en **Celulares** aparece **Permitir en todas las redes**
+   (Windows pide permiso una vez; se arregla para siempre). Otras causas,
+   en la misma ventana: *¿Los celulares no encuentran la compu?* (WiFi de
+   invitados que no deja que los equipos se vean: usar el punto de acceso
+   de un celular o un router propio).
 3. Abrí la app: aparecen las **listas por día**. Tocá **Usar** en la de hoy
    (se destaca sola por la fecha) y sus canciones se cargan arriba, en orden.
    Si la app se cerró hace menos de 2 horas (se cortó a mitad del culto),
@@ -496,6 +503,22 @@ Todo por la WiFi local, sin internet ni servidores externos:
   Si el router filtra difusión y mDNS, la app prueba las direcciones de la red.
 - `/api/info` (nombre, versión, id, si pide código) y `/app/airtracks.apk`
   (la app Android incluida en el instalador).
+
+### Firewall de Windows
+
+`server/firewall.ts`. La causa típica de “en casa anda y en la iglesia el
+celular no encuentra la compu”: Windows marca cada WiFi nueva como pública
+y, si el aviso del firewall se aceptó con “redes públicas” sin marcar, además
+de permitir la app en las privadas crea una regla que la **bloquea** en las
+públicas (un bloqueo gana sobre cualquier permiso, y Windows no vuelve a
+preguntar). La compu lee con PowerShell, sin permisos de administrador, en
+qué redes está (ignorando adaptadores virtuales) y qué reglas de entrada
+tiene la app; si alguna red la bloquea, avisa. *Permitir en todas las
+redes* (con el permiso de administrador que pide Windows) borra las reglas
+de entrada de la app y deja una sola que la permite en cualquier red: no se
+toca el resto del firewall ni el tipo de red. El instalador también borra
+esos bloqueos cuando corre como administrador. GitHub Actions lo prueba en
+una Windows real (`firewall-prueba.cjs`).
 
 ### Seguridad
 
