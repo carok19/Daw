@@ -312,7 +312,7 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
         </span>
         <span className="m-barra-fila">
           {golpe > 0 ? (
-            <span className="m-barra-seccion m-barra-cuenta num" role="status">
+            <span className="m-barra-seccion m-barra-contando num" role="status">
               Cuenta {golpe}
             </span>
           ) : (

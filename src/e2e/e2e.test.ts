@@ -1629,7 +1629,7 @@ test('cuenta: al dar play suena "1 2 3 4, 1 2 3 4" a la vez en la compu y el cel
   await t.test('suenan los 8 golpes en los dos, juntos y a tiempo; la canción entra en el "1"', async () => {
     const vistos = new Set<string>()
     const mirar = setInterval(() => {
-      void cel.locator('.m-barra-cuenta').textContent().then((x) => x && vistos.add(`cel ${x.trim()}`), () => undefined)
+      void cel.locator('.m-barra-contando').textContent().then((x) => x && vistos.add(`cel ${x.trim()}`), () => undefined)
       void compu.locator('.reloj-contando .reloj-grande').textContent().then((x) => x && vistos.add(`compu ${x.trim()}`), () => undefined)
     }, 100)
     await compu.getByRole('button', { name: 'Reproducir' }).click()
