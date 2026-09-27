@@ -562,6 +562,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     const tab = server.state.getActiveTab()!
     for (let i = 0; i < 100 && !tab.proyecto.tempo; i++) await esperar(200)
     assert.ok(tab.proyecto.tempo, 'se detecto el tempo del click')
+    tab.proyecto.cuenta = 0 // aca se mide donde esta el audio: arranca sin la cuenta (ver la prueba de la cuenta)
     server.state.crearMarcador(tab.tabId, 20000, 'Salto')
     server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
 
