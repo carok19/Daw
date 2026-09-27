@@ -1,7 +1,8 @@
-import type { ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import type { ComandoProgramado, CuentaProgramada, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 import { WAV_HEADER_FETCH_BYTES, WavHeaderError, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from '@shared/wav'
 import { posicionActualMs } from '@shared/playback'
 import { codificarMezcla, mezclaEfectiva } from '@shared/mezcla'
+import { LARGO_SONIDO_CUENTA_SEC } from '@shared/cuenta'
 import type { MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
@@ -205,6 +206,12 @@ export class StreamingEngine implements PlaybackEngine {
     ocupado: [] as [number, number][]
   }
   private intervalo: ReturnType<typeof setInterval>
+  // cuenta antes de la cancion: sus golpes van por el canal del click (su volumen y su lado en esta mezcla)
+  private cuentaGain: GainNode
+  private cuentaPanner: StereoPannerNode
+  private sonidoCuenta: AudioBuffer | null = null
+  private sonidoCuentaDe = ''
+  private golpesCuenta: { source: AudioBufferSourceNode; t: number }[] = []
 
   constructor(readonly modo: ModoMotor = 'pistas') {
     this.ctx = new AudioContext()
@@ -218,6 +225,10 @@ export class StreamingEngine implements PlaybackEngine {
     limitador.release.value = 0.15
     this.masterGain.connect(limitador)
     limitador.connect(this.ctx.destination)
+    this.cuentaGain = this.ctx.createGain()
+    this.cuentaPanner = this.ctx.createStereoPanner()
+    this.cuentaGain.connect(this.cuentaPanner)
+    this.cuentaPanner.connect(this.masterGain)
     this.intervalo = setInterval(() => this.tick(), INTERVALO_TICK_MS)
   }
 
@@ -364,6 +375,7 @@ export class StreamingEngine implements PlaybackEngine {
   aplicarMezcla(proyecto: Proyecto): void {
     if (proyecto.id !== this.proyectoId) return
     this.ultimoProyecto = proyecto
+    this.prepararCuenta(proyecto)
     if (this.modo === 'mezcla') {
       this.pedirCambioDeMezcla(this.claveDe(proyecto))
       return
@@ -461,6 +473,10 @@ export class StreamingEngine implements PlaybackEngine {
       targetTime = minimo
     }
 
+    // la cuenta que estaba por sonar: un play nuevo con cuenta la reemplaza entera; cualquier otro comando la corta desde su horario
+    this.cortarCuenta(cmd.accion === 'play' && cmd.playback.cuenta ? 0 : targetTime)
+    if (cmd.accion === 'play' && cmd.playback.cuenta) this.programarCuenta(cmd.playback.cuenta, clockOffsetMs)
+
     if (cmd.accion === 'pause' || cmd.accion === 'stop') {
       this.cortarDesde(targetTime)
       this.reproduciendo = false
@@ -506,6 +522,7 @@ export class StreamingEngine implements PlaybackEngine {
   }
 
   detener(): void {
+    this.cortarCuenta(0)
     this.cortarDesde(this.ctx.currentTime)
     this.reproduciendo = false
     this.esperando = false
@@ -735,6 +752,90 @@ export class StreamingEngine implements PlaybackEngine {
     for (const c of this.canales.values()) for (const v of c.enVuelo.values()) v.ctrl.abort()
     this.canales.clear()
     void this.ctx.close().catch(() => {})
+  }
+
+  // ---- cuenta antes de la cancion ----
+
+  /**
+   * Volumen y lado de la cuenta = los del click en esta mezcla; y su sonido,
+   * recortado del click de la cancion (si no se puede, un click sintetizado).
+   */
+  private prepararCuenta(proyecto: Proyecto): void {
+    const clickId = proyecto.tempo?.clickPistaId ?? null
+    const c = clickId ? this.mezclaDe(proyecto).find((x) => x.pistaId === clickId) : undefined
+    const t = this.ctx.currentTime
+    this.cuentaGain.gain.setTargetAtTime(clickId ? (c?.ganancia ?? 0) : 0.5, t, 0.015)
+    this.cuentaPanner.pan.setTargetAtTime(c?.pan ?? 0, t, 0.015)
+    const de = `${proyecto.id}:${proyecto.revision ?? 0}:${clickId ?? ''}`
+    if (de === this.sonidoCuentaDe) return
+    this.sonidoCuentaDe = de
+    this.sonidoCuenta = this.clickSintetico()
+    if (!clickId) return
+    void (async () => {
+      try {
+        const r = await fetch(`/cuenta/${proyecto.id}.wav?v=${proyecto.revision ?? 0}`, { cache: 'no-store' })
+        if (!r.ok) return
+        const buf = await this.ctx.decodeAudioData(await r.arrayBuffer())
+        if (this.sonidoCuentaDe === de) this.sonidoCuenta = buf
+      } catch {
+        // queda el click sintetizado
+      }
+    })()
+  }
+
+  /** Click de repuesto (sin click en la cancion): el "1" mas agudo. Mismo formato que /cuenta/<id>.wav. */
+  private clickSintetico(): AudioBuffer {
+    const sr = this.ctx.sampleRate
+    const hueco = Math.round(LARGO_SONIDO_CUENTA_SEC * sr)
+    const buf = this.ctx.createBuffer(1, hueco * 2, sr)
+    const d = buf.getChannelData(0)
+    const golpe = (desde: number, f: number): void => {
+      for (let i = 0; i < Math.round(0.08 * sr); i++) {
+        const t = i / sr
+        d[desde + i] = 0.6 * Math.exp(-t / 0.018) * Math.sin(2 * Math.PI * f * t)
+      }
+    }
+    golpe(0, 1760)
+    golpe(hueco, 1320)
+    return buf
+  }
+
+  /** Programa los golpes de la cuenta que todavia no pasaron, a la misma hora (del parlante) que en todos los dispositivos. */
+  private programarCuenta(cuenta: CuentaProgramada, clockOffsetMs: number): void {
+    const sonido = this.sonidoCuenta ?? this.clickSintetico()
+    const ahora = Date.now()
+    const escuchado = this.ctxEscuchadoAhora()
+    for (const g of cuenta.golpes) {
+      const t = escuchado + (g.t - clockOffsetMs - ahora) / 1000
+      if (t < this.ctx.currentTime + 0.005) continue
+      const source = this.ctx.createBufferSource()
+      source.buffer = sonido
+      source.connect(this.cuentaGain)
+      source.start(t, g.n === 1 ? 0 : LARGO_SONIDO_CUENTA_SEC, LARGO_SONIDO_CUENTA_SEC)
+      const golpe = { source, t }
+      source.onended = () => {
+        source.disconnect()
+        this.golpesCuenta = this.golpesCuenta.filter((x) => x !== golpe)
+      }
+      this.golpesCuenta.push(golpe)
+    }
+  }
+
+  /** Saca los golpes de la cuenta que iban a sonar desde `t` (0 = todos los que faltan). */
+  private cortarCuenta(t: number): void {
+    const quedan: { source: AudioBufferSourceNode; t: number }[] = []
+    for (const g of this.golpesCuenta) {
+      if (g.t >= t - 0.001) {
+        g.source.onended = null
+        try {
+          g.source.stop()
+        } catch {
+          // ya estaba detenido
+        }
+        g.source.disconnect()
+      } else quedan.push(g)
+    }
+    this.golpesCuenta = quedan
   }
 
   // ---- ventana / prebuffer ----

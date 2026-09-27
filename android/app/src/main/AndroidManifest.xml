@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- para recibir los anuncios mDNS de la compu (airtracks.local / _multitrack._tcp) -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- para escanear el QR de la compu (opcional: sin camara se busca solo o se escribe la direccion) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -39,6 +42,19 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="http" android:host="*" android:port="4848" />
             </intent-filter>
+            <!-- "Abrir en la app" desde el navegador del celular (airtracks://IP:puerto/...) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="airtracks" />
+            </intent-filter>
         </activity>
+
+        <!-- escanear el QR de la compu con la camara -->
+        <activity
+            android:name=".EscanerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
     </application>
 </manifest>

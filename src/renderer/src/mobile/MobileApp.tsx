@@ -23,7 +23,7 @@ import type { Proyecto, SaltoPendiente } from '@shared/types'
 import { seccionEn } from '@shared/playback'
 import { textoSemitonos, tonalidadOriginal, transponerTonalidad } from '@shared/tonalidad'
 import type { AppController } from '../app/useAppController'
-import { usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
+import { useGolpeCuenta, usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
 import { leerPref } from '../app/preferencias'
 import { clavePista } from '../audio/PlaybackEngine'
 import { VOLUMEN_MAX } from '../audio/streamConfig'
@@ -34,7 +34,7 @@ import { FaderTactil } from '../ui/FaderTactil'
 import { useConfirmar } from '../ui/Confirmar'
 import { useWakeLock } from './useWakeLock'
 import { Hoja, HojaAjustes } from './Hojas'
-import { AccesoFijo, HojaInvitar, PantallaCodigo, PantallaLicencia } from './Conectar'
+import { AbrirEnApp, AccesoFijo, HojaInvitar, PantallaCodigo, PantallaLicencia } from './Conectar'
 import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion'
 
 type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones' | 'invitar'
@@ -131,6 +131,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
           <p style={{ fontSize: 13, color: 'var(--text-3)' }}>
             <span className={`punto ${conectado ? 'verde' : 'rojo'}`} /> {conectado ? 'Conectado a la computadora' : 'Conectando…'}
           </p>
+          {!app && esAndroid() && conectado && <AbrirEnApp controller={controller} />}
           {!app && !enPantallaDeInicio() && (esIOS() || esAndroid()) && conectado && <ProximaVez controller={controller} />}
         </div>
       )}
@@ -290,6 +291,7 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
   const { estado, secciones } = controller
   const proyecto = estado!.proyectoActivo!
   const pos = usePlayheadPaso(200)
+  const golpe = useGolpeCuenta()
   const actual = seccionEn(secciones, pos)
   const siguiente = actual ? secciones[actual.indice + 1] : null
   const locked = estado?.locked ?? false
@@ -309,10 +311,16 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
           </span>
         </span>
         <span className="m-barra-fila">
-          <span className="m-barra-seccion" style={{ color: actual ? colorClaro(colorDeSeccion(actual)) : undefined }}>
-            {loop && <Repeat size={15} />}
-            {actual?.nombre ?? '—'}
-          </span>
+          {golpe > 0 ? (
+            <span className="m-barra-seccion m-barra-cuenta num" role="status">
+              Cuenta {golpe}
+            </span>
+          ) : (
+            <span className="m-barra-seccion" style={{ color: actual ? colorClaro(colorDeSeccion(actual)) : undefined }}>
+              {loop && <Repeat size={15} />}
+              {actual?.nombre ?? '—'}
+            </span>
+          )}
           {salto ? (
             <span className="m-barra-salto">
               <ArrowRight size={14} /> {salto.nombre} <span className="num">{faltaPara(salto, pos)}</span>

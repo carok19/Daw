@@ -27,12 +27,13 @@ import type {
   EstadoFirewall,
   ProgresoTono
 } from '@shared/types'
-import { calcularSecciones, estaSonando, posicionActualMs, seccionEn } from '@shared/playback'
+import { calcularSecciones, estaSonando, posicionActualMs, seccionEn, tramoVigente } from '@shared/playback'
+import { golpeActual } from '@shared/cuenta'
 import { SocketClient } from '../sync/SocketClient'
 import { StreamingEngine } from '../audio/StreamingEngine'
 import type { MezclaPersonal, PlaybackEngine } from '../audio/PlaybackEngine'
 import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_SUAVE_MS, UMBRAL_SUAVE_PRECISO_MS } from '../sync/driftConfig'
-import { setPlayheadMs, getPlayheadMs } from './playheadStore'
+import { setPlayheadMs, getPlayheadMs, setGolpeCuenta } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
 import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
 import { codigoDesdeDireccion, puenteAndroid } from '../conexion'
@@ -80,7 +81,13 @@ function reingresarEnSync(
 ): void {
   let executeAt = socket.serverNow() + margenMs
   let posicion = posicionActualMs(playback, executeAt)
-  const proximo = compasesMs ? proximoCompas(compasesMs, posicion) : null
+  // la musica todavia no empezo (se esta contando, o esta por arrancar): se entra justo cuando empieza
+  const porEmpezar = playback.estado === 'playing' && playback.referenceServerTime > executeAt && tramoVigente(playback, executeAt) === playback
+  if (porEmpezar) {
+    executeAt = playback.referenceServerTime
+    posicion = playback.positionMs
+  }
+  const proximo = compasesMs && !porEmpezar ? proximoCompas(compasesMs, posicion) : null
   if (proximo !== null && estaSonando(playback, executeAt)) {
     const candidato = executeAt + (proximo - posicion)
     // (si antes del compas hay un salto programado, no aplica: se entra donde toque)
@@ -349,7 +356,11 @@ export function useAppController() {
 
     const offs = [
       socket.onEstado((nuevo) => aplicarEstado(nuevo)),
+      // la compu mide cuanto tardan en llegar sus ordenes (ver server/entrega.ts)
+      socket.on<{ t: number }>('sync:ping', (p) => socket.emit('sync:pong', { t: p.t })),
       socket.onPlaybackScheduled((cmd: ComandoProgramado) => {
+        // llego sin tiempo para programarla: la compu vuelve a esperar mas antes de cada orden
+        if (origen === 'celular' && cmd.accion !== 'stop' && cmd.accion !== 'seek' && cmd.executeAtServerTime - socket.serverNow() < 60) socket.emit('sync:tarde', {})
         const actual = estadoRef.current
         if (actual && actual.activeTabId === cmd.tabId) {
           engineRef.current?.ejecutar(cmd, socket.clockOffsetMs)
@@ -546,7 +557,9 @@ export function useAppController() {
     const loop = (): void => {
       const socket = socketRef.current
       const playback = estadoRef.current?.playbackActivo
-      setPlayheadMs(socket && playback ? posicionActualMs(playback, socket.serverNow()) : 0)
+      const ahora = socket?.serverNow() ?? 0
+      setPlayheadMs(socket && playback ? posicionActualMs(playback, ahora) : 0)
+      setGolpeCuenta(playback?.estado === 'playing' ? golpeActual(playback.cuenta, ahora) : 0)
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
@@ -737,6 +750,10 @@ export function useAppController() {
         } catch {
           avisar({ tipo: 'error', texto: 'No se pudo cambiar el tono (sin conexión con la compu)' })
         }
+      },
+      /** Compases de cuenta antes de la cancion (null = automatica: 2, o 1 en las lentas). */
+      setCuenta(proyectoId: string, cuenta: 0 | 1 | 2 | null): void {
+        emit('cuenta:set', { proyectoId, cuenta })
       },
       /** Tonalidad original de la cancion (null = la que dice el nombre). */
       ponerTonalidad(proyectoId: string, tonalidad: string | null): void {

@@ -89,6 +89,11 @@ function encabezadoWav(numChannels: number, sampleRate: number, bitsPerSample: n
   return h
 }
 
+/** Encabezado de un WAV PCM de 16 bits. */
+export function encabezadoWav16(numChannels: number, sampleRate: number, dataLength: number): Buffer {
+  return encabezadoWav(numChannels, sampleRate, 16, dataLength)
+}
+
 /** Tolerancia (en LSB de 16 bits) para considerar L == R: absorbe el dithering/redondeo de algunos exports. */
 const TOLERANCIA_DUAL_MONO = 2
 

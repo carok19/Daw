@@ -67,6 +67,8 @@ public final class WebActivity extends Activity {
     /** De donde viene: la pantalla de busqueda, o un QR/enlace http://IP:4848 abierto con la app. */
     private boolean leerIntent(Intent i) {
         Uri datos = i.getData();
+        // "Abrir en la app" desde el navegador (airtracks://IP:puerto/...): es el mismo link, en http
+        if (datos != null && "airtracks".equals(datos.getScheme())) datos = Uri.parse("http" + datos.toString().substring("airtracks".length()));
         if (Intent.ACTION_VIEW.equals(i.getAction()) && datos != null && "http".equals(datos.getScheme()) && datos.getHost() != null) {
             urlCompu = "http://" + datos.getHost() + (datos.getPort() > 0 ? ":" + datos.getPort() : "");
             urlInicial = datos.toString();

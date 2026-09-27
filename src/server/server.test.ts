@@ -23,9 +23,10 @@ import { armarLicencia, datosAFirmar, type DatosLicencia } from '../shared/licen
 import { Licencias } from './licencia'
 import { demoraEntre, pistasQueCambianDeTono } from './tono'
 import { evaluarFirewall, type DatosFirewall } from './firewall'
+import { compasesDeCuenta, golpeActual, golpesDeCuenta, LARGO_SONIDO_CUENTA_SEC, programarCuenta } from '../shared/cuenta'
 import { esAdaptadorVirtual } from './network'
 import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
-import { wav16 } from './__fixtures__/sintetico'
+import { generarClick, wav16 } from './__fixtures__/sintetico'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
   AjustesConexion,
@@ -106,7 +107,7 @@ interface Entorno {
 async function entorno(
   t: { after(fn: () => Promise<void> | void): void },
   appDir = tmpDir('multitrack-test-'),
-  extra: { dirExtras?: string; clavePublicaLicencias?: string | null } = {}
+  extra: { dirExtras?: string; clavePublicaLicencias?: string | null; intervaloPingMs?: number } = {}
 ): Promise<Entorno> {
   process.env.MULTITRACK_APP_DIR = appDir
   const rendererDir = tmpDir('multitrack-renderer-')
@@ -997,6 +998,116 @@ test('firewall de Windows: detecta cuando bloquea a los celulares en la red de a
   assert.equal(evaluarFirewall(d([], delAviso)).estado, 'desconocido')
 })
 
+test('cuenta: los golpes caen en la grilla de la canción (1 2 3 4, 1 2 3 4) y la música entra justo después', () => {
+  // 120 BPM 4/4: compases de 2 s, el primero en 0
+  const t44 = { compasesMs: [0, 2000, 4000, 6000, 8000], compas: 4 }
+  const enUno = golpesDeCuenta(t44, 4000, 2)!
+  assert.deepEqual(enUno.golpes.map((g) => g.n), [1, 2, 3, 4, 1, 2, 3, 4])
+  assert.deepEqual(enUno.golpes.map((g) => g.ms), [0, 500, 1000, 1500, 2000, 2500, 3000, 3500])
+  assert.deepEqual(golpesDeCuenta(t44, 0, 1)!.golpes.map((g) => [g.ms, g.n]), [[-2000, 1], [-1500, 2], [-1000, 3], [-500, 4]])
+  // reanudar a mitad de compas: la cuenta sigue el pulso de la cancion hasta ese punto ("3 4 1 2 3 4 1 2")
+  const mitad = golpesDeCuenta(t44, 4750, 2)!
+  assert.deepEqual(mitad.golpes.map((g) => g.n), [3, 4, 1, 2, 3, 4, 1, 2])
+  assert.equal(mitad.golpes[mitad.golpes.length - 1].ms, 4500)
+  // la cancion tiene una entrada antes del primer "1" (el click empieza a los 1,2 s): la cuenta termina en ese "1"
+  const conEntrada = golpesDeCuenta({ compasesMs: [1200, 3200, 5200], compas: 4 }, 0, 2)!
+  assert.deepEqual(conEntrada.golpes.map((g) => g.ms), [-2800, -2300, -1800, -1300, -800, -300, 200, 700])
+  assert.deepEqual(conEntrada.golpes.map((g) => g.n), [1, 2, 3, 4, 1, 2, 3, 4])
+  // 3/4 y 6/8
+  assert.deepEqual(golpesDeCuenta({ compasesMs: [0, 1500, 3000], compas: 3 }, 3000, 2)!.golpes.map((g) => g.n), [1, 2, 3, 1, 2, 3])
+  assert.equal(golpesDeCuenta({ compasesMs: [0, 3000, 6000], compas: 6 }, 3000, 1)!.golpes.length, 6)
+  // sin tempo: sin cuenta
+  assert.equal(golpesDeCuenta(null, 0, 2), null)
+  assert.equal(golpesDeCuenta({ compasesMs: [0], compas: 4 }, 0, 2), null)
+
+  // automatica: 2 compases; 1 en las lentas (dos compases de mas de 7 s); lo elegido manda
+  const tempo = (compasMs: number) => ({ bpm: 1, compas: 4, compasesMs: [0, compasMs, 2 * compasMs], clickPistaId: null, acentoClaro: true })
+  assert.equal(compasesDeCuenta({ tempo: tempo(2000) }), 2)
+  assert.equal(compasesDeCuenta({ tempo: tempo(3429) }), 2, '70 BPM')
+  assert.equal(compasesDeCuenta({ tempo: tempo(4000) }), 1, '60 BPM')
+  assert.equal(compasesDeCuenta({ tempo: tempo(2000), cuenta: 0 }), 0)
+  assert.equal(compasesDeCuenta({ tempo: tempo(4000), cuenta: 2 }), 2)
+  assert.equal(compasesDeCuenta({ tempo: null, cuenta: 2 }), 0, 'sin tempo no hay cuenta')
+
+  // con horas: el primer golpe en `primerGolpe`, la musica 8 pulsos despues
+  const p = programarCuenta(t44, 4000, 2, 100_000)!
+  assert.equal(p.cuenta.golpes[0].t, 100_000)
+  assert.equal(p.inicioMusica, 104_000)
+  assert.equal(p.cuenta.golpes[7].t, 103_500)
+  assert.equal(golpeActual(p.cuenta, 99_000), 0)
+  assert.equal(golpeActual(p.cuenta, 100_010), 1)
+  assert.equal(golpeActual(p.cuenta, 101_600), 4)
+  assert.equal(golpeActual(p.cuenta, 103_900), 4)
+  assert.equal(golpeActual(p.cuenta, 104_100), 0, 'ya entró la música')
+})
+
+test('cuenta: al dar play (parado o en pausa) la compu programa la cuenta con el sonido del click de la canción; se puede cambiar por canción', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const sr = 44100
+  // click a 120 BPM 4/4 desde 0,5 s, con el "1" mas agudo y fuerte
+  const click = generarClick(120, 4, 12)
+  const estado = await cargarZip(compu, crearZip('Con cuenta', { 'Click.wav': wav16(click, sr), 'Bajo.wav': wav16(new Float32Array(12 * sr), sr) }))
+  const p = env.server.state.getActiveTab()!.proyecto
+  p.tempo = { bpm: 120, compas: 4, compasesMs: [500, 2500, 4500, 6500, 8500, 10500], clickPistaId: p.pistas.find((x) => x.nombre === 'Click')!.id, acentoClaro: true }
+
+  // el sonido de la cuenta: el "1" y un golpe comun, recortados del click (desde el ataque)
+  const r = await fetch(`http://localhost:${env.port}/cuenta/${p.id}.wav?v=${p.revision ?? 0}`)
+  assert.equal(r.status, 200)
+  const buf = await r.arrayBuffer()
+  const info = parseWavHeader(buf)
+  const [x] = decodePcmSegment(info, buf.slice(info.dataOffset))
+  const hueco = Math.round(LARGO_SONIDO_CUENTA_SEC * sr)
+  assert.equal(x.length, 2 * hueco)
+  const pico = (a: Float32Array): number => a.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+  assert.ok(pico(x.subarray(0, hueco)) > 0.8, 'el "1" (fuerte)')
+  assert.ok(pico(x.subarray(hueco)) > 0.4 && pico(x.subarray(hueco)) < 0.7, 'un golpe comun')
+  assert.ok(pico(x.subarray(0, Math.round(0.003 * sr))) > 0.3, 'empieza en el ataque (sin silencio antes)')
+  assert.equal((await fetch(`http://localhost:${env.port}/cuenta/${crypto.randomUUID()}.wav`)).status, 404)
+
+  // play desde parado: 2 compases de cuenta antes del comienzo (la cuenta termina en el primer "1", a los 0,5 s)
+  const t0 = Date.now()
+  const [cmd] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  const cuenta = cmd.playback.cuenta!
+  assert.ok(cuenta, 'lleva cuenta')
+  assert.deepEqual(cuenta.golpes.map((g) => g.n), [1, 2, 3, 4, 1, 2, 3, 4])
+  assert.ok(cuenta.golpes[0].t >= t0, 'el primer golpe con el margen de sync')
+  assert.equal(cmd.executeAtServerTime - cuenta.golpes[0].t, 3500, 'la musica (desde 0) entra 3,5 s despues: la cuenta termina en el "1" de los 0,5 s')
+  assert.equal(cuenta.golpes[7].t - cmd.executeAtServerTime, 0)
+
+  // en pausa y play otra vez: cuenta que llega justo al punto donde se paro
+  await esperar(Math.max(0, cmd.executeAtServerTime - Date.now()) + 700)
+  const [pausa] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:pause')])
+  await esperar(100) // que la pausa llegue a su horario
+  const [otra] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  assert.equal(otra.positionMs, pausa.positionMs)
+  const ultimo = otra.playback.cuenta!.golpes[otra.playback.cuenta!.golpes.length - 1]
+  assert.ok(ultimo.t < otra.executeAtServerTime && otra.executeAtServerTime - ultimo.t <= 500, 'el ultimo golpe, a menos de un pulso de la entrada')
+  // sonando, un salto no lleva cuenta
+  const [salto] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:seek', { positionMs: 8500, inmediato: true })])
+  assert.equal(salto.playback.cuenta, undefined)
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
+
+  // "Sin cuenta" en esta cancion: arranca como antes
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'cuenta:set', { proyectoId: p.id, cuenta: 0 })).ok, true)
+  assert.equal((await emitAck<EstadoCompleto>(compu, 'state:request', {})).proyectoActivo!.cuenta, 0)
+  const [sin] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  assert.equal(sin.playback.cuenta, undefined)
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
+  // 1 compas; y de vuelta a automatica
+  await emitAck(compu, 'cuenta:set', { proyectoId: p.id, cuenta: 1 })
+  const [uno] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  assert.equal(uno.playback.cuenta!.golpes.length, 4)
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'cuenta:set', { proyectoId: p.id, cuenta: 5 })).ok, false)
+  await emitAck(compu, 'cuenta:set', { proyectoId: p.id, cuenta: null })
+  assert.equal((await emitAck<EstadoCompleto>(compu, 'state:request', {})).proyectoActivo!.cuenta, undefined)
+  // la eleccion va en la ficha de la cancion
+  assert.equal(interpretarFicha(JSON.stringify(fichaDesdeProyecto({ ...p, cuenta: 1 })))!.cuenta, 1)
+  void estado
+  await env.cerrar()
+})
+
 test('mezcla en hilos de trabajo (igual al hilo principal) y lo más urgente primero', async (t) => {
   const env = await entorno(t)
   const compu = await env.conectar(compuAuth)
@@ -1125,6 +1236,47 @@ test('margen de sincronizacion: instantaneo sin celulares, completo apenas se co
   const margen = cmd.executeAtServerTime - antes
   assert.ok(margen >= 1400 && margen <= 1700, `margen ${margen}`)
 
+  await env.cerrar()
+})
+
+test('margen adaptativo: con buen WiFi el play arranca en ~0,5 s; se adapta al celular más lento y vuelve a 1,5 s si una orden llega tarde', async (t) => {
+  const a = audiosDePrueba()
+  const env = await entorno(t, undefined, { intervaloPingMs: 40 })
+  const compu = await env.conectar(compuAuth)
+  await cargarZip(compu, crearZip('margen2', { 'click.wav': a.wav4s }))
+  async function margenDePlay(): Promise<number> {
+    const antes = Date.now()
+    const [cmd] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+    await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
+    return cmd.executeAtServerTime - antes
+  }
+  // un celular que contesta enseguida (como uno con buen WiFi)
+  const rapido = await env.conectar({ origen: 'celular', deviceId: 'rapido' })
+  rapido.on('sync:ping', (p: { t: number }) => rapido.emit('sync:pong', p))
+  let m = await margenDePlay()
+  assert.ok(m >= 1400, `recien conectado, margen completo (${m})`)
+  await esperar(400) // unas cuantas mediciones
+  m = await margenDePlay()
+  assert.ok(m >= 440 && m < 600, `con buen WiFi, ~0,5 s (${m})`)
+  // otro que tarda 300 ms en recibir las ordenes: manda el mas lento
+  const lento = await env.conectar({ origen: 'celular', deviceId: 'lento' })
+  lento.on('sync:ping', (p: { t: number }) => setTimeout(() => lento.emit('sync:pong', p), 300))
+  await esperar(900)
+  m = await margenDePlay()
+  assert.ok(m >= 540 && m < 700, `se adapta al mas lento: ~300 + 250 (${m})`)
+  // en el diagnostico
+  const d = await emitAck<{ arranque: { margenMs: number; peorEntregaMs: number } }>(compu, 'diagnostico:obtener', {})
+  assert.ok(d.arranque.peorEntregaMs >= 300 && d.arranque.peorEntregaMs < 450, JSON.stringify(d.arranque))
+  // se fue el lento: vuelve a bajar
+  lento.close()
+  await esperar(150)
+  m = await margenDePlay()
+  assert.ok(m < 600, `sin el lento (${m})`)
+  // a un celular una orden le llego sin tiempo: margen completo por un rato
+  rapido.emit('sync:tarde', {})
+  await esperar(100)
+  m = await margenDePlay()
+  assert.ok(m >= 1400, `despues de una orden tarde (${m})`)
   await env.cerrar()
 })
 

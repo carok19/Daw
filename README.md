@@ -145,7 +145,12 @@ cambian a propósito.
    ensayo:
    - **Android:** la app (`AirTracks.apk`, se baja desde la compu). Se abre y
      encuentra la compu sola en el WiFi (sin QR ni internet, como DroidCam);
-     la próxima vez entra directo, aunque la compu cambie de IP.
+     la próxima vez entra directo, aunque la compu cambie de IP. También
+     tiene **Escanear el QR de la compu** (con la cámara, sin internet ni
+     servicios de Google). Si alguien escanea el QR con la cámara del
+     celular, se abre el navegador: ahí aparece **“¿Tenés la app AirTracks?
+     Abrir en la app”**, que sigue en la app con la misma dirección y código
+     (si no la tiene, ofrece bajarla).
    - **iPhone:** la dirección fija **`airtracks.local`** (no cambia con la IP)
      y *Compartir → Agregar a inicio*: queda el ícono “AirTracks”. El celular
      lo explica solo en “¿La próxima vez sin escanear el QR?”.
@@ -215,6 +220,18 @@ cambian a propósito.
       vuelve al original al instante.
     - La tonalidad original se lee del nombre (“Digno - A”, “Oceans (Bb)”,
       “… - Key of F#m”); si no está o está mal, se elige en el mismo botón.
+11. **Cuenta antes de la canción:** al dar play (desde parado, en pausa o
+    desde una sección) el click cuenta **“1 2 3 4, 1 2 3 4”** y recién entra
+    la canción, en todos a la vez. Usa el tempo y el compás que la app
+    detecta del click (3/4: “1 2 3, 1 2 3”) y **el mismo sonido del click de
+    la canción** (el “1” con su acento), por el oído del click y con el
+    volumen de click de cada uno. En la compu el reloj muestra el número de
+    la cuenta y en los celulares “Cuenta 3”. Son 2 compases, o 1 en las
+    canciones lentas; al lado del BPM se elige por canción: automática, 2, 1
+    o **sin cuenta** (para las que ya traen su propia cuenta en el click).
+    Después de una pausa, la cuenta sigue el pulso de la canción y la música
+    vuelve justo donde quedó. Los saltos con la música sonando no llevan
+    cuenta. Sin tempo detectado, arranca directo como siempre.
 
 **Ancho de banda:** la compu le arma a cada celular **su mezcla** (la del
 director + su “Mi mezcla”) y le manda **una sola pista estéreo**: ~1,4 Mbps
@@ -442,14 +459,28 @@ y el audio es el mismo WAV de siempre.
 1. **Reloj:** cada dispositivo mide su diferencia con el reloj del servidor
    (7 ping/pong, se queda con el de menor ida y vuelta; se repite cada 2 min y
    al volver a primer plano).
-2. **Comandos programados:** play, pausa, stop y saltos se programan
-   ~1,5 s a futuro (30 ms si no hay celulares) y cada dispositivo los ejecuta
-   con Web Audio en ese instante exacto.
-3. **Tramo previo:** entre que se emite un comando y su horario sigue
+2. **Comandos programados:** play, pausa, stop y saltos se programan un
+   poco a futuro (el **margen**) y cada dispositivo los ejecuta con Web Audio
+   en ese instante exacto. El margen se mide (`server/entrega.ts`): la compu
+   le pregunta algo a cada celular cada 2 s y cuenta cuánto tarda en volver
+   la respuesta (incluye las demoras del WiFi y del ahorro de energía del
+   celular); el margen es lo que tardó el más lento en el último minuto más
+   250 ms, entre 0,45 y 1,5 s. Con buen WiFi, **medio segundo** desde que se
+   toca play (antes siempre 1,5 s). Un celular recién conectado usa 1,5 s
+   hasta tener 5 mediciones, y si a alguno una orden le llega sin tiempo
+   para programarla, se vuelve a 1,5 s por 2 minutos. Sin celulares, 30 ms.
+   El margen actual sale en “Copiar diagnóstico”.
+3. **Cuenta:** el play desde parado o en pausa lleva los golpes de la cuenta
+   (`shared/cuenta.ts`) con su hora: cada dispositivo los toca con el mismo
+   reloj que la música, con el sonido del click recortado de la propia
+   pista (`/cuenta/<canción>.wav`). Medido con audio real grabado en la
+   compu y en un celular: cada golpe y la entrada de la canción, a 1–2 ms
+   entre ellos.
+4. **Tramo previo:** entre que se emite un comando y su horario sigue
    sonando lo anterior; el estado lo describe (`previo`, una cadena corta si
    hay dos comandos seguidos), así la interfaz, el monitor de drift y un
    celular que se une en ese momento ven lo que realmente suena.
-4. **Reloj de salida:** para arrancar (y para medir el drift) cada
+5. **Reloj de salida:** para arrancar (y para medir el drift) cada
    dispositivo usa la hora exacta en que su parlante saca cada muestra
    (`getOutputTimestamp`), más el ajuste fino manual. Antes usaba
    `currentTime` + `outputLatency`: `currentTime` se actualiza “a saltos”
@@ -457,7 +488,7 @@ y el audio es el mismo WAV de siempre.
    —al empezar, después de una pausa o de cambiar de canción— arrancaba
    corrido distinto en cada dispositivo, y el monitor lo medía con el mismo
    error. Si el navegador no da esa hora, se usa el método anterior.
-5. **Drift continuo** (cada 2 s): con el reloj de salida, < 5 ms nada (sin
+6. **Drift continuo** (cada 2 s): con el reloj de salida, < 5 ms nada (sin
    él, < 15 ms); de ahí a 150 ms corrección suave; ≥ 150 ms resincronización
    dura de ese dispositivo. La corrección suave hace
    sonar los próximos tramos un 0,4 % más lentos o rápidos (inaudible) y
@@ -465,11 +496,11 @@ y el audio es el mismo WAV de siempre.
    anterior. (Antes la velocidad se cambiaba sobre lo ya programado y cada
    segmento nuevo arrancaba en el horario original: la corrección se deshacía
    cada 2 s aunque el monitor creyera que estaba hecha.)
-6. **Volver a entrar en el “1”:** cuando un celular tiene que reincorporarse
+7. **Volver a entrar en el “1”:** cuando un celular tiene que reincorporarse
    (se quedó sin audio, un desfase grande, activó el audio tarde, volvió de
    segundo plano), con el tempo detectado entra en el comienzo del próximo
    compás, como un músico que retoma, y no a mitad de un acorde.
-7. **Verificado con el audio real:** una prueba graba lo que sale del motor
+8. **Verificado con el audio real:** una prueba graba lo que sale del motor
    (AudioWorklet) con una pista que codifica en cada muestra en qué segundo de
    la canción está, y lo compara con la posición que calcula el motor durante
    una corrección, un cambio de mezcla y un salto: coinciden a menos de 1 ms.
@@ -478,7 +509,7 @@ y el audio es el mismo WAV de siempre.
    y al cambiar con la música sonando: arrancan a menos de 5 ms entre sí (con
    el método anterior se separaban hasta ~10 ms en la prueba, y más en
    celulares reales).
-8. **Pantalla bloqueada / segundo plano:** la pantalla se mantiene encendida
+9. **Pantalla bloqueada / segundo plano:** la pantalla se mantiene encendida
    (NoSleep.js: Wake Lock si está disponible, si no un video mudo; la app se
    sirve por `http://` y ahí el Wake Lock nativo no existe), Media Session
    marca la página como reproducción de audio, y al volver a primer plano se
@@ -652,7 +683,7 @@ habitual de los programas que se venden sin conexión.
   parte web se probó con el puente simulado, pero el APK lo arma GitHub
   Actions (en el entorno de desarrollo no hay SDK de Android) y falta
   probarlo en celulares reales (búsqueda en distintos routers, audio en
-  segundo plano). La firma por defecto es pública a propósito (ver
+  segundo plano, el escáner de QR con distintas cámaras). La firma por defecto es pública a propósito (ver
   `android/LEEME.md`).
 - `airtracks.local` depende de que el router deje pasar mDNS (la mayoría lo
   hace); el celular lo prueba antes de ofrecerlo.

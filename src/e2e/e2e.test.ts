@@ -1523,3 +1523,198 @@ test('firewall de Windows: en una red pública bloqueada la compu avisa y "Permi
     assert.deepEqual(errores, [])
   })
 })
+
+test('cuenta: al dar play suena "1 2 3 4, 1 2 3 4" a la vez en la compu y el celular, y la canción entra justo después (audio real)', { timeout: 3 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-cuenta-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  type Cmd = { executeAtServerTime: number; playback: { estado: string; referenceServerTime: number; cuenta?: { golpes: { t: number; n: number }[] } } }
+  const cmds: Cmd[] = []
+  const emitir = server.io.emit.bind(server.io)
+  server.io.emit = ((ev: string, ...args: unknown[]) => {
+    if (ev === 'playback:scheduled') cmds.push(args[0] as Cmd)
+    return emitir(ev, ...args)
+  }) as typeof server.io.emit
+
+  // "Posicion" (la banda, a la derecha): sube de 0 a 0,9 en 8 s; el click (a la izquierda) a 120 BPM desde 0,5 s
+  const SEG = 20
+  const sierra = new Float32Array(SEG * SR)
+  for (let i = 0; i < sierra.length; i++) sierra[i] = 0.05 + (((i / SR) % 8) / 8) * 0.85
+  const z = new AdmZip()
+  z.addFile('Posicion.wav', wav16(sierra, SR))
+  z.addFile('Click.wav', wav16(generarClick(120, 4, SEG), SR))
+  const zip = path.join(tmp, 'Con cuenta.zip')
+  z.writeZip(zip)
+
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    localStorage.setItem('multitrack:sonido-compu', 'true')
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+    g.__zip = null
+    g.electronAPI = { isElectron: true, compuToken: 'e2e', pickZipFile: async () => g.__zip, getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }) }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(`${base}/?debug`)
+  await compu.evaluate((zz) => ((globalThis as unknown as { __zip: string }).__zip = zz), zip)
+  await compu.getByRole('button', { name: /Importar o abrir canción/ }).click()
+  await compu.getByRole('button', { name: /Importar \.zip/ }).click()
+  await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
+  // el tempo del click (como lo deja el analisis): compases de 2 s desde 0,5 s
+  const p = server.state.getActiveTab()!.proyecto
+  p.tempo = {
+    bpm: 120,
+    compas: 4,
+    compasesMs: Array.from({ length: 9 }, (_, k) => 500 + 2000 * k),
+    clickPistaId: p.pistas.find((x) => x.nombre === 'Click')!.id,
+    acentoClaro: true
+  }
+  server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
+  await compu.getByLabel('Cuenta antes de la canción').waitFor()
+  assert.match((await compu.getByLabel('Cuenta antes de la canción').locator('option:checked').textContent())!, /2 compases \(auto\)/)
+
+  const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
+  ctxCel.setDefaultTimeout(15000)
+  const cel = await ctxCel.newPage()
+  cel.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
+  await cel.goto(`${base}/?debug`)
+  await cel.getByRole('button', { name: /Tocá para empezar/ }).click()
+  const dispositivos = [
+    { nombre: 'compu', p: compu },
+    { nombre: 'celular', p: cel }
+  ]
+  for (const { p: pg } of dispositivos) {
+    await pg.waitForFunction(() => !!(globalThis as unknown as { __mt?: { engineRef: { current: unknown } } }).__mt?.engineRef.current)
+    // se graba lo que sale: por bloque, el pico del canal izquierdo (click y cuenta) y el derecho (la banda)
+    await pg.evaluate(async () => {
+      const g = globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode } } }; __muestras: [number, number, number][] }
+      const engine = g.__mt.engineRef.current
+      const codigo = `registerProcessor('grabador-cuenta', class extends AudioWorkletProcessor {
+        constructor() { super(); this.lote = [] }
+        process(inputs) {
+          const [L, R] = inputs[0] || []
+          if (L && R) {
+            let pico = 0
+            for (let i = 0; i < L.length; i++) pico = Math.max(pico, Math.abs(L[i]))
+            this.lote.push([currentTime, pico, R[0]])
+          }
+          if (this.lote.length >= 8) { this.port.postMessage(this.lote); this.lote = [] }
+          return true
+        }
+      })`
+      await engine.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' })))
+      const nodo = new AudioWorkletNode(engine.ctx, 'grabador-cuenta', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' })
+      g.__muestras = []
+      nodo.port.onmessage = (e: MessageEvent<[number, number, number][]>) => {
+        const ts = engine.ctx.getOutputTimestamp()
+        const base = performance.timeOrigin + (ts.performanceTime ?? 0) - (ts.contextTime ?? 0) * 1000
+        for (const [tc, l, r] of e.data) g.__muestras.push([base + tc * 1000, l, r])
+      }
+      engine.masterGain.connect(nodo)
+    })
+  }
+  await esperar(3000) // que todos tengan listo el comienzo y el sonido de la cuenta
+
+  await t.test('suenan los 8 golpes en los dos, juntos y a tiempo; la canción entra en el "1"', async () => {
+    const vistos = new Set<string>()
+    const mirar = setInterval(() => {
+      void cel.locator('.m-barra-cuenta').textContent().then((x) => x && vistos.add(`cel ${x.trim()}`), () => undefined)
+      void compu.locator('.reloj-contando .reloj-grande').textContent().then((x) => x && vistos.add(`compu ${x.trim()}`), () => undefined)
+    }, 100)
+    await compu.getByRole('button', { name: 'Reproducir' }).click()
+    await esperar(300)
+    const cmd = cmds.filter((c) => c.playback.estado === 'playing').pop()!
+    const golpes = cmd.playback.cuenta!.golpes
+    assert.equal(golpes.length, 8)
+    await esperar(cmd.executeAtServerTime - Date.now() + 2500)
+    clearInterval(mirar)
+    await compu.getByRole('button', { name: 'Stop' }).click()
+    assert.ok(vistos.has('cel Cuenta 1') && vistos.has('cel Cuenta 4'), `el celular muestra la cuenta (${[...vistos].join(', ')})`)
+    assert.ok(vistos.has('compu 1') && vistos.has('compu 3'), `la compu muestra la cuenta (${[...vistos].join(', ')})`)
+
+    const entradas: Record<string, number[]> = {}
+    for (const { nombre, p: pg } of dispositivos) {
+      const m = (await pg.evaluate(() => (globalThis as unknown as { __muestras: [number, number, number][] }).__muestras)) as [number, number, number][]
+      // cada golpe de la cuenta: el primer bloque que sube de golpe cerca de su hora
+      const ataques: number[] = []
+      for (const g of golpes) {
+        const cerca = m.filter(([w]) => w > g.t - 60 && w < g.t + 60)
+        const pico = Math.max(...cerca.map((x) => x[1]))
+        assert.ok(pico > 0.05, `${nombre}: no sonó el golpe ${g.n} (pico ${pico.toFixed(3)})`)
+        ataques.push(cerca.find((x) => x[1] >= pico * 0.5)![0] - g.t)
+      }
+      // antes de la cuenta y durante, la banda no suena; entra en la hora de la musica
+      const antes = m.filter(([w]) => w > golpes[0].t - 200 && w < cmd.executeAtServerTime - 30)
+      assert.ok(antes.length > 50 && antes.every((x) => Math.abs(x[2]) < 0.01), `${nombre}: la banda sonó durante la cuenta`)
+      const entra = m.find(([w, , r]) => w > cmd.executeAtServerTime - 30 && Math.abs(r) > 0.02)
+      assert.ok(entra, `${nombre}: la banda no entró`)
+      ataques.push(entra![0] - cmd.executeAtServerTime)
+      entradas[nombre] = ataques
+    }
+    if (process.env.E2E_VERBOSE) console.log('cuenta (ms contra la hora pedida):', JSON.stringify(entradas, (_k, v) => (typeof v === 'number' ? Math.round(v * 10) / 10 : v)))
+    // entre dispositivos (lo que se escucha): cada golpe y la entrada, a menos de 5 ms; contra la hora pedida, a menos de 15
+    for (let i = 0; i < golpes.length + 1; i++) {
+      const a = entradas.compu[i]
+      const b = entradas.celular[i]
+      assert.ok(Math.abs(a - b) < 5, `${i < golpes.length ? `golpe ${i + 1}` : 'entrada de la banda'}: compu ${a.toFixed(1)} ms · celular ${b.toFixed(1)} ms`)
+      assert.ok(Math.abs(a) < 15 && Math.abs(b) < 15, `${i < golpes.length ? `golpe ${i + 1}` : 'entrada'} corrido: compu ${a.toFixed(1)} · celular ${b.toFixed(1)}`)
+    }
+  })
+
+  await t.test('"Sin cuenta" en esta canción: arranca directo', async () => {
+    await compu.getByLabel('Cuenta antes de la canción').selectOption('0')
+    await compu.waitForFunction(() => (document.querySelector('.chip-cuenta') as HTMLSelectElement | null)?.value === '0')
+    await esperar(300)
+    await compu.getByRole('button', { name: 'Reproducir' }).click()
+    await esperar(300)
+    assert.equal(cmds.filter((c) => c.playback.estado === 'playing').pop()!.playback.cuenta, undefined)
+    await compu.getByRole('button', { name: 'Stop' }).click()
+    assert.deepEqual(errores, [])
+  })
+})
+
+test('Android con el navegador: "Abrir en la app" lleva a la app con la misma dirección (y el código); sin la app, ofrece bajarla', { timeout: 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-abrir-app-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const extras = path.join(tmp, 'extras')
+  fs.mkdirSync(extras)
+  fs.writeFileSync(path.join(extras, 'airtracks.apk'), 'apk de prueba')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false, dirExtras: extras })
+  const port = await server.start(0)
+  const browser: Browser = await chromium.launch()
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+  ctx.setDefaultTimeout(15000)
+  const cel = await ctx.newPage()
+  await cel.goto(`http://localhost:${port}/?c=1234`)
+  const link = cel.getByRole('link', { name: /Abrir en la app/ })
+  await link.waitFor()
+  const href = (await link.getAttribute('href'))!
+  assert.ok(href.startsWith(`intent://localhost:${port}/?c=1234#Intent;scheme=airtracks;package=com.multitrack.alabanza;`), href)
+  assert.match(decodeURIComponent(href), new RegExp(`S\\.browser_fallback_url=http://localhost:${port}/\\?c=1234#sin-app;end$`))
+  // Chrome vuelve con #sin-app si no esta instalada: se ofrece bajarla
+  await cel.goto(`http://localhost:${port}/?c=1234#sin-app`)
+  await cel.reload()
+  await cel.getByText('Parece que no tenés la app AirTracks').waitFor()
+  assert.equal(await cel.getByRole('link', { name: /Bajar la app para Android/ }).first().getAttribute('href'), '/app/airtracks.apk')
+  // en un iPhone no aparece
+  const ctxIos = await browser.newContext({ ...devices['iPhone 13'] })
+  const ios = await ctxIos.newPage()
+  await ios.goto(`http://localhost:${port}/`)
+  await ios.getByRole('button', { name: /Tocá para empezar/ }).waitFor()
+  assert.equal(await ios.getByRole('link', { name: /Abrir en la app/ }).count(), 0)
+})

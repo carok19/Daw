@@ -199,6 +199,7 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
       ...(anterior ? { tonoAplicado: 0, tonoPistas: [] } : {}),
       ...(!anterior && ficha?.tono ? { tono: ficha.tono } : {}),
       ...(!anterior && ficha?.tonalidad ? { tonalidad: ficha.tonalidad } : {}),
+      ...(!anterior && ficha?.cuenta !== undefined ? { cuenta: ficha.cuenta } : {}),
       // con la ficha vigente ya esta todo: no hace falta volver a analizar
       analisis: fichaVigente
         ? { estado: 'listo', fuente: ficha!.fuenteSecciones, guiaPistaId: null }

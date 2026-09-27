@@ -31,6 +31,20 @@ export function esAndroid(): boolean {
   return /Android/i.test(navigator.userAgent)
 }
 
+/** Paquete de la app Android (id de cuando se llamaba Multitrack Alabanza: no cambiarlo). */
+const PAQUETE_ANDROID = 'com.multitrack.alabanza'
+
+/**
+ * Link para abrir ESTA misma pagina (con su codigo de la banda) en la app
+ * Android. Si la app no esta instalada, Chrome vuelve a la pagina con
+ * `#sin-app` (y ahi se ofrece bajarla).
+ */
+export function enlaceAbrirEnApp(): string {
+  const { host, pathname, search, origin } = window.location
+  const volver = `${origin}${pathname}${search}#sin-app`
+  return `intent://${host}${pathname}${search}#Intent;scheme=airtracks;package=${PAQUETE_ANDROID};S.browser_fallback_url=${encodeURIComponent(volver)};end`
+}
+
 /** Abierta como icono de la pantalla de inicio (modo app). */
 export function enPantallaDeInicio(): boolean {
   return window.matchMedia?.('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone === true

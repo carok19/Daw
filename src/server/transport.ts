@@ -1,12 +1,14 @@
 import type { Server } from 'socket.io'
 import type { AccionProgramada, ComandoProgramado, SeccionSaltarPayload, TramoReproduccion } from '../shared/types'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn, type Seccion } from '../shared/playback'
+import { compasesDeCuenta, programarCuenta } from '../shared/cuenta'
 import type { AppState, Tab } from './state'
 
 /**
  * Margen (ms) para programar una accion de audio a futuro, usado cuando hay al
  * menos un celular conectado: tiempo de sobra para que el comando llegue por
- * WiFi a todos y cada uno programe su audio para el mismo instante.
+ * WiFi a todos y cada uno programe su audio para el mismo instante. Es el
+ * maximo: con los celulares medidos se usa menos (ver entrega.ts).
  */
 export const MARGIN_MS = 1500
 
@@ -68,11 +70,13 @@ export class Transporte {
     private readonly state: AppState,
     private readonly hayCelulares: () => boolean,
     /** cambio el salto pendiente (se eligio, se cambio, se cancelo o se hizo): avisar a todos */
-    private readonly alCambiarSalto: () => void = () => {}
+    private readonly alCambiarSalto: () => void = () => {},
+    /** margen con celulares: lo que tardan en llegarles las ordenes (ver entrega.ts) */
+    private readonly margenConCelulares: () => number = () => MARGIN_MS
   ) {}
 
   margen(): number {
-    return this.hayCelulares() ? MARGIN_MS : MARGIN_SIN_CELULARES_MS
+    return this.hayCelulares() ? this.margenConCelulares() : MARGIN_SIN_CELULARES_MS
   }
 
   play(positionMs?: number): void {
@@ -84,7 +88,11 @@ export class Transporte {
       positionMs !== undefined && Number.isFinite(positionMs)
         ? clampPos(positionMs, tab.proyecto.duracionTotalMs)
         : this.posicionDeReanudacion(tab, now)
-    this.emitir(tab, 'play', { estado: 'playing', positionMs: pos, referenceServerTime: now + this.margen() })
+    const inicio = now + this.margen()
+    // desde parado o en pausa: primero la cuenta ("1 2 3 4, 1 2 3 4") y despues la musica, en el tiempo
+    const cuenta = tab.playback.estado !== 'playing' ? programarCuenta(tab.proyecto.tempo, pos, compasesDeCuenta(tab.proyecto), inicio) : null
+    if (cuenta) this.emitir(tab, 'play', { estado: 'playing', positionMs: pos, referenceServerTime: cuenta.inicioMusica, cuenta: cuenta.cuenta })
+    else this.emitir(tab, 'play', { estado: 'playing', positionMs: pos, referenceServerTime: inicio })
   }
 
   pause(): void {

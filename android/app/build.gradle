@@ -46,3 +46,8 @@ android {
         abortOnError false
     }
 }
+
+dependencies {
+    // lector de QR (solo el nucleo, en Java puro: sin servicios de Google ni internet)
+    implementation 'com.google.zxing:core:3.5.3'
+}

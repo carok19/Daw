@@ -119,6 +119,8 @@ export interface Proyecto {
   tonoPistas?: string[]
   /** tonalidad original puesta a mano ("A", "F#m"); sin: se lee del nombre de la cancion */
   tonalidad?: string
+  /** compases de cuenta al dar play (0 = sin cuenta); sin: automatica (2, o 1 en las lentas) */
+  cuenta?: 0 | 1 | 2
 }
 
 /** Una red en la que esta la compu (Windows la marca como publica o privada). */
@@ -239,6 +241,24 @@ export interface TramoReproduccion {
   estado: EstadoTransporte
   positionMs: number
   referenceServerTime: number
+  /** cuenta antes de que entre la musica (play desde parado o en pausa) */
+  cuenta?: CuentaProgramada
+}
+
+/** Un golpe de la cuenta: a que hora (del servidor) suena y que numero es dentro del compas (1 = el "1"). */
+export interface GolpeCuenta {
+  t: number
+  n: number
+}
+
+/**
+ * Cuenta antes de la cancion ("1 2 3 4, 1 2 3 4"): cada dispositivo la toca
+ * con el sonido del click de la cancion, programada con el mismo reloj que la
+ * musica, que entra justo despues (en el tiempo de la cancion).
+ */
+export interface CuentaProgramada {
+  golpes: GolpeCuenta[]
+  pulsosPorCompas: number
 }
 
 /**
@@ -534,6 +554,8 @@ export interface DiagnosticoServidor {
   licencia: string
   cancion: { nombre: string; pistas: number; duracionMs: number; bpm: number | null } | null
   dispositivos: DispositivoInfo[]
+  /** espera desde que se toca play hasta que suena, y lo que tarda en llegarle una orden al celular mas lento (ida y vuelta) */
+  arranque?: { margenMs: number; peorEntregaMs: number | null }
 }
 
 export interface DiagnosticoDispositivo extends DiagnosticoAudio {

@@ -253,6 +253,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             progresoTono={controller.progresoTono[proyecto.id] ?? null}
             onCambiarTono={(n) => void controller.cambiarTono(proyecto.id, n)}
             onTonalidad={(t) => controller.ponerTonalidad(proyecto.id, t)}
+            onCuenta={(c) => controller.setCuenta(proyecto.id, c)}
           />
           <main className="compu-main">
             <Mixer proyecto={proyecto} onUpdate={controller.updateMixer} onReorder={controller.reorderPistas} />

@@ -34,3 +34,25 @@ export function usePlayheadPaso(pasoMs = 250): number {
   const snapshot = (): number => Math.floor(valor / pasoMs) * pasoMs
   return useSyncExternalStore(subscribe, snapshot, snapshot)
 }
+
+// golpe de la cuenta que esta sonando (1..N; 0 = no se esta contando)
+let golpe = 0
+const oyentesGolpe = new Set<() => void>()
+
+export function setGolpeCuenta(n: number): void {
+  if (n === golpe) return
+  golpe = n
+  for (const o of oyentesGolpe) o()
+}
+
+/** Numero de la cuenta que suena ahora ("1 2 3 4" antes de la cancion); 0 si no se esta contando. */
+export function useGolpeCuenta(): number {
+  return useSyncExternalStore(
+    (cb) => {
+      oyentesGolpe.add(cb)
+      return () => oyentesGolpe.delete(cb)
+    },
+    () => golpe,
+    () => golpe
+  )
+}

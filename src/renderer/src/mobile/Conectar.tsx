@@ -7,6 +7,7 @@ import {
   copiarTexto,
   direccionVisible,
   enlaceConCodigo,
+  enlaceAbrirEnApp,
   enPantallaDeInicio,
   esAndroid,
   esIOS,
@@ -16,6 +17,44 @@ import {
 } from '../conexion'
 import { useQr } from '../ui/useQr'
 import { Hoja } from './Hojas'
+
+// ---------- abrir en la app Android ----------
+
+/**
+ * Android con el navegador (por ejemplo, escaneo el QR con la camara): si
+ * tiene la app, que siga en la app (encuentra la compu sola la proxima vez,
+ * pantalla encendida, audio sin tocar nada). Si no la tiene, se ofrece bajarla.
+ */
+export function AbrirEnApp({ controller }: { controller: AppController }) {
+  const [apk, setApk] = useState(false)
+  const sinApp = typeof window !== 'undefined' && window.location.hash === '#sin-app'
+  const pedir = controller.datosInvitacion
+  useEffect(() => {
+    let cancelado = false
+    pedir()
+      .then((d) => !cancelado && setApk(d.apk))
+      .catch(() => undefined)
+    return () => {
+      cancelado = true
+    }
+  }, [pedir])
+  if (!esAndroid() || puenteAndroid() || enPantallaDeInicio()) return null
+  if (sinApp) {
+    return apk ? (
+      <div className="abrir-en-app">
+        <p>Parece que no tenés la app AirTracks. Con la app, en cada ensayo encuentra la compu sola, sin QR.</p>
+        <a className="boton-enlace btn-primario" href="/app/airtracks.apk" download>
+          <Download size={17} /> Bajar la app para Android
+        </a>
+      </div>
+    ) : null
+  }
+  return (
+    <a className="boton-enlace btn-fantasma abrir-en-app-boton" href={enlaceAbrirEnApp()}>
+      <Smartphone size={17} /> ¿Tenés la app AirTracks? Abrir en la app
+    </a>
+  )
+}
 
 // ---------- codigo de la banda ----------
 

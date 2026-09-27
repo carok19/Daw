@@ -81,6 +81,12 @@ export function informeTexto(s: DiagnosticoServidor, ahora = new Date(), firewal
       }`
     )
   }
+  if (s.arranque) {
+    const a = s.arranque
+    lineas.push(
+      `Arranque: ${a.margenMs} ms desde que se toca play${a.peorEntregaMs !== null ? ` (al celular más lento una orden le tarda ${Math.round(a.peorEntregaMs)} ms, ida y vuelta)` : ''}`
+    )
+  }
   if (s.licencia) lineas.push(`Licencia: ${s.licencia}`)
   if (s.cancion) {
     const min = Math.floor(s.cancion.duracionMs / 60000)

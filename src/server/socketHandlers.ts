@@ -61,6 +61,7 @@ import { guardarAjustes, normalizarCodigo, type Ajustes } from './ajustes'
 import type { EstadisticasMezcla } from './mezclador'
 import type { Licencias } from './licencia'
 import { esTonoValido, Tonos } from './tono'
+import { MedidorEntrega } from './entrega'
 import { normalizarTonalidad, textoSemitonos, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { direccionesLan, ipParaCliente } from './network'
 import { NOMBRE_FIJO } from './descubrimiento'
@@ -99,10 +100,14 @@ export interface Servicios {
   analizador: Analizador
   biblioteca: Biblioteca
   tonos: Tonos
+  /** deja de medir la entrega a los celulares (al cerrar el servidor) */
+  cerrar(): void
 }
 
 /** Lo que la conexion de los celulares necesita del servidor (puertos, ajustes, app Android). */
 export interface Conexion {
+  /** cada cuanto se mide lo que tardan en llegar las ordenes a los celulares (pruebas: menos) */
+  intervaloPingMs?: number
   ajustes: Ajustes
   puerto(): number
   puertoCorto(): number | null
@@ -218,7 +223,16 @@ export function registerSocketHandlers(
     return false
   }
 
-  const transporte = new Transporte(io, state, hayCelularesConectados, () => emitirEstadoPronto())
+  // cuanto tardan en llegar las ordenes a cada celular: el margen para arrancar juntos es el justo
+  const entrega = new MedidorEntrega()
+  const idsCelulares = (): string[] => [...io.sockets.sockets.values()].filter((s) => (s.data as SocketData).origen === 'celular').map((s) => s.id)
+  const pings = setInterval(() => {
+    const t = Date.now()
+    for (const s of io.sockets.sockets.values()) if ((s.data as SocketData).origen === 'celular') s.emit('sync:ping', { t })
+  }, conexion.intervaloPingMs ?? 2000)
+  pings.unref()
+
+  const transporte = new Transporte(io, state, hayCelularesConectados, () => emitirEstadoPronto(), () => entrega.margen(idsCelulares()))
 
   function emitirEstado(): void {
     io.emit('estado:actualizado', buildEstadoCompleto(state))
@@ -479,6 +493,7 @@ export function registerSocketHandlers(
     }
 
     socket.on('disconnect', () => {
+      entrega.olvidar(socket.id)
       devices.desconectar(socket.id)
       emitirDispositivos()
     })
@@ -554,8 +569,19 @@ export function registerSocketHandlers(
         mezcla: conexion.estadisticasMezcla?.() ?? null,
         licencia: resumenLicencia(conexion.licencias?.estado()),
         cancion: p ? { nombre: p.nombre, pistas: p.pistas.length, duracionMs: p.duracionTotalMs, bpm: p.tempo?.bpm ?? null } : null,
-        dispositivos: devices.listar()
+        dispositivos: devices.listar(),
+        arranque: { margenMs: transporte.margen(), peorEntregaMs: entrega.peor(idsCelulares()) }
       })
+    })
+
+    // ida y vuelta de la pregunta de la compu (ver entrega.ts)
+    socket.on('sync:pong', (payload: { t?: unknown }) => {
+      if (origen !== 'celular' || typeof payload?.t !== 'number') return
+      entrega.registrar(socket.id, Date.now() - payload.t)
+    })
+    // a este celular una orden le llego sin tiempo para programarla: margen completo por un rato
+    socket.on('sync:tarde', () => {
+      if (origen === 'celular') entrega.tarde()
     })
 
     socket.on('sync:report', (payload: SyncReportPayload) => {
@@ -743,6 +769,20 @@ export function registerSocketHandlers(
       if (payload?.tonalidad !== null && !tonalidad) return ack?.({ ok: false })
       if (tonalidad) proyecto.tonalidad = tonalidad
       else delete proyecto.tonalidad
+      saveProyecto(proyecto)
+      emitirEstado()
+      ack?.({ ok: true })
+    })
+
+    // compases de cuenta antes de la cancion (null = automatica)
+    socket.on('cuenta:set', (payload: { proyectoId?: unknown; cuenta?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      const id = payload?.proyectoId
+      const proyecto = typeof id === 'string' ? state.tabDeProyecto(id)?.proyecto : null
+      const c = payload?.cuenta
+      if (!proyecto || !(c === null || c === 0 || c === 1 || c === 2)) return ack?.({ ok: false })
+      if (c === null) delete proyecto.cuenta
+      else proyecto.cuenta = c
       saveProyecto(proyecto)
       emitirEstado()
       ack?.({ ok: true })
@@ -1059,7 +1099,7 @@ export function registerSocketHandlers(
 
   })
 
-  return { transporte, analizador, biblioteca, tonos }
+  return { transporte, analizador, biblioteca, tonos, cerrar: () => clearInterval(pings) }
 }
 
 /** Si la app se cerro hace menos que esto (se corto a mitad de un culto), al abrirla vuelve todo como estaba. */

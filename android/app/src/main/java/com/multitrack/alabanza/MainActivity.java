@@ -162,6 +162,10 @@ public final class MainActivity extends Activity implements Buscador.Oyente {
         });
         col.addView(botonOtra, conMargen(ViewGroup.LayoutParams.MATCH_PARENT, 4, 10));
 
+        Button escanear = Estilo.boton(this, "Escanear el QR de la compu", true);
+        escanear.setOnClickListener(v -> startActivity(new Intent(this, EscanerActivity.class)));
+        col.addView(escanear, conMargen(ViewGroup.LayoutParams.MATCH_PARENT, 0, 10));
+
         Button escribir = Estilo.boton(this, "Escribir la dirección", false);
         escribir.setOnClickListener(v -> escribirDireccion());
         col.addView(escribir, conMargen(ViewGroup.LayoutParams.MATCH_PARENT, 0, 18));

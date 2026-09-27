@@ -3,7 +3,8 @@ import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipFo
 import type { PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
-import { usePlayheadPaso } from '../app/playheadStore'
+import { useGolpeCuenta, usePlayheadPaso } from '../app/playheadStore'
+import { compasesDeCuenta } from '@shared/cuenta'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
 import { Timeline } from './Timeline'
@@ -33,6 +34,7 @@ interface Props {
   progresoTono: ProgresoTono | null
   onCambiarTono: (semitonos: number) => void
   onTonalidad: (tonalidad: string | null) => void
+  onCuenta: (cuenta: 0 | 1 | 2 | null) => void
 }
 
 function textoCompas(compas: number): string {
@@ -41,6 +43,15 @@ function textoCompas(compas: number): string {
 
 function Reloj({ duracionMs }: { duracionMs: number }) {
   const pos = usePlayheadPaso(200)
+  const golpe = useGolpeCuenta()
+  if (golpe > 0) {
+    return (
+      <div className="reloj num reloj-contando" role="status" aria-label={`Cuenta ${golpe}`}>
+        <div className="reloj-grande">{golpe}</div>
+        <div className="reloj-chico">cuenta</div>
+      </div>
+    )
+  }
   return (
     <div className="reloj num">
       <div className="reloj-grande">{formatMmSs(pos)}</div>
@@ -166,6 +177,20 @@ export function Transport(p: Props) {
                   <Magnet size={13} />
                 </button>
               </span>
+            )}
+            {p.proyecto.tempo && p.proyecto.tempo.compasesMs.length > 1 && (
+              <select
+                className="chip-cuenta"
+                value={p.proyecto.cuenta === undefined ? 'auto' : String(p.proyecto.cuenta)}
+                onChange={(e) => p.onCuenta(e.target.value === 'auto' ? null : (Number(e.target.value) as 0 | 1 | 2))}
+                title="Cuenta al dar play: el click cuenta 1 o 2 compases (“1 2 3 4, 1 2 3 4”) y recién entra la canción, en todos a la vez"
+                aria-label="Cuenta antes de la canción"
+              >
+                <option value="auto">Cuenta: {compasesDeCuenta({ tempo: p.proyecto.tempo }) === 1 ? '1 compás' : '2 compases'} (auto)</option>
+                <option value="2">Cuenta: 2 compases</option>
+                <option value="1">Cuenta: 1 compás</option>
+                <option value="0">Sin cuenta</option>
+              </select>
             )}
           </div>
         </div>

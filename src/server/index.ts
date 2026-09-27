@@ -17,6 +17,7 @@ import { leerAjustes, type Ajustes } from './ajustes'
 import { Descubrimiento } from './descubrimiento'
 import { Mezclador } from './mezclador'
 import { archivoQueSuena, type Tonos } from './tono'
+import { sonidosDeCuenta } from './cuenta'
 import { Licencias } from './licencia'
 import { decodificarMezcla, SEGMENTO_SEC } from '../shared/mezcla'
 import { posicionActualMs } from '../shared/playback'
@@ -76,6 +77,8 @@ export interface OpcionesServidor {
   version?: string
   /** clave publica de las licencias (undefined = la que trae la app; null = sin licencias) */
   clavePublicaLicencias?: string | null
+  /** cada cuanto se mide lo que tardan en llegar las ordenes a los celulares (por defecto 2 s) */
+  intervaloPingMs?: number
 }
 
 /**
@@ -153,6 +156,24 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     }
   })
 
+  // sonidos de la cuenta ("1 2 3 4" antes de la cancion): recortados del click de la cancion
+  const cuentas = new Map<string, Buffer | null>()
+  app.get('/cuenta/:proyectoId', (req, res) => {
+    const m = /^(.+)\.wav$/.exec(req.params.proyectoId)
+    const proyecto = m && esIdValido(m[1]) ? state.tabDeProyecto(m[1])?.proyecto : null
+    if (!proyecto) return res.status(404).end()
+    const clave = `${proyecto.id}:${proyecto.revision ?? 0}:${proyecto.tempo?.clickPistaId ?? ''}:${proyecto.tempo?.compasesMs.length ?? 0}`
+    if (!cuentas.has(clave)) {
+      if (cuentas.size > 50) cuentas.clear()
+      cuentas.set(clave, sonidosDeCuenta(projectDir(proyecto.id), proyecto))
+    }
+    const wav = cuentas.get(clave)
+    if (!wav) return res.status(404).end()
+    res.setHeader('Content-Type', 'audio/wav')
+    res.setHeader('Cache-Control', 'no-store')
+    res.end(wav)
+  })
+
   // cancion en otro tono: las pistas transpuestas se sirven en la misma direccion que las originales
   // (la `revision` cambia al cambiar el tono, asi nadie se queda con lo que tenia en cache)
   app.use('/media', (req, _res, next) => {
@@ -190,7 +211,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     res.sendFile(path.join(rendererDir, 'index.html'))
   })
 
-  const { transporte, analizador, biblioteca, tonos } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
+  const { transporte, analizador, biblioteca, tonos, cerrar: cerrarHandlers } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
     ajustes,
     puerto: () => {
       const a = httpServer.address()
@@ -200,7 +221,8 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     hayApk,
     estadisticasMezcla: () => mezclador.estadisticas(),
     version,
-    licencias
+    licencias,
+    intervaloPingMs: opciones.intervaloPingMs
   })
 
   async function listenOn(port: number): Promise<number> {
@@ -286,6 +308,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     clearInterval(latido)
     mezclador.cerrar()
     tonos.cerrar()
+    cerrarHandlers()
     descubrimiento?.detener()
     servidorCorto?.close()
     biblioteca.apagar()

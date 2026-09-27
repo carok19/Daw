@@ -57,7 +57,12 @@ export function nuevoPlayback(
   nuevo: TramoReproduccion,
   nowMs: number
 ): PlaybackState {
-  const limpio: PlaybackState = { estado: nuevo.estado, positionMs: nuevo.positionMs, referenceServerTime: nuevo.referenceServerTime }
+  const limpio: PlaybackState = {
+    estado: nuevo.estado,
+    positionMs: nuevo.positionMs,
+    referenceServerTime: nuevo.referenceServerTime,
+    ...(nuevo.cuenta ? { cuenta: nuevo.cuenta } : {})
+  }
   if (nuevo.referenceServerTime <= nowMs) return limpio
   const previo = podar(anterior ?? undefined, nowMs)
   return previo ? { ...limpio, previo } : limpio

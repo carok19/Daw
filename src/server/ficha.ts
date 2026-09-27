@@ -31,6 +31,8 @@ export interface FichaCancion {
   /** tono elegido (semitonos) y tonalidad original puesta a mano */
   tono?: number
   tonalidad?: string
+  /** compases de cuenta al dar play (sin: automatica) */
+  cuenta?: 0 | 1 | 2
 }
 
 export function rutaFicha(rutaComprimido: string): string {
@@ -63,7 +65,8 @@ export function fichaDesdeProyecto(p: Proyecto): FichaCancion {
     tempo: p.tempo ?? null,
     fuenteSecciones: p.analisis?.fuente ?? null,
     ...(p.tono ? { tono: p.tono } : {}),
-    ...(p.tonalidad ? { tonalidad: p.tonalidad } : {})
+    ...(p.tonalidad ? { tonalidad: p.tonalidad } : {}),
+    ...(p.cuenta !== undefined ? { cuenta: p.cuenta } : {})
   }
 }
 
@@ -105,7 +108,8 @@ export function interpretarFicha(texto: string): FichaCancion | null {
       tempo,
       fuenteSecciones: f.fuenteSecciones === 'guia' || f.fuenteSecciones === 'archivo' ? f.fuenteSecciones : null,
       ...(typeof f.tono === 'number' && Number.isInteger(f.tono) && f.tono >= TONO_MIN && f.tono <= TONO_MAX && f.tono !== 0 ? { tono: f.tono } : {}),
-      ...(normalizarTonalidad(f.tonalidad) ? { tonalidad: normalizarTonalidad(f.tonalidad)! } : {})
+      ...(normalizarTonalidad(f.tonalidad) ? { tonalidad: normalizarTonalidad(f.tonalidad)! } : {}),
+      ...(f.cuenta === 0 || f.cuenta === 1 || f.cuenta === 2 ? { cuenta: f.cuenta } : {})
     }
   } catch {
     return null
