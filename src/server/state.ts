@@ -32,11 +32,16 @@ export class AppState {
   activeTabId: string | null = null
   locked = false
 
-  abrirProyecto(proyecto: Proyecto): string {
+  /**
+   * Abre el proyecto en una pestana nueva. Con `activar = false` la pestana se agrega
+   * al setlist sin cambiar la cancion activa (p. ej. una cancion que llega por la red
+   * mientras otra esta sonando en vivo).
+   */
+  abrirProyecto(proyecto: Proyecto, activar = true): string {
     const tabId = crypto.randomUUID()
     this.tabs.set(tabId, { tabId, proyecto, playback: estadoInicial() })
     this.orden.push(tabId)
-    this.activeTabId = tabId
+    if (activar || !this.activeTabId) this.activeTabId = tabId
     return tabId
   }
 

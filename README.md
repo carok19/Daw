@@ -23,7 +23,42 @@ Los proyectos guardados quedan en `~/MultitrackApp/proyectos/`.
 
 - `npm run dev:renderer` — Vite dev server del renderer solo (para iterar UI rápido en un navegador de escritorio; no reemplaza probar dentro de Electron).
 - `npm run typecheck` — chequeo de tipos de main/preload/server y renderer.
-- `npm run test:server` — test de integración del servidor (Express + Socket.IO), sin necesidad de Electron ni un display: arma un zip de prueba, simula un cliente "compu" y uno "celular" reales por socket, y verifica carga de zip, filtrado de audio, mixer, marcadores, bloqueo de control y el mecanismo de sincronización (`playback:scheduled`).
+- `npm run test:server` — test de integración del servidor (Express + Socket.IO), sin necesidad de Electron ni un display: arma un zip de prueba, simula un cliente "compu" y uno "celular" reales por socket, y verifica carga de zip, filtrado de audio, mixer, marcadores, bloqueo de control y el mecanismo de sincronización (`playback:scheduled`), además de los zips de MoiMoi (`moimoi.json`) y el envío por la red (`POST /api/importar`).
+
+## Canciones desde MoiMoi (separador de pistas)
+
+[MoiMoi](https://github.com/carok19/moimoi) separa una canción (link de YouTube o
+archivo) en voz, batería, bajo, guitarra, piano y otros, y exporta un `.zip` listo
+para esta app, con **Click**, **Guía** (voz que anuncia "Verso", "Coro"…) y las
+partes de la canción. Hay dos formas de traerlo:
+
+1. **Con el archivo** (también sirve si te lo mandan por WhatsApp): "Cargar
+   canción (.zip)" como con cualquier otro zip.
+2. **Directo por la red**: con esta app abierta, en MoiMoi tocá *Exportar →
+   Enviar a Multitrack Alabanza*. La canción aparece sola en una pestaña nueva.
+   Si en ese momento hay una canción sonando, la nueva se agrega al setlist sin
+   cambiar la que está sonando.
+
+Si el zip trae `moimoi.json` (lo agrega MoiMoi), al importarlo se usan:
+
+- el **orden y el nombre de cada pista** (con acentos: "Batería", "Guía"), y su
+  volumen y paneo;
+- las **partes de la canción como marcadores** (Intro, Verso 1, Coro 1, Puente…,
+  con su color), para saltar entre partes desde el primer momento;
+- la **duración**, antes de decodificar el audio.
+
+Todos los campos son opcionales y cualquier zip sin `moimoi.json` se importa
+exactamente igual que antes (`src/server/zip.ts`).
+
+Rutas HTTP (con CORS abierto) para otras apps (`src/server/importar.ts`):
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /api/info` | Responde `{"app": "multitrack-alabanza", "importar": true, "bloqueado": …}` para detectar que la app está abierta |
+| `POST /api/importar` | Cuerpo: el `.zip` (`Content-Type: application/zip`). Encabezado `X-Nombre-Archivo`: nombre del zip, URL-encoded (es el nombre de la canción). Responde `{ok, proyectoId, nombre, pistas, marcadores, activada}` |
+
+Con el candado activado, `POST /api/importar` solo acepta envíos desde la misma
+computadora.
 
 ## Arquitectura
 

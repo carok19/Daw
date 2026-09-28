@@ -6,6 +6,7 @@ import { AppState } from './state'
 import { DeviceRegistry } from './devices'
 import { registerSocketHandlers } from './socketHandlers'
 import { ensureBaseDir, projectsBaseDir } from './projects'
+import { registrarRutasImportar } from './importar'
 
 export interface AppServer {
   app: express.Express
@@ -30,6 +31,7 @@ export function createServer(rendererDir: string): AppServer {
   const devices = new DeviceRegistry()
 
   app.use(express.json())
+  registrarRutasImportar(app, io, state)
   app.use('/media', express.static(projectsBaseDir()))
   app.use(express.static(rendererDir))
   app.get('*', (_req, res) => {

@@ -159,6 +159,133 @@ test('zip sin audio no crea proyecto', async () => {
   fs.rmSync(tmp, { force: true })
 })
 
+/** Zip como los que exporta MoiMoi: un WAV por instrumento + moimoi.json con partes y orden. */
+function crearZipMoiMoi(): Buffer {
+  const zip = new AdmZip()
+  const wavVacio = Buffer.from(
+    'RIFF' + '\x24\x00\x00\x00' + 'WAVEfmt ' + '\x10\x00\x00\x00' + '\x01\x00\x01\x00' +
+      '\x44\xac\x00\x00' + '\x88\x58\x01\x00' + '\x02\x00\x10\x00' + 'data' + '\x00\x00\x00\x00',
+    'binary'
+  )
+  for (const nombre of ['Voz.wav', 'Bateria.wav', 'Click.wav', 'Guia.wav']) zip.addFile(nombre, wavVacio)
+  const manifiesto = {
+    formato: 'moimoi-multitrack',
+    version: 1,
+    cancion: { titulo: 'Canción de prueba', artista: 'Banda', duracionMs: 136900 },
+    pistas: [
+      { archivo: 'Click.wav', nombre: 'Click', volumen: 70 },
+      { archivo: 'Guia.wav', nombre: 'Guía', volumen: 75 },
+      { archivo: 'Voz.wav', nombre: 'Voz' },
+      { archivo: 'Bateria.wav', nombre: 'Batería', volumen: 999, pan: -30 }
+    ],
+    marcadores: [
+      { nombre: 'Coro 1', tiempoMs: 29300, color: '#ff5d8f' },
+      { nombre: 'Intro', tiempoMs: 0 },
+      { nombre: 'Verso 1', tiempoMs: 10100, color: 'rojo' },
+      { nombre: '', tiempoMs: 5000 }
+    ]
+  }
+  zip.addFile('moimoi.json', Buffer.from(JSON.stringify(manifiesto), 'utf-8'))
+  return zip.toBuffer()
+}
+
+test('zip de MoiMoi: orden, nombres y volumenes de pistas + partes como marcadores', async () => {
+  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
+  process.env.MULTITRACK_APP_DIR = tmpAppDir
+  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
+  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+  const server = createServer(rendererDirFake)
+  const port = await server.start(0)
+  const compu = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu' } })
+  await new Promise<void>((r) => compu.on('connect', r))
+
+  const tmp = path.join(os.tmpdir(), `Cancion de prueba (en F)-${Date.now()}.zip`)
+  fs.writeFileSync(tmp, crearZipMoiMoi())
+  const res = await emitAck<{ ok: boolean; error?: string }>(compu, 'project:load-from-zip', { filePath: tmp })
+  assert.equal(res.ok, true)
+  const estado = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  const proyecto = estado.proyectoActivo!
+  assert.deepEqual(proyecto.pistas.map((p) => p.nombre), ['Click', 'Guía', 'Voz', 'Batería'])
+  assert.deepEqual(proyecto.pistas.map((p) => p.volumen), [70, 75, 80, 100])
+  assert.equal(proyecto.pistas[3].pan, -30)
+  assert.deepEqual(proyecto.marcadores.map((m) => [m.nombre, m.tiempoMs]), [['Intro', 0], ['Verso 1', 10100], ['Coro 1', 29300]])
+  assert.equal(proyecto.marcadores[2].color, '#ff5d8f')
+  assert.equal(proyecto.marcadores[1].color, undefined)
+  assert.equal(proyecto.duracionTotalMs, 136900)
+
+  compu.close()
+  server.httpServer.close()
+  fs.rmSync(tmpAppDir, { recursive: true, force: true })
+  fs.rmSync(rendererDirFake, { recursive: true, force: true })
+  fs.rmSync(tmp, { force: true })
+})
+
+test('importar por la red (POST /api/importar) abre la cancion en una pestana', async () => {
+  const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
+  process.env.MULTITRACK_APP_DIR = tmpAppDir
+  const rendererDirFake = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-renderer-'))
+  fs.writeFileSync(path.join(rendererDirFake, 'index.html'), '<html></html>')
+  const server = createServer(rendererDirFake)
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const compu = ioClient(base, { auth: { origen: 'compu' } })
+  await new Promise<void>((r) => compu.on('connect', r))
+
+  type RespuestaImportar = { ok: boolean; error?: string; nombre?: string; pistas?: number; marcadores?: number; activada?: boolean }
+  const info = (await fetch(`${base}/api/info`).then((r) => r.json())) as { app: string; importar: boolean }
+  assert.equal(info.app, 'multitrack-alabanza')
+  assert.equal(info.importar, true)
+
+  const preflight = await fetch(`${base}/api/importar`, { method: 'OPTIONS' })
+  assert.equal(preflight.status, 204)
+  assert.equal(preflight.headers.get('access-control-allow-origin'), '*')
+
+  const vistoPorCompu = new Promise<EstadoCompleto>((resolve) => compu.once('estado:actualizado', resolve))
+  const res = await fetch(`${base}/api/importar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip', 'X-Nombre-Archivo': encodeURIComponent('Banda - Canción de prueba (en F).zip') },
+    body: crearZipMoiMoi()
+  })
+  const body = (await res.json()) as RespuestaImportar
+  assert.equal(res.status, 200)
+  assert.equal(body.ok, true)
+  assert.equal(body.nombre, 'Banda - Canción de prueba (en F)')
+  assert.equal(body.pistas, 4)
+  assert.equal(body.marcadores, 3)
+  const estado = await vistoPorCompu
+  assert.equal(estado.tabs.length, 1)
+  assert.equal(estado.proyectoActivo?.nombre, 'Banda - Canción de prueba (en F)')
+  assert.equal(estado.proyectoActivo?.marcadores.length, 3)
+
+  // Mientras suena una cancion, la que llega se agrega sin cambiar la pestana activa.
+  const activa = estado.activeTabId
+  await Promise.all([
+    new Promise((resolve) => compu.once('playback:scheduled', resolve)),
+    compu.emit('transport:play', {})
+  ])
+  const res2 = await fetch(`${base}/api/importar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip', 'X-Nombre-Archivo': 'Otra.zip' },
+    body: crearZipMoiMoi()
+  })
+  assert.equal(((await res2.json()) as RespuestaImportar).activada, false)
+  const estado2 = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.equal(estado2.tabs.length, 2)
+  assert.equal(estado2.activeTabId, activa)
+
+  // Sin audio: error claro y no se abre nada.
+  const vacio = new AdmZip()
+  vacio.addFile('leeme.txt', Buffer.from('sin audio'))
+  const res3 = await fetch(`${base}/api/importar`, { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: vacio.toBuffer() })
+  assert.equal(res3.status, 400)
+  assert.match(((await res3.json()) as RespuestaImportar).error ?? '', /No se encontraron pistas/)
+
+  compu.close()
+  server.httpServer.close()
+  fs.rmSync(tmpAppDir, { recursive: true, force: true })
+  fs.rmSync(rendererDirFake, { recursive: true, force: true })
+})
+
 test('margen de sincronizacion: instantaneo sin celulares, completo apenas se conecta uno', async () => {
   const tmpAppDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-test-'))
   process.env.MULTITRACK_APP_DIR = tmpAppDir
