@@ -1,7 +1,9 @@
+import crypto from 'node:crypto'
 import type { Server } from 'socket.io'
-import type { AccionProgramada, AnuncioSalto, ComandoProgramado, SeccionSaltarPayload, TramoReproduccion } from '../shared/types'
+import type { AccionProgramada, AnuncioSalto, ColchonActivo, ComandoProgramado, SeccionSaltarPayload, TramoReproduccion } from '../shared/types'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn, type Seccion } from '../shared/playback'
 import { compasesDeCuenta, programarCuenta } from '../shared/cuenta'
+import { SALIDA_PAD_MS, SALIDA_PAD_VUELTA_MS, largoDeCompas, notaDelPad, padDeCancion, proximoCompas, proximoPulso } from '../shared/colchon'
 import type { AppState, Tab } from './state'
 
 /**
@@ -74,6 +76,14 @@ function clampPos(ms: number, duracionTotalMs: number): number {
  */
 export class Transporte {
   private timer: NodeJS.Timeout | null = null
+  private timerColchon: NodeJS.Timeout | null = null
+  /**
+   * Colchon dentro de una cancion: la cancion se pausa al terminar el compas
+   * en que se apaga la banda (en silencio). null = no hay que pausar nada.
+   */
+  private pausaDeColchon: { tabId: string; tPausa: number } | null = null
+  /** cambio el colchon: avisar a todos YA (antes de la orden que lo termina, asi el click para justo) */
+  alCambiarColchon: () => void = () => {}
 
   constructor(
     private readonly io: Server,
@@ -105,22 +115,32 @@ export class Transporte {
   play(positionMs?: number): void {
     const tab = this.state.getActiveTab()
     if (!tab) return
+    if (tab.proyecto.colchon) return this.iniciarColchonDeLista(tab)
     const now = Date.now()
-    if (positionMs === undefined && tab.playback.estado === 'playing') return // ya esta sonando
-    const pos =
-      positionMs !== undefined && Number.isFinite(positionMs)
-        ? clampPos(positionMs, tab.proyecto.duracionTotalMs)
-        : this.posicionDeReanudacion(tab, now)
+    const valida = positionMs !== undefined && Number.isFinite(positionMs)
+    // en el colchon de esta cancion: "seguir" = la cancion vuelve donde quedo, en el "1" del proximo compas
+    // (la pausa del colchon puede estar programada y no haberse hecho todavia: donde queda al hacerse)
+    const propio = this.colchonDe(tab)
+    const dondeQuedo = (): number => this.posicionDeReanudacion(tab, Math.max(now, tab.playback.referenceServerTime))
+    if (propio && this.volverDeColchon(tab, propio, valida ? positionMs! : tab.playback.estado === 'playing' ? null : dondeQuedo())) return
+    if (!valida && tab.playback.estado === 'playing') return // ya esta sonando
+    const pos = valida ? clampPos(positionMs!, tab.proyecto.duracionTotalMs) : this.posicionDeReanudacion(tab, now)
     const inicio = now + this.margen()
     // desde parado o en pausa: primero la cuenta ("1 2 3 4, 1 2 3 4") y despues la musica, en el tiempo
     const cuenta = tab.playback.estado !== 'playing' ? programarCuenta(tab.proyecto.tempo, pos, compasesDeCuenta(tab.proyecto), inicio) : null
+    // un colchon sonando (el de otra cancion o uno de la lista) termina cuando arranca esta: el pad acompana la cuenta y se va
+    const otro = this.colchonSonando()
+    if (otro) this.terminarColchonEn(otro, inicio, (cuenta ? cuenta.inicioMusica - inicio : 0) + SALIDA_PAD_VUELTA_MS)
     if (cuenta) this.emitir(tab, 'play', { estado: 'playing', positionMs: pos, referenceServerTime: cuenta.inicioMusica, cuenta: cuenta.cuenta })
     else this.emitir(tab, 'play', { estado: 'playing', positionMs: pos, referenceServerTime: inicio })
   }
 
   pause(): void {
     const tab = this.state.getActiveTab()
-    if (!tab || tab.playback.estado !== 'playing') return
+    if (!tab) return
+    // pausa en un colchon (el de la lista o el de esta cancion) = se apaga despacio
+    if (tab.proyecto.colchon || this.colchonDe(tab)) return this.terminarColchon()
+    if (tab.playback.estado !== 'playing') return
     const executeAt = Date.now() + this.margen()
     const pos = clampPos(posicionActualMs(tab.playback, executeAt), tab.proyecto.duracionTotalMs)
     this.emitir(tab, 'pause', { estado: 'paused', positionMs: pos, referenceServerTime: executeAt })
@@ -129,6 +149,9 @@ export class Transporte {
   stop(): void {
     const tab = this.state.getActiveTab()
     if (!tab) return
+    // stop = silencio: tambien el colchon que este sonando (de esta cancion, de otra o de la lista)
+    this.terminarColchon()
+    if (tab.proyecto.colchon) return
     if (tab.playback.estado === 'stopped' && tab.playback.positionMs === 0) return
     const executeAt = Date.now() + (tab.playback.estado === 'playing' ? this.margen() : 0)
     this.emitir(tab, 'stop', { estado: 'stopped', positionMs: 0, referenceServerTime: executeAt })
@@ -191,6 +214,10 @@ export class Transporte {
     }
     if (!destino) return
 
+    // en el colchon de esta cancion: la cancion vuelve en esa seccion, en el "1" del proximo compas del colchon
+    const propio = this.colchonDe(tab)
+    if (propio && this.volverDeColchon(tab, propio, alCompas(tab, destino.inicioMs))) return
+
     if (tab.playback.estado !== 'playing' || p.inmediato || this.state.modoSalto === 'inmediato') {
       this.cancelarSalto()
       this.seek(destino.inicioMs)
@@ -230,6 +257,8 @@ export class Transporte {
   saltarAPosicion(positionMs: number, inmediato = false): void {
     const tab = this.state.getActiveTab()
     if (!tab || !Number.isFinite(positionMs)) return
+    const propio = this.colchonDe(tab)
+    if (propio && this.volverDeColchon(tab, propio, alCompas(tab, positionMs))) return
     const compases = tab.proyecto.tempo?.compasesMs
     if (tab.playback.estado !== 'playing' || inmediato || this.state.modoSalto === 'inmediato' || !compases || compases.length < 2) {
       this.cancelarSalto()
@@ -308,6 +337,191 @@ export class Transporte {
     this.emitir(tab, 'play', { estado: 'playing', positionMs: pendiente.destinoMs, referenceServerTime: executeAt })
   }
 
+  // ---- colchon (ver shared/colchon.ts) ----
+
+  /** El colchon que esta sonando (null = ninguno, o ya se esta apagando). */
+  private colchonSonando(): ColchonActivo | null {
+    const c = this.state.colchon
+    return c && c.hasta === null ? c : null
+  }
+
+  /** El colchon de esta cancion (se armo sonando ella): se sale volviendo a la cancion. */
+  private colchonDe(tab: Tab): ColchonActivo | null {
+    const c = this.colchonSonando()
+    return c && c.desdeCancion && c.tabId === tab.tabId ? c : null
+  }
+
+  /**
+   * Colchon dentro de la cancion que suena: en el proximo compas la banda se
+   * apaga (en ese compas) y siguen el click, en el mismo pulso, y un pad en el
+   * tono de la cancion. Devuelve el motivo si no se puede (null = listo).
+   */
+  entrarEnColchon(): string | null {
+    const tab = this.state.getActiveTab()
+    if (!tab || tab.proyecto.colchon) return 'No hay una canción sonando'
+    if (this.colchonSonando()) return null // ya esta
+    if (tab.playback.estado !== 'playing') return 'El colchón se arma con la canción sonando'
+    const tempo = tab.proyecto.tempo
+    if (!tempo || tempo.compasesMs.length < 2) return 'Esta canción no tiene el tempo detectado: el colchón sigue su click'
+    const now = Date.now()
+    const dur = tab.proyecto.duracionTotalMs
+    const limite = this.limiteDeSalto(tab, calcularSecciones(tab.proyecto.marcadores, dur), 'compas', now)
+    if (!limite || limite.limiteMs >= dur) return 'La canción ya está terminando'
+    const compasMs = largoDeCompas(tempo.compasesMs, limite.limiteMs)
+    // un salto elegido queda sin efecto: la banda se va
+    this.state.saltoPendiente = null
+    this.state.colchon = {
+      id: crypto.randomUUID(),
+      tabId: tab.tabId,
+      empezo: limite.tSalto,
+      inicio: limite.tSalto,
+      compasMs,
+      pulsos: Math.max(1, tempo.compas),
+      desdeCancion: true,
+      pad: padDeCancion(tab.proyecto),
+      click: true,
+      volumenPad: this.state.volumenPadColchon,
+      volumenClick: 100,
+      hasta: null,
+      salidaPadMs: SALIDA_PAD_MS
+    }
+    this.pausaDeColchon = { tabId: tab.tabId, tPausa: limite.tSalto + compasMs }
+    this.reprogramarTimers()
+    this.alCambiarColchon()
+    return null
+  }
+
+  /**
+   * Sale del colchon de esta cancion: la cancion vuelve en `destinoMs` (null =
+   * donde va a estar, si todavia suena) en el "1" del proximo compas del
+   * colchon, sin cuenta (el click nunca paro). false = el colchon todavia no
+   * habia empezado: se cancela y la cancion sigue como si nada.
+   */
+  private volverDeColchon(tab: Tab, c: ColchonActivo, destinoMs: number | null): boolean {
+    const now = Date.now()
+    const anticipo = this.hayCelulares() ? ANTICIPO_MIN_SALTO_MS : MARGIN_SIN_CELULARES_MS
+    const t = proximoCompas(c, now + anticipo)
+    if (t <= c.empezo) {
+      this.state.colchon = null
+      this.pausaDeColchon = null
+      this.reprogramarTimers()
+      this.alCambiarColchon()
+      return false
+    }
+    c.hasta = t
+    c.salidaPadMs = SALIDA_PAD_VUELTA_MS
+    this.programarFinDeColchon()
+    this.alCambiarColchon()
+    const pos = destinoMs ?? posicionActualMs(tab.playback, t)
+    this.emitir(tab, 'play', { estado: 'playing', positionMs: clampPos(pos, tab.proyecto.duracionTotalMs), referenceServerTime: t })
+    return true
+  }
+
+  /** Colchon de la lista (una "cancion" sin pistas): arranca enseguida, sin cuenta. */
+  private iniciarColchonDeLista(tab: Tab): void {
+    const a = tab.proyecto.colchon!
+    const actual = this.colchonSonando()
+    if (actual && actual.tabId === tab.tabId && !actual.desdeCancion) return // ya suena
+    const inicio = Date.now() + this.margen()
+    // otro colchon sonando: se va cuando entra este
+    if (actual) this.terminarColchonEn(actual, inicio, SALIDA_PAD_VUELTA_MS, false)
+    this.state.colchon = {
+      id: crypto.randomUUID(),
+      tabId: tab.tabId,
+      empezo: inicio,
+      inicio,
+      compasMs: (60000 / a.bpm) * a.compas,
+      pulsos: a.compas,
+      desdeCancion: false,
+      pad: notaDelPad(a.tonalidad),
+      click: a.click,
+      volumenPad: a.volumenPad,
+      volumenClick: a.volumenClick,
+      hasta: null,
+      salidaPadMs: SALIDA_PAD_MS
+    }
+    this.alCambiarColchon()
+  }
+
+  /**
+   * Termina el colchon que suena: el click para en el proximo golpe y el pad
+   * se apaga despacio. Si todavia no habia empezado, se cancela (la banda de
+   * la cancion sigue).
+   */
+  terminarColchon(): void {
+    const c = this.colchonSonando()
+    if (!c) return
+    const desde = Date.now() + this.margen()
+    if (desde <= c.empezo) {
+      this.state.colchon = null
+      if (this.pausaDeColchon?.tabId === c.tabId) this.pausaDeColchon = null
+      this.reprogramarTimers()
+      this.alCambiarColchon()
+      return
+    }
+    this.terminarColchonEn(c, proximoPulso(c, desde), SALIDA_PAD_MS)
+  }
+
+  private terminarColchonEn(c: ColchonActivo, t: number, salidaPadMs: number, avisar = true): void {
+    c.hasta = Math.max(c.empezo, t)
+    c.salidaPadMs = salidaPadMs
+    this.programarFinDeColchon()
+    if (avisar) this.alCambiarColchon()
+  }
+
+  /** Cuando el pad termino de apagarse, el colchon deja de estar. */
+  private programarFinDeColchon(): void {
+    const c = this.state.colchon
+    if (!c || c.hasta === null) return
+    const id = c.id
+    if (this.timerColchon) clearTimeout(this.timerColchon)
+    this.timerColchon = setTimeout(
+      () => {
+        this.timerColchon = null
+        if (this.state.colchon?.id !== id) return
+        this.state.colchon = null
+        this.alCambiarColchon()
+      },
+      Math.max(0, c.hasta + c.salidaPadMs + 250 - Date.now())
+    )
+  }
+
+  /**
+   * Cambia el colchon que suena en vivo: nota y volumen del pad, click, y
+   * (el de la lista) BPM y compas, desde el proximo golpe.
+   */
+  ajustarColchon(cambio: { pad?: string | null; volumenPad?: number; volumenClick?: number; click?: boolean; bpm?: number; compas?: number }): boolean {
+    const c = this.colchonSonando()
+    if (!c) return false
+    if (cambio.pad !== undefined) c.pad = cambio.pad === null ? null : notaDelPad(cambio.pad)
+    if (cambio.volumenPad !== undefined) {
+      c.volumenPad = cambio.volumenPad
+      if (c.desdeCancion) this.state.volumenPadColchon = cambio.volumenPad
+    }
+    if (cambio.volumenClick !== undefined) c.volumenClick = cambio.volumenClick
+    if (cambio.click !== undefined) c.click = cambio.click
+    const pulsos = cambio.compas ?? c.pulsos
+    const compasMs = cambio.bpm !== undefined ? (60000 / cambio.bpm) * pulsos : (c.compasMs / c.pulsos) * pulsos
+    if (!c.desdeCancion && (Math.abs(compasMs - c.compasMs) > 0.01 || pulsos !== c.pulsos)) {
+      // otro pulso: arranca de nuevo (en el "1") en el proximo golpe
+      c.inicio = proximoPulso(c, Date.now() + this.margen())
+      c.compasMs = compasMs
+      c.pulsos = pulsos
+    }
+    this.alCambiarColchon()
+    return true
+  }
+
+  private ejecutarPausaDeColchon(tabId: string, tPausa: number): void {
+    const tab = this.state.getActiveTab()
+    const p = this.pausaDeColchon
+    if (!tab || tab.tabId !== tabId || !p || p.tabId !== tabId || p.tPausa !== tPausa) return
+    this.pausaDeColchon = null
+    if (tab.playback.estado !== 'playing') return
+    const executeAt = Math.max(tPausa, Date.now() + 20)
+    this.emitir(tab, 'pause', { estado: 'paused', positionMs: clampPos(posicionActualMs(tab.playback, executeAt), tab.proyecto.duracionTotalMs), referenceServerTime: executeAt })
+  }
+
   /** Posicion desde la que reanuda un play sin posicion explicita. */
   private posicionDeReanudacion(tab: Tab, now: number): number {
     const pos = posicionActualMs(tab.playback, now)
@@ -320,6 +534,8 @@ export class Transporte {
     // cualquier comando (pausa, otro salto, el salto mismo) reemplaza al salto que estaba esperando
     const habiaSalto = this.state.saltoPendiente !== null
     this.state.saltoPendiente = null
+    // otra orden para esta cancion (volver del colchon, pausa, stop): la pausa del colchon ya no va
+    if (this.pausaDeColchon?.tabId === tab.tabId) this.pausaDeColchon = null
     const now = Date.now()
     const playback = nuevoPlayback(tab.playback, tramo, now)
     this.state.setPlayback(tab.tabId, playback)
@@ -343,6 +559,9 @@ export class Transporte {
   reprogramarTimers(): void {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
+    // se cerro (o se borro) la cancion del colchon que sonaba: se apaga
+    const colchon = this.colchonSonando()
+    if (colchon && !this.state.getTab(colchon.tabId)) this.terminarColchon()
     const tab = this.state.getActiveTab()
     if (!tab || tab.playback.estado !== 'playing') return
     const dur = tab.proyecto.duracionTotalMs
@@ -352,6 +571,13 @@ export class Transporte {
     const tRef = Math.max(now, tab.playback.referenceServerTime)
     const pos = posicionActualMs(tab.playback, tRef)
     const tabId = tab.tabId
+
+    // entrando al colchon: la cancion se pausa (ya en silencio) al terminar el compas en que se apaga la banda
+    const pausa = this.pausaDeColchon
+    if (pausa && pausa.tabId === tabId) {
+      this.timer = setTimeout(() => this.ejecutarPausaDeColchon(tabId, pausa.tPausa), Math.max(0, pausa.tPausa - this.margen() - now))
+      return
+    }
 
     // un salto elegido tiene prioridad sobre "repetir seccion" y el fin de la cancion
     const salto = this.state.saltoPendiente
@@ -402,5 +628,7 @@ export class Transporte {
   cancelarTimers(): void {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
+    if (this.timerColchon) clearTimeout(this.timerColchon)
+    this.timerColchon = null
   }
 }

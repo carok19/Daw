@@ -127,6 +127,8 @@ export interface Proyecto {
    * cancion (secciones, compases, duracion) estan en esta velocidad.
    */
   velocidadAplicada?: number
+  /** es un colchón de la lista (pad y click, sin pistas; ver shared/colchon.ts) */
+  colchon?: AjustesColchon
   /** tonalidad original puesta a mano ("A", "F#m"); sin: se lee del nombre de la cancion */
   tonalidad?: string
   /** compases de cuenta al dar play (0 = sin cuenta); sin: automatica (2, o 1 en las lentas) */
@@ -174,6 +176,8 @@ export interface ProyectoResumen {
   bpm: number | null
   compas: number | null
   analisis: EstadoAnalisis | null
+  /** es un colchón (pad y click, sin pistas) */
+  colchon?: boolean
 }
 
 /** Estado de la carpeta de biblioteca (importacion automatica de .zip). */
@@ -335,6 +339,51 @@ export interface AnuncioSalto {
   guiaPistaId: string | null
 }
 
+/** Un colchón de la lista: pad y click, sin pistas (ver shared/colchon.ts). */
+export interface AjustesColchon {
+  /** tonalidad del pad ("D", "F#"); null = sin pad (solo click) */
+  tonalidad: string | null
+  bpm: number
+  /** pulsos por compás */
+  compas: number
+  /** con click (si no, solo el pad) */
+  click: boolean
+  /** 0-100 */
+  volumenPad: number
+  volumenClick: number
+}
+
+/**
+ * Colchón sonando (de la lista, o dentro de una canción: la banda paró y
+ * siguen el click y el pad). Cada dispositivo programa el click y el pad a
+ * estas horas del servidor.
+ */
+export interface ColchonActivo {
+  id: string
+  tabId: string
+  /** hora del servidor en que empezó (entra el pad; dentro de una canción, se empieza a ir la banda) */
+  empezo: number
+  /**
+   * hora del servidor de un "1" de compás: los golpes se cuentan desde acá
+   * (es `empezo`, salvo que se haya cambiado el BPM sonando: ahí, el primer "1" del pulso nuevo)
+   */
+  inicio: number
+  compasMs: number
+  pulsos: number
+  /** dentro de una canción: la banda se apaga en el primer compás (de `empezo` a `empezo + compasMs`) */
+  desdeCancion: boolean
+  /** nota del pad ("D", "F#"); null = sin pad */
+  pad: string | null
+  click: boolean
+  /** 0-100 */
+  volumenPad: number
+  volumenClick: number
+  /** hora del servidor en que termina (vuelve la canción o se apaga): el click para ahí; null = sigue */
+  hasta: number | null
+  /** en cuánto se apaga el pad desde `hasta` (volviendo a la canción, rápido; al terminar, despacio) */
+  salidaPadMs: number
+}
+
 /** Forma de onda de la cancion entera (el "recorrido"): la banda, sin click ni guia (ver server/onda.ts). */
 export interface OndaCancion {
   /** revision del audio con la que se calculo */
@@ -371,6 +420,8 @@ export interface EstadoCompleto {
   saltoPendiente: SaltoPendiente | null
   /** voces para avisar los saltos (null = no se importo ningun pack) */
   voces?: InfoVoces | null
+  /** colchón sonando en la canción de arriba (null = no) */
+  colchon?: ColchonActivo | null
   /** la lista del dia cargada arriba (null = canciones sueltas) */
   lista: ListaActiva | null
   serverTime: number

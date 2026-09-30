@@ -39,7 +39,7 @@ import type { AppState, Tab } from './state'
 import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ImportError, ZipSinPistasError } from './zip'
 import { primerVolumen } from './comprimidos'
-import { deleteProyecto, esIdValido, listProyectos, loadProyecto, migrarProyecto, proyectoExiste, saveProyecto, type SesionGuardada } from './projects'
+import { crearProyectoColchon, deleteProyecto, esIdValido, listProyectos, loadProyecto, migrarProyecto, proyectoExiste, saveProyecto, type SesionGuardada } from './projects'
 import {
   agregarCarpeta,
   borrarCarpeta,
@@ -65,6 +65,8 @@ import { esTonoValido, Tonos } from './tono'
 import { MedidorEntrega } from './entrega'
 import { Anuncios, ErrorVoces, pistasDeAnuncio, Voces } from './voces'
 import { planearAnuncio } from '../shared/anuncio'
+import { nombreDeColchon, normalizarAjustesColchon, NOTAS_PAD } from '../shared/colchon'
+import { Pads } from './pads'
 import { esVelocidadValida, redondearVelocidad, textoPorcentaje, velocidadAplicada } from '../shared/velocidad'
 import { normalizarTonalidad, textoSemitonos, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { direccionesLan, ipParaCliente } from './network'
@@ -106,6 +108,8 @@ export interface Servicios {
   tonos: Tonos
   /** las voces que avisan los saltos, ya armadas (las piden los celulares al mezclar y la compu) */
   anuncios: Anuncios
+  /** los pads del colchon (uno por nota) */
+  pads: Pads
   /** deja de medir la entrega a los celulares (al cerrar el servidor) */
   cerrar(): void
 }
@@ -124,6 +128,10 @@ export interface Conexion {
   version?: string
   /** licencia de la compu: cuantos celulares a la vez */
   licencias?: Licencias
+  /** carpeta de los pads del colchon (por defecto ~/MultitrackApp/pads) */
+  dirPads?: string
+  /** sintetizar los 12 pads un rato despues de abrir (la app si; las pruebas no) */
+  precalentarPads?: boolean
 }
 
 /** Version de prueba (o licencia con menos celulares): ya hay el maximo conectado. */
@@ -264,6 +272,25 @@ export function registerSocketHandlers(
   }
 
   const transporte = new Transporte(io, state, hayCelularesConectados, () => emitirEstadoPronto(), () => entrega.margen(idsCelulares()), anunciar)
+  // el colchon cambia: todos lo saben enseguida (antes de la orden que lo termina, asi el click para justo)
+  transporte.alCambiarColchon = () => emitirEstado()
+
+  // pads del colchon: se sintetizan una vez por nota; de a uno, un rato despues de abrir (la primera vez)
+  const pads = new Pads(conexion.dirPads)
+  let precalentarPads: NodeJS.Timeout | null = null
+  if (conexion.precalentarPads) {
+    precalentarPads = setTimeout(() => {
+      void (async () => {
+        for (const n of NOTAS_PAD) {
+          // con la musica sonando, espera (no le saca potencia al vivo)
+          while (precalentarPads && algoSuena()) await new Promise((r) => setTimeout(r, 5000).unref())
+          if (!precalentarPads) return
+          await pads.ruta(n).catch(() => undefined)
+        }
+      })()
+    }, 30000)
+    precalentarPads.unref()
+  }
 
   function emitirEstado(): void {
     io.emit('estado:actualizado', buildEstadoCompleto(state))
@@ -717,6 +744,62 @@ export function registerSocketHandlers(
       state.loop = !!payload?.activo && !!state.getActiveTab()
       transporte.reprogramarTimers()
       emitirEstado()
+    })
+
+    // ---- Colchon: pad y click sin la banda (ver shared/colchon.ts) ----
+
+    socket.on('colchon:entrar', (_payload: unknown, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!permitido()) return ack?.({ ok: false, error: 'El control está bloqueado' })
+      const error = transporte.entrarEnColchon()
+      ack?.(error ? { ok: false, error } : { ok: true })
+    })
+
+    socket.on('colchon:terminar', () => {
+      if (!permitido()) return
+      transporte.terminarColchon()
+    })
+
+    // en vivo (nota y volumen del pad, click) y, si arriba hay un colchon de la lista, tambien lo que tiene guardado
+    socket.on('colchon:ajustar', (payload: Record<string, unknown> | null, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!edicion('Solo la computadora puede cambiar el colchón')) return ack?.({ ok: false })
+      const tab = state.getActiveTab()
+      const guardado = tab?.proyecto.colchon
+      const sonando = state.colchon && state.colchon.hasta === null ? state.colchon : null
+      const base = guardado ?? (sonando ? { tonalidad: sonando.pad, bpm: 60000 / (sonando.compasMs / sonando.pulsos), compas: sonando.pulsos, click: sonando.click, volumenPad: sonando.volumenPad, volumenClick: sonando.volumenClick } : null)
+      if (!base) return ack?.({ ok: false, error: 'No hay ningún colchón' })
+      const cambio = payload && typeof payload === 'object' ? payload : {}
+      const pedido = { tonalidad: cambio.tonalidad, bpm: cambio.bpm, compas: cambio.compas, click: cambio.click, volumenPad: cambio.volumenPad, volumenClick: cambio.volumenClick }
+      const nuevos = normalizarAjustesColchon(pedido, { ...base, bpm: Math.round(base.bpm) })
+      if (!nuevos) return ack?.({ ok: false, error: 'Ese ajuste no es válido' })
+      if (guardado && tab) {
+        const nombreAuto = tab.proyecto.nombre === nombreDeColchon(guardado)
+        tab.proyecto.colchon = nuevos
+        if (nombreAuto) tab.proyecto.nombre = nombreDeColchon(nuevos)
+        if (proyectoExiste(tab.proyecto.id)) saveProyecto(tab.proyecto)
+        aCompus('proyectos:cambio', { proyectoId: tab.proyecto.id })
+      }
+      // lo que suena cambia en vivo si es el de esta pestana (o el de una cancion, que se ajusta desde cualquier lado)
+      if (sonando && (!guardado || sonando.tabId === tab?.tabId)) {
+        transporte.ajustarColchon({
+          pad: cambio.tonalidad === undefined ? undefined : nuevos.tonalidad,
+          volumenPad: cambio.volumenPad === undefined ? undefined : nuevos.volumenPad,
+          volumenClick: cambio.volumenClick === undefined ? undefined : nuevos.volumenClick,
+          click: cambio.click === undefined ? undefined : nuevos.click,
+          bpm: guardado && cambio.bpm !== undefined ? nuevos.bpm : undefined,
+          compas: guardado && cambio.compas !== undefined ? nuevos.compas : undefined
+        })
+      } else emitirEstado()
+      ack?.({ ok: true })
+    })
+
+    // un colchon nuevo para la lista: queda en la biblioteca (y, si se pide, sumado a una lista)
+    socket.on('colchon:crear', (payload: { ajustes?: unknown; listaId?: unknown } | null, ack?: Ack<{ ok: boolean; error?: string; id?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede crear colchones' })
+      const ajustes = normalizarAjustesColchon(payload?.ajustes ?? {})
+      if (!ajustes) return ack?.({ ok: false, error: 'Revisá el tono, el BPM y el compás' })
+      const proyecto = crearProyectoColchon(ajustes, nombreDeColchon(ajustes))
+      aCompus('proyectos:cambio', { proyectoId: proyecto.id })
+      ack?.({ ok: true, id: proyecto.id })
     })
 
     // ---- Edicion (solo la compu) ----
@@ -1194,7 +1277,19 @@ export function registerSocketHandlers(
 
   })
 
-  return { transporte, analizador, biblioteca, tonos, anuncios, cerrar: () => clearInterval(pings) }
+  return {
+    transporte,
+    analizador,
+    biblioteca,
+    tonos,
+    anuncios,
+    pads,
+    cerrar: () => {
+      clearInterval(pings)
+      if (precalentarPads) clearTimeout(precalentarPads)
+      precalentarPads = null
+    }
+  }
 }
 
 /** Si la app se cerro hace menos que esto (se corto a mitad de un culto), al abrirla vuelve todo como estaba. */

@@ -18,6 +18,7 @@ import { Descubrimiento } from './descubrimiento'
 import { Mezclador } from './mezclador'
 import { archivoQueSuena, type Tonos } from './tono'
 import { sonidosDeCuenta } from './cuenta'
+import { NOTAS_PAD } from '../shared/colchon'
 import { Ondas } from './onda'
 import { Licencias } from './licencia'
 import { decodificarMezcla, SEGMENTO_SEC } from '../shared/mezcla'
@@ -80,6 +81,8 @@ export interface OpcionesServidor {
   clavePublicaLicencias?: string | null
   /** cada cuanto se mide lo que tardan en llegar las ordenes a los celulares (por defecto 2 s) */
   intervaloPingMs?: number
+  /** sintetizar los pads del colchon en segundo plano al abrir (la app si; las pruebas no) */
+  precalentarPads?: boolean
 }
 
 /**
@@ -204,6 +207,20 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     res.end(wav)
   })
 
+  // pad del colchon (ver pads.ts): /pad/<0-11>.wav, la nota en el orden de NOTAS_PAD (0 = C)
+  app.get('/pad/:indice', (req, res) => {
+    const m = /^(\d{1,2})\.wav$/.exec(req.params.indice)
+    const nota = m ? NOTAS_PAD[Number(m[1])] : undefined
+    if (!nota) return res.status(404).end()
+    pads.ruta(nota).then(
+      (archivo) => {
+        res.setHeader('Cache-Control', 'private, max-age=86400')
+        res.sendFile(archivo)
+      },
+      () => res.status(500).end()
+    )
+  })
+
   // cancion en otro tono: las pistas transpuestas se sirven en la misma direccion que las originales
   // (la `revision` cambia al cambiar el tono, asi nadie se queda con lo que tenia en cache)
   app.use('/media', (req, _res, next) => {
@@ -241,7 +258,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     res.sendFile(path.join(rendererDir, 'index.html'))
   })
 
-  const { transporte, analizador, biblioteca, tonos, anuncios, cerrar: cerrarHandlers } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
+  const { transporte, analizador, biblioteca, tonos, anuncios, pads, cerrar: cerrarHandlers } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
     ajustes,
     puerto: () => {
       const a = httpServer.address()
@@ -252,7 +269,8 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     estadisticasMezcla: () => mezclador.estadisticas(),
     version,
     licencias,
-    intervaloPingMs: opciones.intervaloPingMs
+    intervaloPingMs: opciones.intervaloPingMs,
+    precalentarPads: opciones.precalentarPads ?? false
   })
 
   async function listenOn(port: number): Promise<number> {

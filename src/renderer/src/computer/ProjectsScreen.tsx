@@ -227,7 +227,7 @@ export function ProjectsScreen({ controller, onCerrar }: Props) {
               <div className="lista-principal">
                 <span className="lista-titulo">{p.nombre}</span>
                 <span className="lista-meta num">
-                  {formatDuracion(p.duracionTotalMs)} · {p.cantidadPistas} pistas · {p.cantidadMarcadores} secciones
+                  {p.colchon ? 'Colchón: pad y click, sin pistas' : `${formatDuracion(p.duracionTotalMs)} · ${p.cantidadPistas} pistas · ${p.cantidadMarcadores} secciones`}
                   {p.bpm ? ` · ${Math.round(p.bpm)} BPM ${textoCompas(p.compas ?? 4)}` : ''}
                   {categoriaActiva === TODAS && p.categoria ? ` · ${nombreCategoria(p.categoria)}` : ''}
                   {' · '}

@@ -15,6 +15,7 @@ import { LicenciaPanel } from './LicenciaPanel'
 import { ProjectsScreen } from './ProjectsScreen'
 import { ShortcutsModal } from './ShortcutsModal'
 import { ListaEditor, ListasScreen } from './Listas'
+import { BannerColchon, PantallaColchon } from './Colchon'
 
 type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' }
 /** escenario = la cancion (mixer, secciones); listas = las listas por dia; editar = armar una lista */
@@ -45,6 +46,9 @@ export function ComputerApp({ controller }: { controller: AppController }) {
   const proyecto = estado?.proyectoActivo ?? null
   const onda = useOnda(proyecto)
   const sonando = estado?.playbackActivo?.estado === 'playing'
+  // esta cancion esta en su colchon (la banda paro; siguen el click y el pad)
+  const colchon = estado?.colchon ?? null
+  const enColchon = !!colchon && colchon.desdeCancion && colchon.hasta === null && colchon.tabId === estado?.activeTabId
   // sin canciones arriba (al abrir el programa, o si se cerraron todas): las listas
   const vista: Vista = vistaElegida.tipo === 'escenario' && estado && estado.tabs.length === 0 ? { tipo: 'listas' } : vistaElegida
 
@@ -65,6 +69,8 @@ export function ComputerApp({ controller }: { controller: AppController }) {
       }
       if (v || document.querySelector('[data-modal]')) return // con una ventana abierta, solo Esc (lo maneja el Modal)
       if (!p || vi.tipo !== 'escenario') return // armando listas: las teclas no tocan la musica
+      // un colchon de la lista no tiene secciones ni mezcla: solo empezar/terminar y pasar de cancion
+      if (p.colchon && !['Space', 'Enter', 'NumpadEnter', 'PageDown', 'PageUp', 'KeyC'].includes(e.code)) return
       const accion = ((): (() => void) | null => {
         switch (e.code) {
           case 'Space':
@@ -86,6 +92,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             return () => c.createMarker(getPlayheadMs())
           case 'KeyL':
             return () => c.setLoop(!c.estado?.loop)
+          case 'KeyC': {
+            // colchon: la banda se va y siguen el click y el pad (otra vez C: se termina)
+            const col = c.estado?.colchon
+            return col && col.hasta === null ? c.terminarColchon : p.colchon ? null : () => void c.entrarEnColchon()
+          }
           case 'Tab':
             // Tab: de las secciones a la mezcla y vuelta
             return () => setVistaCancion(ctx.current.vistaCancion === 'secciones' ? 'mezcla' : 'secciones')
@@ -240,6 +251,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
           onListo={() => setVista({ tipo: 'listas' })}
           onUsada={() => setVista({ tipo: 'escenario' })}
         />
+      ) : proyecto?.colchon ? (
+        <>
+          {estado?.colchon && estado.colchon.tabId !== estado.activeTabId && <BannerColchon controller={controller} colchon={estado.colchon} />}
+          <PantallaColchon controller={controller} proyecto={proyecto} />
+        </>
       ) : proyecto ? (
         <>
           <Transport
@@ -270,7 +286,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             onCuenta={(c) => controller.setCuenta(proyecto.id, c)}
             onda={onda}
             timelineGrande={vistaCancion === 'secciones'}
+            enColchon={enColchon}
+            hayColchon={!!estado?.colchon && estado.colchon.hasta === null}
+            onColchon={enColchon ? controller.terminarColchon : () => void controller.entrarEnColchon()}
           />
+          {estado?.colchon && <BannerColchon controller={controller} colchon={estado.colchon} />}
           <div className="vista-cancion-tabs segmentado" role="tablist" aria-label="Vista">
             <button
               role="tab"

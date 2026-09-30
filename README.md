@@ -273,6 +273,32 @@ cambian a propósito.
     Después de una pausa, la cuenta sigue el pulso de la canción y la música
     vuelve justo donde quedó. Los saltos con la música sonando no llevan
     cuenta. Sin tempo detectado, arranca directo como siempre.
+12. **Colchón: pad y click, sin la banda.** Un **pad** de ambiente (un
+    colchón sostenido en el tono) y el **click**, sonando en todos a la vez.
+    El pad lo hace la app (no hay que bajar nada): raíz, quinta y octava, sin
+    tercera, así sirve igual en mayor y en menor. Va del lado de la banda y
+    el click del lado del click; en **Mi mezcla** cada músico tiene una fila
+    **Pad** (y **Click**) para subirlo, bajarlo o mutearlo solo para él. Dos
+    formas:
+    - **Dentro de una canción** (botón de las ondas al lado de “repetir”, o
+      **C**): en el próximo compás la banda se va (se apaga en ese compás) y
+      siguen el click, en el mismo pulso, y el pad en el tono de la canción.
+      Para volver, **tocar una sección** (en la compu o en el celular): la
+      canción entra ahí en el “1” del próximo compás, sin cuenta (el click
+      nunca paró). **▶** vuelve donde quedó; **Terminar** (o **C**) para el
+      click y apaga el pad despacio. Mientras dura se ve arriba “Colchón · D
+      · 72 BPM” con el pulso, y se puede cambiar el tono y el volumen del
+      pad. Hace falta el tempo detectado.
+    - **Como una canción de la lista** (para la oración, la ministración o
+      entre canciones): en el editor de la lista, **Colchón** → tono del pad
+      (o sin pad), con o sin click, BPM y compás → *Sumar a la lista*. Arriba
+      muestra el tono en grande, **Empezar** / **Terminar** (Espacio), y todo
+      se puede cambiar sonando (el BPM, desde el próximo golpe). Queda en la
+      biblioteca como cualquier canción.
+    - **El colchón sigue aunque se cambie de canción:** al darle ▶ a la
+      siguiente, el click del colchón para donde empieza la cuenta, el pad la
+      acompaña bajando y se va cuando entra la canción. Así se pasa de un
+      momento de oración a la próxima canción sin silencio.
 
 **Ancho de banda:** la compu le arma a cada celular **su mezcla** (la del
 director + su “Mi mezcla”) y le manda **una sola pista estéreo**: ~1,4 Mbps
@@ -287,7 +313,7 @@ puede tardar hasta ~1,3 s).
 
 **¿Se corta?** En la ventana de Celulares, debajo de cada celular, se ve
 cuánto WiFi le da la red, cuánto necesita, cuántos segundos de audio tiene
-listos (colchón) y si tuvo cortes. **Copiar diagnóstico** copia un informe de
+listos por delante y si tuvo cortes. **Copiar diagnóstico** copia un informe de
 todo (compu, canción, cada celular) para mandarlo por chat. En el celular, lo
 mismo en ⚙ → Estado.
 
@@ -304,6 +330,7 @@ mismo en ⚙ → Estado.
 | Click en la línea de tiempo | Sonando: salta en el próximo compás, al “1” más cercano (Shift: ya; Alt: sin imán) |
 | M | Marcar una sección en la posición actual |
 | L | Repetir la sección actual |
+| C | Colchón: la banda se va en el próximo compás y siguen el click y el pad (otra vez: terminar) |
 | Alt + arrastrar | Mover una sección sin ajustarla al compás |
 | Re Pág / Av Pág | Canción anterior / siguiente |
 | ? | Ayuda de atajos |
@@ -536,6 +563,45 @@ y el audio es el mismo WAV de siempre.
   caer a esa velocidad. Medido: el click cae a ±2 ms de donde corresponde,
   el bajo ~5 ms antes (el vocoder de fase adelanta los graves), y la nota
   exacta (< 5 cents).
+
+### Colchón (pad y click)
+
+`shared/colchon.ts`, `server/pads.ts`, `Transporte` (colchón) y
+`StreamingEngine` (colchón). El colchón es **un estado del servidor**
+(`ColchonActivo`: cuándo empezó, la grilla del click —un “1” y el largo del
+compás—, la nota y los volúmenes, y cuándo termina) que va a todos con el
+estado. **Nada de su audio viaja por la red mientras suena:**
+
+- **El click** lo programa cada dispositivo a la hora de la compu, como la
+  cuenta: los golpes de los próximos 2 s, con el sonido del click de la
+  canción (o uno sintetizado), por el canal del click de su mezcla. Así dura
+  lo que haga falta y suena junto en todos (medido con audio real: la
+  canción, el colchón y la canción otra vez caen en la misma grilla, a
+  ±10 ms de su hora, compu y celular juntos).
+- **El pad** es un loop de 32 s por nota que la compu **sintetiza una vez**
+  (18 osciladores: 6 notas con 3 voces apenas desafinadas, un filtro que
+  “respira” y una reverb larga; mono a 22 kHz, 1,4 MB) y guarda en
+  `~/MultitrackApp/pads`. Todas sus frecuencias dan vueltas enteras en los
+  32 s y se guarda la segunda vuelta, así el final empalma con el principio
+  sin corte. La app instalada los prepara de a uno un rato después de abrir;
+  si se pide uno que no está, tarda ~1 s. Cada dispositivo lo baja una vez
+  (`/pad/<0-11>.wav`) y lo toca en loop, todos en el mismo punto del loop.
+- **Dentro de una canción:** el colchón empieza en el próximo compás
+  (`limiteDeSalto` en modo compás). Todo el audio de la canción pasa por un
+  bus (`cancionGain`) que baja a 0 en ese compás mientras el click del
+  colchón sube (el mismo pulso: se funden) y el pad entra en 2 compases; al
+  terminar ese compás el servidor pausa la canción (ya en silencio). Una
+  sección (o ▶) programa la canción en el “1” del próximo compás del
+  colchón, sin cuenta: el bus vuelve de golpe en ese instante, el click del
+  colchón para justo ahí y el pad se va en 1,5 s. Si se elige antes de que
+  empiece, el colchón se cancela y es un salto común.
+- **De la lista:** un proyecto sin pistas con `colchon` (ajustes). El
+  motor no baja nada; play/pausa del transporte lo empiezan y terminan. Un
+  cambio de BPM sonando mueve el “1” al próximo golpe (el pad sigue).
+- Al terminar, el click para en el próximo golpe y el pad se apaga en 4 s;
+  un colchón que sigue al cambiar de canción termina donde arranca la
+  próxima (con cuenta, el pad la acompaña). El servidor lo borra cuando el
+  pad terminó de irse.
 
 ### Sincronización
 
@@ -783,3 +849,6 @@ habitual de los programas que se venden sin conexión.
   `android/LEEME.md`).
 - `airtracks.local` depende de que el router deje pasar mDNS (la mayoría lo
   hace); el celular lo prueba antes de ofrecerlo.
+- **Pads del colchón:** los sintetiza la app (sin samples ni licencias), con
+  un solo timbre (un pad suave, tipo cuerdas/sintetizador). Todavía no se
+  pueden importar pads propios.

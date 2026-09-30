@@ -1,4 +1,4 @@
-import type { AnuncioSalto, ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import type { AnuncioSalto, ColchonActivo, ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 
 export { clavePista } from '@shared/mezcla'
 export type { AjustePersonal, MezclaPersonal } from '@shared/mezcla'
@@ -24,6 +24,8 @@ export interface PlaybackEngine {
   setCues(tiemposMs: number[]): void
   /** la voz que avisa el salto elegido (null = no hay o se cancelo) */
   setAnuncio(anuncio: AnuncioSalto | null): void
+  /** el colchon que suena (pad y click sin la banda; null = ninguno), con el reloj del servidor */
+  setColchon(colchon: ColchonActivo | null, offsetMs: () => number): void
 
   ejecutar(cmd: ComandoProgramado, clockOffsetMs: number): void
   /** corta todo ya (p.ej. se cerro la cancion que sonaba) */

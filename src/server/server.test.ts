@@ -29,6 +29,17 @@ import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, to
 import { generarClick, wav16 } from './__fixtures__/sintetico'
 import { candidatosDeSeccion, clavesDeArchivoDeVoz, planearAnuncio } from '../shared/anuncio'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
+import {
+  compasYPulso,
+  golpesDeColchon,
+  largoDeCompas,
+  nombreDeColchon,
+  normalizarAjustesColchon,
+  notaDelPad,
+  padDeCancion,
+  proximoCompas,
+  proximoPulso
+} from '../shared/colchon'
 import type {
   AjustesConexion,
   ClockSyncAck,
@@ -2038,5 +2049,246 @@ test('migracion: una cancion vieja guardada con MP3 se convierte a WAV al abrirl
   assert.ok(Math.abs(p.duracionTotalMs - 2000) < 80, `duracion ${p.duracionTotalMs}`)
   assert.ok(!fs.existsSync(path.join(dir, 'audio', 'guia.mp3')))
 
+  await env.cerrar()
+})
+
+// ---------- colchon: pad y click sin la banda ----------
+
+test('colchón: la grilla del click, la nota del pad y los ajustes', () => {
+  const c = { inicio: 10000, compasMs: 2000, pulsos: 4, hasta: null }
+  assert.deepEqual(
+    golpesDeColchon(c, 9000, 12100).map((g) => [g.t, g.n]),
+    [
+      [10000, 1],
+      [10500, 2],
+      [11000, 3],
+      [11500, 4],
+      [12000, 1]
+    ]
+  )
+  // el golpe de `hasta` ya no: ahi entra la cancion con su propio click
+  assert.deepEqual(golpesDeColchon({ ...c, hasta: 11000 }, 10400, 20000).map((g) => g.t), [10500])
+  assert.equal(proximoCompas(c, 5000), 10000)
+  assert.equal(proximoCompas(c, 10001), 12000)
+  assert.equal(proximoCompas(c, 12000), 12000)
+  assert.equal(proximoPulso(c, 10501), 11000)
+  assert.deepEqual(compasYPulso(c, 13600), { compas: 2, pulso: 4 })
+  assert.deepEqual(compasYPulso(c, 9000), { compas: 0, pulso: 0 })
+  // la nota del pad: sin tercera, mayor o menor da igual; bemoles como sostenidos
+  assert.deepEqual(['D', 'F#m', 'Bb', 'Ebm', 'H', ''].map(notaDelPad), ['D', 'F#', 'A#', 'D#', null, null])
+  assert.equal(padDeCancion({ nombre: 'Canción', tonalidad: 'A', tonoAplicado: 2 }), 'B')
+  assert.equal(padDeCancion({ nombre: 'Gracia Sublime - Gm' }), 'G')
+  assert.equal(padDeCancion({ nombre: 'Sin tono' }), null)
+  // el compas en ese punto de la cancion (el ultimo, el de antes)
+  assert.equal(largoDeCompas([0, 2000, 4100], 2000), 2100)
+  assert.equal(largoDeCompas([0, 2000, 4100], 4100), 2100)
+  assert.deepEqual(normalizarAjustesColchon({ tonalidad: 'Bb', bpm: 70.4 }), { tonalidad: 'A#', bpm: 70, compas: 4, click: true, volumenPad: 80, volumenClick: 80 })
+  assert.equal(normalizarAjustesColchon({ bpm: 500 }), null)
+  assert.equal(normalizarAjustesColchon({ tonalidad: 'X' }), null)
+  assert.equal(normalizarAjustesColchon({ tonalidad: null, click: false })!.tonalidad, null)
+  assert.equal(nombreDeColchon({ tonalidad: 'D', bpm: 72, compas: 4, click: true, volumenPad: 80, volumenClick: 80 }), 'Colchón · D · 72 BPM')
+})
+
+test('colchón de la lista: se crea, empieza al dar play, cambia en vivo y se apaga despacio', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const r = await emitAck<{ ok: boolean; error?: string; id?: string }>(compu, 'colchon:crear', { ajustes: { tonalidad: 'E', bpm: 70, compas: 3, click: true } })
+  assert.equal(r.ok, true, r.error)
+  const resumen = (await emitAck<ProyectoResumen[]>(compu, 'projects:list', {})).find((p) => p.id === r.id)!
+  assert.deepEqual([resumen.nombre, resumen.colchon, resumen.bpm, resumen.compas, resumen.cantidadPistas], ['Colchón · E · 70 BPM', true, 70, 3, 0])
+  // a una lista, como cualquier cancion
+  const lista = await emitAck<{ ok: boolean; id?: string }>(compu, 'listas:crear', { nombre: 'Domingo', proyectos: [r.id] })
+  assert.equal(lista.ok, true)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'listas:usar', { id: lista.id })).ok, true)
+  let e = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.equal(e.proyectoActivo!.id, r.id)
+  assert.deepEqual(e.proyectoActivo!.colchon, { tonalidad: 'E', bpm: 70, compas: 3, click: true, volumenPad: 80, volumenClick: 80 })
+  assert.equal(e.colchon, null)
+
+  // play: arranca enseguida (sin cuenta), para todos a la misma hora; la "cancion" no se mueve
+  const t0 = Date.now()
+  e = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !!x.colchon), compu.emit('transport:play', {})]))[0]
+  const c = e.colchon!
+  assert.equal(c.desdeCancion, false)
+  assert.deepEqual([c.pad, c.pulsos, c.click, c.volumenPad, c.hasta], ['E', 3, true, 80, null])
+  assert.ok(Math.abs(c.compasMs - (60000 / 70) * 3) < 0.01)
+  assert.ok(c.inicio >= t0 && c.inicio - t0 < 300, `empieza a ${c.inicio - t0} ms`)
+  assert.equal(e.playbackActivo!.estado, 'stopped')
+  // play de nuevo: nada (ya suena)
+  compu.emit('transport:play', {})
+  await esperar(150)
+  assert.equal(env.server.state.colchon!.id, c.id)
+
+  // otro BPM sonando: desde un golpe de la grilla de antes, y queda guardado (con el nombre)
+  e = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !!x.colchon && Math.abs(x.colchon.compasMs - 2250) < 0.01), compu.emit('colchon:ajustar', { bpm: 80 })]))[0]
+  assert.equal(e.colchon!.id, c.id)
+  const pulsoViejo = c.compasMs / 3
+  const k = (e.colchon!.inicio - c.inicio) / pulsoViejo
+  assert.ok(Math.abs(k - Math.round(k)) < 1e-6 && Math.round(k) >= 1, `el cambio cae en un golpe (k = ${k})`)
+  assert.equal(e.proyectoActivo!.colchon!.bpm, 80)
+  assert.equal(e.proyectoActivo!.nombre, 'Colchón · E · 80 BPM')
+  // el pad, en vivo
+  e = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => x.colchon?.pad === 'G'), compu.emit('colchon:ajustar', { tonalidad: 'G', volumenPad: 50 })]))[0]
+  assert.equal(e.colchon!.volumenPad, 50)
+  assert.equal(e.proyectoActivo!.colchon!.tonalidad, 'G')
+
+  // pausa: el click para en el proximo golpe y el pad se apaga en 4 s; despues el colchon ya no esta
+  e = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => x.colchon?.hasta != null), compu.emit('transport:pause')]))[0]
+  const hasta = e.colchon!.hasta!
+  assert.equal(e.colchon!.salidaPadMs, 4000)
+  const pulso = e.colchon!.compasMs / 3
+  assert.ok(Math.abs(((hasta - e.colchon!.inicio) / pulso) % 1) < 1e-6, 'termina en un golpe')
+  await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.colchon, 8000)
+  assert.ok(Date.now() >= hasta + 4000)
+
+  // no se puede crear con ajustes invalidos
+  const mal = await emitAck<{ ok: boolean; error?: string }>(compu, 'colchon:crear', { ajustes: { bpm: 1000 } })
+  assert.equal(mal.ok, false)
+  await env.cerrar()
+})
+
+test('colchón dentro de la canción: en el próximo compás se va la banda, y vuelve en el "1" de la sección que se toque', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const largo = path.join(tmpDir('multitrack-audio-'), 'largo.wav')
+  generarAudio(largo, 20, 'mono')
+  await cargarZip(compu, crearZip('Colchon', { 'Click.wav': largo, 'marcas.txt': Buffer.from('0:04 Verso\n0:08 Coro\n0:12 Puente\n') }))
+  const p = env.server.state.getActiveTab()!.proyecto
+  // 120 BPM 4/4 (compas de 2 s), en A
+  p.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 11 }, (_, k) => k * 2000), clickPistaId: p.pistas[0].id, acentoClaro: true }
+  p.tonalidad = 'A'
+  p.cuenta = 0
+  const entrar = (): Promise<{ ok: boolean; error?: string }> => emitAck(compu, 'colchon:entrar', {})
+  const estado = (): Promise<EstadoCompleto> => emitAck<EstadoCompleto>(compu, 'state:request', {})
+  const play = (filtro: (c: ComandoProgramado) => boolean = (c) => c.accion === 'play'): Promise<ComandoProgramado> => esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', filtro, 5000)
+
+  // parado no hay colchon
+  const parado = await entrar()
+  assert.equal(parado.ok, false)
+  assert.match(parado.error!, /sonando/)
+
+  // sonando en 1 s: el colchon empieza en el "1" del proximo compas (2 s de la cancion)
+  const [inicio] = await Promise.all([play(), compu.emit('transport:play', { positionMs: 1000 })])
+  await esperar(100)
+  assert.equal((await entrar()).ok, true)
+  let c = (await estado()).colchon!
+  assert.deepEqual([c.desdeCancion, c.pad, c.pulsos, c.compasMs, c.volumenClick, c.hasta], [true, 'A', 4, 2000, 100, null])
+  assert.equal(c.inicio, inicio.executeAtServerTime + 1000)
+  // la cancion se pausa (ya en silencio) al terminar ese compas
+  const pausa = await play((x) => x.accion === 'pause')
+  assert.equal(pausa.executeAtServerTime, c.inicio + 2000)
+  assert.equal(pausa.positionMs, 4000)
+
+  // tocar el Puente: vuelve en el proximo compas del colchon, en el Puente, sin cuenta
+  const [vuelta] = await Promise.all([play(), compu.emit('seccion:saltar', { posicionMs: 12000 })])
+  assert.equal(vuelta.positionMs, 12000)
+  assert.equal(vuelta.playback.cuenta, undefined)
+  assert.equal((vuelta.executeAtServerTime - c.inicio) % 2000, 0, 'en el "1"')
+  c = (await estado()).colchon!
+  assert.deepEqual([c.hasta, c.salidaPadMs], [vuelta.executeAtServerTime, 1500])
+  // y cuando el pad termino de irse, ya no hay colchon
+  await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.colchon, 6000)
+  assert.ok(Date.now() >= vuelta.executeAtServerTime + 1500)
+
+  // play en el colchon = seguir donde quedo la cancion (en el proximo compas)
+  await entrar()
+  const pausa2 = await play((x) => x.accion === 'pause')
+  c = (await estado()).colchon!
+  const [seguir] = await Promise.all([play(), compu.emit('transport:play', {})])
+  assert.equal(seguir.positionMs, pausa2.positionMs)
+  assert.equal((seguir.executeAtServerTime - c.inicio) % 2000, 0)
+  await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.colchon, 6000)
+
+  // elegido antes de que empiece: no hubo colchon, la cancion sigue (y el salto es uno comun)
+  await Promise.all([play(), compu.emit('transport:play', { positionMs: 1000 })])
+  await esperar(50)
+  await entrar()
+  const e = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.colchon && !!x.saltoPendiente), compu.emit('seccion:saltar', { posicionMs: 8000 })]))[0]
+  assert.equal(e.saltoPendiente!.destinoMs, 8000)
+  await Promise.all([play((x) => x.accion === 'pause'), compu.emit('transport:pause')])
+
+  // "Terminar": el click para y el pad se va despacio; la cancion queda en pausa
+  await Promise.all([play(), compu.emit('transport:play', { positionMs: 1000 })])
+  await entrar()
+  await play((x) => x.accion === 'pause')
+  c = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => x.colchon?.hasta != null), compu.emit('colchon:terminar')]))[0].colchon!
+  assert.equal(c.salidaPadMs, 4000)
+  assert.equal((await estado()).playbackActivo!.estado, 'paused')
+  await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.colchon, 8000)
+
+  // sigue aunque se cambie de cancion; al dar play a la otra, acompana la cuenta y se va
+  await Promise.all([play(), compu.emit('transport:play', { positionMs: 1000 })])
+  await entrar()
+  await play((x) => x.accion === 'pause')
+  const otra = await cargarZip(compu, crearZip('Otra', { 'Click.wav': largo }))
+  assert.equal(otra.proyectoActivo!.nombre, 'Otra')
+  assert.ok(otra.colchon && otra.colchon.hasta === null, 'el colchon sigue')
+  const p2 = env.server.state.getActiveTab()!.proyecto
+  p2.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 11 }, (_, k) => k * 2000), clickPistaId: p2.pistas[0].id, acentoClaro: true }
+  p2.cuenta = 1
+  const [conCuenta] = await Promise.all([play(), compu.emit('transport:play', { positionMs: 0 })])
+  c = (await estado()).colchon!
+  const inicioCuenta = conCuenta.playback.cuenta!.golpes[0].t
+  assert.equal(c.hasta, inicioCuenta, 'el click del colchon para cuando empieza la cuenta')
+  assert.equal(c.salidaPadMs, conCuenta.executeAtServerTime - inicioCuenta + 1500, 'el pad acompaña la cuenta')
+  compu.emit('transport:stop')
+  await env.cerrar()
+})
+
+test('pads del colchón: uno por nota, en el tono (sin tercera) y sin corte en el loop', async (t) => {
+  const env = await entorno(t)
+  const sr = 22050
+  const bajar = async (i: number | string): Promise<{ status: number; x: Float32Array | null }> => {
+    const r = await fetch(`http://localhost:${env.port}/pad/${i}.wav`)
+    if (r.status !== 200) return { status: r.status, x: null }
+    const bytes = await r.arrayBuffer()
+    const info = parseWavHeader(bytes)
+    assert.deepEqual([info.sampleRate, info.numChannels], [sr, 1])
+    return { status: 200, x: decodePcmSegment(info, bytes.slice(info.dataOffset))[0] }
+  }
+  // energia alrededor de una frecuencia (+-0,5 Hz: el coro y el vibrato la abren un poco), en 8 s
+  const cerca = (x: Float32Array, f: number): number => {
+    const tramo = x.subarray(0, 8 * sr)
+    let total = 0
+    for (let d = -0.5; d <= 0.5001; d += 0.125) total += energiaEn(tramo, f + d, sr)
+    return total
+  }
+  const t0 = Date.now()
+  const d = await bajar(2)
+  const primera = Date.now() - t0
+  assert.equal(d.status, 200)
+  const x = d.x!
+  assert.equal(x.length, 32 * sr)
+  // D: raiz, quinta y octava; sin la tercera (ni mayor ni menor) ni las notas de al lado
+  const re = 73.416
+  const raiz = cerca(x, re)
+  assert.ok(cerca(x, re * 1.5) > raiz * 0.05, 'la quinta')
+  assert.ok(cerca(x, re * 2) > raiz * 0.05, 'la octava')
+  for (const [nombre, f] of [
+    ['D#', 77.78],
+    ['E', 82.41],
+    ['F (tercera menor)', 87.31],
+    ['F# (tercera mayor)', 92.5]
+  ] as const) {
+    assert.ok(cerca(x, f) < raiz / 30, `${nombre}: ${cerca(x, f) / raiz}`)
+  }
+  // el loop empalma: el salto del final al principio es como el de dos muestras seguidas
+  let tipico = 0
+  for (let i = 1; i < x.length; i++) tipico += Math.abs(x[i] - x[i - 1])
+  tipico /= x.length - 1
+  assert.ok(Math.abs(x[0] - x[x.length - 1]) < 4 * tipico, `salto ${Math.abs(x[0] - x[x.length - 1])} vs ${tipico}`)
+  let pico = 0
+  for (const v of x) pico = Math.max(pico, Math.abs(v))
+  assert.ok(pico > 0.6 && pico < 0.75, `pico ${pico}`)
+  // la segunda vez ya esta hecho (queda en disco)
+  const t1 = Date.now()
+  await bajar(2)
+  assert.ok(Date.now() - t1 < Math.max(300, primera / 2), `segunda vez ${Date.now() - t1} ms (primera ${primera} ms)`)
+  assert.ok(fs.existsSync(path.join(env.appDir, 'pads')))
+  // A: la raiz en 110 Hz (y no en La#)
+  const a = (await bajar(9)).x!
+  assert.ok(cerca(a, 110) > 30 * cerca(a, 116.54))
+  assert.equal((await bajar(12)).status, 404)
+  assert.equal((await bajar('x')).status, 404)
   await env.cerrar()
 })

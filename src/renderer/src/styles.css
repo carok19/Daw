@@ -27,6 +27,8 @@
   --warn-soft: rgba(245, 158, 11, 0.16);
   --loop: #a78bfa;
   --loop-soft: rgba(167, 139, 250, 0.18);
+  --colchon: #2dd4bf;
+  --colchon-soft: rgba(45, 212, 191, 0.15);
   --solo: #facc15;
 
   --radius: 10px;
@@ -126,6 +128,7 @@ input:focus-visible {
 
 input[type='text'],
 input[type='search'],
+input[type='number'],
 input:not([type]) {
   font: inherit;
   background: var(--panel);
@@ -3948,4 +3951,301 @@ input[type='date'] {
 .chip-velocidad.cambiado .velocidad-bpm {
   color: var(--warn);
   font-weight: 700;
+}
+
+/* ---------- colchon: pad y click sin la banda ---------- */
+.tbtn-colchon.activo {
+  background: var(--colchon-soft);
+  border-color: var(--colchon);
+  color: var(--colchon);
+}
+.pulso-colchon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.pulso-colchon-golpes {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pulso-golpe {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--panel-4);
+  border: 1px solid var(--line-2);
+  transition: background 0.06s, transform 0.06s;
+}
+.pulso-golpe.uno {
+  width: 12px;
+  height: 12px;
+}
+.pulso-golpe.activo {
+  background: var(--colchon);
+  border-color: var(--colchon);
+  transform: scale(1.15);
+}
+.pulso-colchon-compas {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.pulso-colchon.grande .pulso-golpe {
+  width: 16px;
+  height: 16px;
+}
+.pulso-colchon.grande .pulso-golpe.uno {
+  width: 22px;
+  height: 22px;
+}
+.pulso-colchon.grande .pulso-colchon-compas {
+  font-size: 15px;
+}
+.banner-colchon {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 22px 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--colchon);
+  border-radius: 12px;
+  background: var(--colchon-soft);
+}
+.banner-colchon.terminando {
+  opacity: 0.75;
+  border-style: dashed;
+}
+.banner-colchon-icono {
+  color: var(--colchon);
+}
+.banner-colchon-titulo {
+  white-space: nowrap;
+}
+.banner-colchon-ayuda {
+  flex: 1;
+  min-width: 220px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.banner-colchon-controles {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.banner-colchon-controles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.volumen-colchon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.volumen-colchon input[type='range'] {
+  width: 110px;
+  accent-color: var(--colchon);
+}
+.volumen-colchon .num {
+  min-width: 26px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  text-align: right;
+}
+.bpm-colchon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.bpm-colchon input {
+  width: 64px;
+  text-align: center;
+}
+.pantalla-colchon {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 26px 22px;
+  overflow-y: auto;
+}
+.colchon-tarjeta {
+  width: min(720px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 26px;
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  background: var(--panel);
+}
+.colchon-tarjeta.sonando {
+  border-color: var(--colchon);
+  box-shadow: 0 0 0 3px var(--colchon-soft);
+}
+.colchon-cabeza {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--colchon);
+}
+.colchon-cabeza h2 {
+  margin: 0;
+  font-size: 19px;
+  color: var(--text);
+}
+.colchon-grande {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+.colchon-nota {
+  font-size: 72px;
+  font-weight: 800;
+  line-height: 1;
+}
+.colchon-bpm {
+  font-size: 16px;
+  color: var(--text-2);
+}
+.colchon-botones {
+  display: flex;
+  justify-content: center;
+}
+.colchon-botones .btn-play {
+  font-size: 16px;
+  padding: 12px 26px;
+  border-radius: 999px;
+}
+.btn-terminar {
+  background: var(--panel-4);
+  border-color: var(--line-2);
+  color: var(--text);
+}
+.btn-terminar:hover:not(:disabled) {
+  background: var(--panel-3);
+}
+.colchon-ajustes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 14px 18px;
+  align-items: end;
+}
+.campo-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+.campo-check > span {
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.colchon-ayuda,
+.colchon-explicacion {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.colchon-explicacion.chico {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.colchon-explicacion:first-child {
+  margin-bottom: 14px;
+}
+.lista-editor-titulo-orden {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lista-editor-titulo-orden .btn-chico {
+  margin-left: auto;
+}
+/* celular */
+.m-colchon {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--colchon);
+  border-radius: 12px;
+  background: var(--colchon-soft);
+}
+.m-colchon.terminando {
+  opacity: 0.75;
+  border-style: dashed;
+}
+.m-colchon-fila {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--colchon);
+}
+.m-colchon-fila b {
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-colchon-texto {
+  font-size: 14px;
+  color: var(--text-2);
+}
+.m-colchon-terminar {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.m-vista-colchon {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.m-colchon-grande {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--colchon);
+}
+.m-colchon-grande h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-2);
+  text-align: center;
+}
+.m-colchon-nota {
+  font-size: 64px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text);
+}
+.m-colchon-bpm {
+  font-size: 16px;
+  color: var(--text-2);
+}
+.m-colchon-parado {
+  font-size: 14px;
+  color: var(--text-3);
+}
+.m-canal-colchon .m-canal-aviso {
+  color: var(--colchon);
+  background: var(--colchon-soft);
 }

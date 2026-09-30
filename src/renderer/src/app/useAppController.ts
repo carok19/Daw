@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  AjustesColchon,
   AnuncioSalto,
   AjustesConexion,
   ComandoProgramado,
@@ -30,11 +31,12 @@ import type {
 } from '@shared/types'
 import { calcularSecciones, estaSonando, posicionActualMs, seccionEn, tramoVigente } from '@shared/playback'
 import { golpeActual } from '@shared/cuenta'
+import { compasYPulso } from '@shared/colchon'
 import { SocketClient } from '../sync/SocketClient'
 import { StreamingEngine } from '../audio/StreamingEngine'
 import type { MezclaPersonal, PlaybackEngine } from '../audio/PlaybackEngine'
 import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_SUAVE_MS, UMBRAL_SUAVE_PRECISO_MS } from '../sync/driftConfig'
-import { setPlayheadMs, getPlayheadMs, setGolpeCuenta } from './playheadStore'
+import { setPlayheadMs, getPlayheadMs, setGolpeCuenta, setGolpeColchon } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
 import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
 import { codigoDesdeDireccion, puenteAndroid } from '../conexion'
@@ -320,6 +322,8 @@ export function useAppController() {
     if (!engineRef.current) {
       engineRef.current = crearEngine()
       engineRef.current.setAnuncio(anuncioRef.current?.anuncio ?? null)
+      const socket = socketRef.current!
+      engineRef.current.setColchon(estadoRef.current?.colchon ?? null, () => socket.clockOffsetMs)
     }
     await engineRef.current.resumeSiHaceFalta()
     sincronizarMotor(estadoRef.current, 400)
@@ -361,6 +365,7 @@ export function useAppController() {
       estadoRef.current = nuevo
       sincronizarMotor(nuevo, esReconexion ? 600 : 300, esReconexion)
       actualizarAnuncio(nuevo)
+      engineRef.current?.setColchon(nuevo.colchon ?? null, () => socket.clockOffsetMs)
     }
 
     /**
@@ -598,6 +603,12 @@ export function useAppController() {
       const ahora = socket?.serverNow() ?? 0
       setPlayheadMs(socket && playback ? posicionActualMs(playback, ahora) : 0)
       setGolpeCuenta(playback?.estado === 'playing' ? golpeActual(playback.cuenta, ahora) : 0)
+      const col = estadoRef.current?.colchon
+      if (col && ahora >= col.empezo && (col.hasta === null || ahora < col.hasta)) {
+        // (recien cambiado el BPM, hasta el primer "1" del pulso nuevo queda lo ultimo)
+        const { compas, pulso } = compasYPulso(col, ahora)
+        if (compas > 0) setGolpeColchon(compas * 100 + pulso)
+      } else setGolpeColchon(0)
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
@@ -672,8 +683,11 @@ export function useAppController() {
         emit('transport:pause')
       },
       togglePlay(): void {
-        const pb = estadoRef.current?.playbackActivo
-        if (pb?.estado === 'playing') emit('transport:pause')
+        const e = estadoRef.current
+        const pb = e?.playbackActivo
+        // un colchon de la lista no "suena" como cancion: play lo empieza y pausa lo termina
+        const colchonAca = !!e?.proyectoActivo?.colchon && e.colchon?.tabId === e.activeTabId && e.colchon.hasta === null
+        if (pb?.estado === 'playing' || colchonAca) emit('transport:pause')
         else emit('transport:play', {})
       },
       stop(): void {
@@ -796,6 +810,34 @@ export function useAppController() {
           if (!r.ok && r.error) avisar({ tipo: 'error', texto: r.error })
         } catch {
           avisar({ tipo: 'error', texto: 'No se pudo cambiar la velocidad (sin conexión con la compu)' })
+        }
+      },
+      // ---- colchon: pad y click sin la banda (ver shared/colchon.ts) ----
+      /** Con la cancion sonando: en el proximo compas se va la banda y siguen el click y el pad. */
+      async entrarEnColchon(): Promise<void> {
+        try {
+          const r = await socket.emitAck<{ ok: boolean; error?: string }>('colchon:entrar', {}, 5000)
+          if (!r.ok && r.error) avisar({ tipo: 'error', texto: r.error })
+        } catch {
+          avisar({ tipo: 'error', texto: 'No se pudo armar el colchón (sin conexión con la compu)' })
+        }
+      },
+      terminarColchon(): void {
+        emit('colchon:terminar')
+      },
+      /** Cambia el colchon: el que suena (en vivo) y, si arriba hay uno de la lista, lo que tiene guardado. */
+      ajustarColchon(cambio: Partial<AjustesColchon>): void {
+        emit('colchon:ajustar', cambio)
+      },
+      /** Crea un colchon para la lista (queda en la biblioteca). Devuelve su id. */
+      async crearColchon(ajustes: AjustesColchon): Promise<string | null> {
+        try {
+          const r = await socket.emitAck<{ ok: boolean; error?: string; id?: string }>('colchon:crear', { ajustes }, 5000)
+          if (!r.ok) avisar({ tipo: 'error', texto: r.error ?? 'No se pudo crear el colchón' })
+          return r.ok ? (r.id ?? null) : null
+        } catch {
+          avisar({ tipo: 'error', texto: 'No se pudo crear el colchón (sin conexión con la compu)' })
+          return null
         }
       },
       /** Compases de cuenta antes de la cancion (null = automatica: 2, o 1 en las lentas). */

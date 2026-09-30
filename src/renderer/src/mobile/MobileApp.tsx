@@ -16,16 +16,18 @@ import {
   SkipBack,
   SkipForward,
   SlidersVertical,
+  Square,
   UserPlus,
   Volume2,
+  Waves,
   WifiOff,
   X
 } from 'lucide-react'
-import type { OndaCancion, Proyecto, SaltoPendiente } from '@shared/types'
+import type { ColchonActivo, OndaCancion, Proyecto, SaltoPendiente } from '@shared/types'
 import { seccionEn, type Seccion } from '@shared/playback'
 import { textoSemitonos, tonalidadOriginal, transponerTonalidad } from '@shared/tonalidad'
 import type { AppController } from '../app/useAppController'
-import { useGolpeCuenta, usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
+import { useGolpeColchon, useGolpeCuenta, usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
 import { leerPref } from '../app/preferencias'
 import { clavePista, type AjustePersonal } from '../audio/PlaybackEngine'
 import { fueraDelSolo } from '@shared/mezcla'
@@ -42,6 +44,8 @@ import { guardarPref } from '../app/preferencias'
 import { Hoja, HojaAjustes } from './Hojas'
 import { AbrirEnApp, AccesoFijo, HojaInvitar, PantallaCodigo, PantallaLicencia } from './Conectar'
 import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion'
+import { PulsoColchon, textoColchon, textoCompasColchon } from '../ui/Colchon'
+import { SALIDA_PAD_VUELTA_MS } from '@shared/colchon'
 
 type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones' | 'invitar'
 /** La cancion (por donde va y sus secciones) o "Mi mezcla" a pantalla completa. */
@@ -130,7 +134,11 @@ export function MobileApp({ controller }: { controller: AppController }) {
             </button>
           </div>
           {vista === 'cancion' ? (
-            <VistaCancion controller={controller} proyecto={proyecto} onHoja={setHoja} />
+            proyecto.colchon ? (
+              <VistaColchon controller={controller} proyecto={proyecto} />
+            ) : (
+              <VistaCancion controller={controller} proyecto={proyecto} onHoja={setHoja} />
+            )
           ) : (
             <Mezcla controller={controller} proyecto={proyecto} />
           )}
@@ -223,7 +231,46 @@ function CanalGeneral({ controller }: { controller: AppController }) {
   )
 }
 
+/** "Mi mezcla" del colchon: el pad (y, en un colchon de la lista, el click), solo en este celular. */
+function CanalColchon({ nombre, color, ajuste, onCambio }: { nombre: string; color: string; ajuste: AjustePersonal | undefined; onCambio: (patch: Partial<AjustePersonal>) => void }) {
+  const a = ajuste ?? { ganancia: 1, mute: false }
+  const pct = Math.round(a.ganancia * 100)
+  return (
+    <div className={`m-canal m-canal-colchon ${a.mute ? 'muteado' : ''}`}>
+      <div className="m-canal-cabeza">
+        <Waves size={15} color={color} />
+        <span className="m-canal-nombre">{nombre}</span>
+        <span className="m-canal-aviso">colchón</span>
+        <small className="num">{a.mute ? 'muda' : textoGanancia(pct)}</small>
+      </div>
+      <div className="m-canal-control">
+        <FaderTactil
+          valor={pct}
+          min={0}
+          max={200}
+          neutro={100}
+          paso={5}
+          color={color}
+          deshabilitado={a.mute}
+          etiqueta={`Volumen de ${nombre} en este celular`}
+          onCambio={(v) => onCambio({ ganancia: v / 100 })}
+        />
+        <button
+          className={`m-ms m-mute ${a.mute ? 'activo' : ''}`}
+          onClick={() => onCambio({ mute: !a.mute })}
+          aria-pressed={a.mute}
+          aria-label={`Mute de ${nombre} en este celular`}
+          title="Mute: no escucharlo (solo en este celular)"
+        >
+          M
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Mezcla({ controller, proyecto }: { controller: AppController; proyecto: Proyecto }) {
+  const estado = controller.estado
   const mezcla = controller.mezclaPersonal
   const hayCambios = Object.keys(mezcla).length > 0
   const soloAca = proyecto.pistas.some((p) => mezcla[clavePista(p.nombre)]?.solo)
@@ -251,6 +298,12 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
         </button>
       </div>
       <CanalGeneral controller={controller} />
+      {(proyecto.colchon || estado?.colchon) && (
+        <>
+          {proyecto.colchon && <CanalColchon nombre="Click" color="var(--text-2)" ajuste={mezcla[clavePista('Click')]} onCambio={(patch) => set('Click', patch)} />}
+          <CanalColchon nombre="Pad" color="var(--colchon)" ajuste={mezcla[clavePista('Pad')]} onCambio={(patch) => set('Pad', patch)} />
+        </>
+      )}
       {proyecto.pistas.map((p) => {
         const ajuste: AjustePersonal = mezcla[clavePista(p.nombre)] ?? { ganancia: 1, mute: false }
         const pct = Math.round(ajuste.ganancia * 100)
@@ -345,6 +398,38 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
   const sonando = estado?.playbackActivo?.estado === 'playing'
   const salto = estado?.saltoPendiente ?? null
   const cantidadCanciones = estado?.tabs.length ?? 0
+
+  if (proyecto.colchon) {
+    const c = estado?.colchon
+    const suena = !!c && c.tabId === estado?.activeTabId && c.hasta === null
+    return (
+      <div className={`m-barra ${conInfo ? '' : 'solo-botones'}`} role="region" aria-label="Colchón y transporte">
+        {conInfo && (
+          <div className="m-barra-info">
+            <span className="m-barra-fila">
+              <span className="m-barra-cancion">{proyecto.nombre}</span>
+            </span>
+            <span className="m-barra-fila">{suena && c ? <PulsoColchon pulsos={c.pulsos} /> : <span className="m-barra-sigue">parado</span>}</span>
+          </div>
+        )}
+        <div className="m-barra-botones">
+          {locked ? (
+            <span className="m-barra-bloqueado">
+              <Lock size={15} /> Control en la compu
+            </span>
+          ) : (
+            <button className={`m-play ${suena ? 'sonando' : ''}`} onClick={controller.togglePlay} aria-label={suena ? 'Terminar el colchón' : 'Empezar el colchón'}>
+              {suena ? <Square size={20} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+            </button>
+          )}
+          <button onClick={() => onHoja('canciones')} aria-label="Canciones del setlist">
+            <ListMusic size={19} />
+            {cantidadCanciones > 1 && <span className="m-barra-cuenta num">{cantidadCanciones}</span>}
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={`m-barra ${conInfo ? '' : 'solo-botones'}`} role="region" aria-label="Canción y transporte">
@@ -468,9 +553,12 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
   const modo = estado?.modoSalto ?? 'seccion'
   const conMarcador = secciones.filter((s) => s.marcador)
   const compases = proyecto.tempo?.compasesMs ?? null
+  const enSuColchon = !!estado?.colchon && estado.colchon.desdeCancion && estado.colchon.hasta === null && estado.colchon.tabId === estado.activeTabId
   const ayuda = locked
     ? null
-    : !sonando || modo === 'inmediato'
+    : enSuColchon
+      ? 'Tocá una sección: la canción vuelve ahí en el próximo compás.'
+      : !sonando || modo === 'inmediato'
       ? 'Tocá una sección para ir ahí.'
       : modo === 'compas'
         ? 'Tocá una sección: salta en el próximo compás.'
@@ -478,6 +566,7 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
 
   return (
     <section className="m-vista-cancion" aria-label="Canción">
+      {estado?.colchon && <AvisoColchon controller={controller} colchon={estado.colchon} />}
       <div className="m-cancion-cabeza">
         <button className="m-cancion-nombre" onClick={() => onHoja('canciones')} aria-label={`${proyecto.nombre}: ver las canciones`}>
           <span>{proyecto.nombre}</span>
@@ -556,6 +645,64 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
           ayuda
         )}
       </p>
+    </section>
+  )
+}
+
+// ---------- colchon: pad y click sin la banda ----------
+
+/** Arriba de la cancion, mientras suena un colchon: que pasa y como se sale. */
+function AvisoColchon({ controller, colchon }: { controller: AppController; colchon: ColchonActivo }) {
+  const e = controller.estado
+  const locked = e?.locked ?? false
+  const empezo = useGolpeColchon() !== null
+  const terminando = colchon.hasta !== null
+  const deEstaCancion = colchon.desdeCancion && colchon.tabId === e?.activeTabId
+  const banda = empezo ? 'La banda paró: siguen el click y el pad.' : 'La banda se va en el próximo compás: siguen el click y el pad.'
+  return (
+    <div className={`m-colchon ${terminando ? 'terminando' : ''}`} role="status">
+      <span className="m-colchon-fila">
+        <Waves size={18} />
+        <b>{textoColchon(colchon)}</b>
+        {!terminando && <PulsoColchon pulsos={colchon.pulsos} />}
+      </span>
+      <span className="m-colchon-texto">
+        {terminando
+          ? colchon.salidaPadMs <= SALIDA_PAD_VUELTA_MS
+            ? 'Vuelve la banda…'
+            : 'Se está apagando…'
+          : deEstaCancion
+            ? locked
+              ? banda
+              : `${banda} Tocá una sección para volver (entra en el próximo compás).`
+            : 'Suenan el click y el pad.'}
+      </span>
+      {!terminando && !locked && (
+        <button className="m-colchon-terminar" onClick={controller.terminarColchon}>
+          <Square size={13} fill="currentColor" /> Terminar
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Un colchon de la lista (sin pistas): el tono del pad, el pulso y si esta sonando. */
+function VistaColchon({ controller, proyecto }: { controller: AppController; proyecto: Proyecto }) {
+  const e = controller.estado
+  const a = proyecto.colchon!
+  const c = e?.colchon ?? null
+  const suena = !!c && c.tabId === e?.activeTabId && c.hasta === null
+  return (
+    <section className="m-vista-colchon" aria-label="Colchón">
+      {c && c.tabId !== e?.activeTabId && <AvisoColchon controller={controller} colchon={c} />}
+      <div className="m-colchon-grande">
+        <Waves size={26} />
+        <h2>{proyecto.nombre}</h2>
+        <div className="m-colchon-nota">{a.tonalidad ?? '—'}</div>
+        <div className="m-colchon-bpm num">{a.click ? `${a.bpm} BPM · ${textoCompasColchon(a.compas)}` : 'sin click'}</div>
+        {suena && c ? <PulsoColchon pulsos={c.pulsos} grande /> : <span className="m-colchon-parado">{c && c.tabId === e?.activeTabId ? 'se está apagando…' : 'parado'}</span>}
+      </div>
+      <p className="m-ayuda-salto">Pad de ambiente y click, sin la banda. El volumen del pad y del click para vos, en “Mi mezcla”.</p>
     </section>
   )
 }

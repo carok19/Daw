@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square, X } from 'lucide-react'
+import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square, Waves, X } from 'lucide-react'
 import type { OndaCancion, PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
@@ -40,6 +40,11 @@ interface Props {
   onda: OndaCancion | null
   /** linea de tiempo alta (vista de secciones) o finita (vista de mezcla) */
   timelineGrande: boolean
+  /** esta cancion esta en su colchon (la banda paro; siguen el click y el pad) */
+  enColchon: boolean
+  /** hay un colchon sonando (de esta cancion, de otra o de la lista) */
+  hayColchon: boolean
+  onColchon: () => void
 }
 
 function textoCompas(compas: number): string {
@@ -212,7 +217,7 @@ export function Transport(p: Props) {
           <button
             className={`tbtn tbtn-play ${sonando ? 'sonando' : ''}`}
             onClick={p.onTogglePlay}
-            title={sonando ? 'Pausa (Espacio)' : 'Reproducir (Espacio)'}
+            title={p.enColchon ? (sonando ? 'Terminar el colchón (Espacio)' : 'Seguir la canción donde quedó, en el próximo compás (Espacio)') : sonando ? 'Pausa (Espacio)' : 'Reproducir (Espacio)'}
             aria-label={sonando ? 'Pausa' : 'Reproducir'}
           >
             {sonando ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" style={{ marginLeft: 3 }} />}
@@ -228,6 +233,22 @@ export function Transport(p: Props) {
             aria-label="Repetir sección"
           >
             <Repeat size={19} />
+          </button>
+          <button
+            className={`tbtn tbtn-colchon ${p.enColchon ? 'activo' : ''}`}
+            onClick={p.onColchon}
+            disabled={!p.enColchon && (p.hayColchon || !sonando || !p.proyecto.tempo || p.proyecto.tempo.compasesMs.length < 2)}
+            title={
+              p.enColchon
+                ? 'Terminar el colchón (C): el click para y el pad se apaga'
+                : !p.proyecto.tempo
+                  ? 'Colchón: hace falta el tempo de la canción (el click)'
+                  : 'Colchón (C): en el próximo compás se va la banda y siguen el click y un pad en el tono de la canción. Tocá una sección para volver.'
+            }
+            aria-pressed={p.enColchon}
+            aria-label="Colchón"
+          >
+            <Waves size={19} />
           </button>
         </div>
 

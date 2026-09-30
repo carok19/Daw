@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import type { InfoVoces, ListaActiva, Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
+import type { ColchonActivo, InfoVoces, ListaActiva, Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
 import { posicionActualMs } from '../shared/playback'
 import { guardarSesion, saveProyecto, type SesionGuardada } from './projects'
 import { guardarLista, leerLista } from './listas'
@@ -49,6 +49,10 @@ export class AppState {
   modoSalto: ModoSalto = 'seccion'
   /** salto elegido que espera su limite (lo maneja Transporte); se cancela al cambiar de cancion */
   saltoPendiente: (SaltoPendiente & { tabId: string }) | null = null
+  /** colchón sonando (pad y click, sin la banda; lo maneja Transporte). Sigue aunque se cambie de canción */
+  colchon: ColchonActivo | null = null
+  /** volumen del pad del último colchón dentro de una canción (el próximo arranca igual) */
+  volumenPadColchon = 80
   /** el pack de voces para avisar los saltos (lo mantiene socketHandlers) */
   voces: InfoVoces | null = null
   /** la lista del dia cargada en las pestanas (null = canciones sueltas) */

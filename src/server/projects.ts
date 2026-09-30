@@ -1,7 +1,8 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import type { Proyecto, ProyectoResumen } from '../shared/types'
+import type { AjustesColchon, Proyecto, ProyectoResumen } from '../shared/types'
 import { FORMATO_PROYECTO_ACTUAL } from '../shared/types'
 import { aplicarPaneoAutomatico } from '../shared/mezcla'
 import { enParalelo, normalizarAWav } from './audio'
@@ -133,8 +134,31 @@ export function resumenDe(proyecto: Proyecto): ProyectoResumen {
     usadoEn: proyecto.usadoEn ?? null,
     bpm: proyecto.tempo?.bpm ?? null,
     compas: proyecto.tempo?.compas ?? null,
-    analisis: proyecto.analisis?.estado ?? null
+    analisis: proyecto.analisis?.estado ?? null,
+    ...(proyecto.colchon ? { colchon: true, bpm: proyecto.colchon.click ? proyecto.colchon.bpm : null, compas: proyecto.colchon.compas } : {})
   }
+}
+
+/**
+ * Un colchón para la lista: una "canción" sin pistas (pad y click; ver
+ * shared/colchon.ts). Queda en la biblioteca como cualquier canción.
+ */
+export function crearProyectoColchon(ajustes: AjustesColchon, nombre: string): Proyecto {
+  const proyecto: Proyecto = {
+    id: crypto.randomUUID(),
+    nombre,
+    creadoEn: new Date().toISOString(),
+    pistas: [],
+    marcadores: [],
+    duracionTotalMs: 0,
+    formato: FORMATO_PROYECTO_ACTUAL,
+    tempo: null,
+    analisis: { estado: 'listo', fuente: null, guiaPistaId: null },
+    categoria: '',
+    colchon: ajustes
+  }
+  saveProyecto(proyecto)
+  return proyecto
 }
 
 export function deleteProyecto(id: string): void {

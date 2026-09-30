@@ -109,7 +109,7 @@ app.whenReady().then(async () => {
   const dirModelos = app.isPackaged ? path.join(process.resourcesPath, 'modelos') : path.join(__dirname, '../../modelos')
   // app Android incluida en el instalador (la baja cada celular desde la compu)
   const dirExtras = app.isPackaged ? path.join(process.resourcesPath, 'extras') : path.join(__dirname, '../../extras')
-  server = createServer(rendererDir, { dirModelos, dirExtras, version: app.getVersion() })
+  server = createServer(rendererDir, { dirModelos, dirExtras, version: app.getVersion(), precalentarPads: true })
   await server.restaurarSesion()
   puertoActivo = await server.start(PUERTO_PREFERIDO)
   const bibliotecaAnterior = path.join(app.getPath('documents'), NOMBRE_ANTERIOR)

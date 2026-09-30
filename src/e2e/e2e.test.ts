@@ -132,6 +132,14 @@ async function enSync(celulares: Page[], contexto: string, convergerMs = 25000):
   }
 }
 
+/** Con E2E_CAPTURAS=<carpeta>, guarda como se ve la pantalla (para revisar el diseño). */
+async function captura(p: Page, nombre: string): Promise<void> {
+  const dir = process.env.E2E_CAPTURAS
+  if (!dir) return
+  fs.mkdirSync(dir, { recursive: true })
+  await p.screenshot({ path: path.join(dir, `${nombre}.png`) })
+}
+
 /** La compu: la vista de la cancion con las secciones (tarjetas) o la de la mezcla (el mixer). */
 async function vistaCompu(compu: Page, vista: 'Secciones' | 'Mezcla'): Promise<void> {
   const tab = compu.getByRole('tab', { name: new RegExp(`^${vista}`) })
@@ -2022,4 +2030,344 @@ test('voz del salto con audio real: en el último compás se calla la guía y se
     assert.ok(pico(12.2, 13.5) > 0.1, `${quien}: después del salto vuelve la guía (${pico(12.2, 13.5)})`)
     console.log(`voz del salto · ${quien}: "3" a ${(tres[0] * 1000).toFixed(1)} ms (debía 3000), guía en el compás ${pico(2.5, 2.95).toFixed(4)}`)
   }
+})
+
+test('colchón con audio real: la banda se va en el compás, el click sigue sin saltos, entra el pad y la canción vuelve en el "1" (compu y celular)', { timeout: 4 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-colchon-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  // el pad de Re ya hecho (la primera vez la compu tarda un segundo en sintetizarlo)
+  assert.equal((await fetch(`${base}/pad/2.wav`)).status, 200)
+
+  // la banda: un tono agudo (3 kHz) a la derecha, facil de separar del pad (grave); el click a 120 BPM desde 0,5 s
+  const SEG = 30
+  const banda = new Float32Array(SEG * SR)
+  for (let i = 0; i < banda.length; i++) banda[i] = 0.5 * Math.sin((2 * Math.PI * 3000 * i) / SR)
+  const z = new AdmZip()
+  z.addFile('Banda.wav', wav16(banda, SR))
+  z.addFile('Click.wav', wav16(generarClick(120, 4, SEG), SR))
+  z.addFile('marcas.txt', Buffer.from('0:08.5 Coro\n0:16.5 Puente\n'))
+  const zip = path.join(tmp, 'Adoración - D.zip')
+  z.writeZip(zip)
+
+  type Cmd = { accion: string; positionMs: number; executeAtServerTime: number }
+  const cmds: Cmd[] = []
+  const emitir = server.io.emit.bind(server.io)
+  server.io.emit = ((ev: string, ...args: unknown[]) => {
+    if (ev === 'playback:scheduled') cmds.push(args[0] as Cmd)
+    return emitir(ev, ...args)
+  }) as typeof server.io.emit
+
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    localStorage.setItem('multitrack:sonido-compu', 'true')
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+    g.__zip = null
+    g.electronAPI = { isElectron: true, compuToken: 'e2e', pickZipFile: async () => g.__zip, getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }) }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(`${base}/?debug`)
+  await compu.evaluate((zz) => ((globalThis as unknown as { __zip: string }).__zip = zz), zip)
+  await compu.getByRole('button', { name: /Importar o abrir canción/ }).click()
+  await compu.getByRole('button', { name: /Importar \.zip/ }).click()
+  await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
+  const p = server.state.getActiveTab()!.proyecto
+  p.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 15 }, (_, k) => 500 + 2000 * k), clickPistaId: p.pistas.find((x) => x.nombre === 'Click')!.id, acentoClaro: true }
+  p.cuenta = 0
+  server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
+
+  const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
+  ctxCel.setDefaultTimeout(15000)
+  const cel = await ctxCel.newPage()
+  cel.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
+  await cel.goto(`${base}/?debug`)
+  await cel.getByRole('button', { name: /Tocá para empezar/ }).click()
+  const dispositivos = [
+    { nombre: 'compu', p: compu },
+    { nombre: 'celular', p: cel }
+  ]
+  for (const { p: pg } of dispositivos) {
+    await pg.waitForFunction(() => !!(globalThis as unknown as { __mt?: { engineRef: { current: unknown } } }).__mt?.engineRef.current)
+    // lo que sale, por bloque: el pico del oido izquierdo (el click), y del derecho lo agudo (la banda) y lo grave (el pad)
+    await pg.evaluate(async () => {
+      const g = globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode } } }; __muestras: number[][] }
+      const engine = g.__mt.engineRef.current
+      const codigo = `registerProcessor('grabador-colchon', class extends AudioWorkletProcessor {
+        constructor() { super(); this.lote = []; this.r1 = 0; this.r2 = 0; this.a = 0; this.b = 0; this.k = 1 - Math.exp(-2 * Math.PI * 250 / sampleRate) }
+        process(inputs) {
+          const [L, R] = inputs[0] || []
+          if (L && R) {
+            let pl = 0, agudo = 0, grave = 0
+            for (let i = 0; i < L.length; i++) {
+              pl = Math.max(pl, Math.abs(L[i]))
+              const d2 = R[i] - 2 * this.r1 + this.r2
+              this.r2 = this.r1; this.r1 = R[i]
+              agudo = Math.max(agudo, Math.abs(d2))
+              this.a += this.k * (R[i] - this.a); this.b += this.k * (this.a - this.b)
+              grave = Math.max(grave, Math.abs(this.b))
+            }
+            this.lote.push([currentTime, pl, agudo, grave])
+          }
+          if (this.lote.length >= 8) { this.port.postMessage(this.lote); this.lote = [] }
+          return true
+        }
+      })`
+      await engine.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' })))
+      const nodo = new AudioWorkletNode(engine.ctx, 'grabador-colchon', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' })
+      g.__muestras = []
+      nodo.port.onmessage = (e: MessageEvent<number[][]>) => {
+        const ts = engine.ctx.getOutputTimestamp()
+        const base = performance.timeOrigin + (ts.performanceTime ?? 0) - (ts.contextTime ?? 0) * 1000
+        for (const [tc, l, agudo, grave] of e.data) g.__muestras.push([base + tc * 1000, l, agudo, grave])
+      }
+      engine.masterGain.connect(nodo)
+    })
+  }
+  await esperar(3000)
+
+  // play; a los 3 s, "Colchón" en la compu; a los 4 s de colchon, el celular toca el Puente
+  await compu.getByRole('button', { name: 'Reproducir' }).click()
+  await esperar(400)
+  const t0 = cmds.filter((c) => c.accion === 'play').pop()!.executeAtServerTime
+  await esperar(t0 + 3000 - Date.now())
+  const boton = compu.getByRole('button', { name: 'Colchón' })
+  await boton.click()
+  await compu.waitForFunction(() => document.querySelector('.banner-colchon') !== null)
+  const c = server.state.colchon!
+  assert.ok(c && c.desdeCancion, 'hay colchón')
+  assert.equal(c.pad, 'D', 'el pad, en el tono de la canción')
+  assert.equal((c.inicio - t0 - 500) % 2000, 0, 'empieza en el "1" de un compás')
+  assert.match((await compu.locator('.banner-colchon').textContent())!, /Colchón · D · 120 BPM/)
+  assert.equal(await boton.getAttribute('aria-pressed'), 'true')
+  await cel.locator('.m-colchon').waitFor()
+  assert.match((await cel.locator('.m-colchon').textContent())!, /La banda (paró|se va en el próximo compás).*Tocá una sección para volver/)
+  await captura(compu, 'colchon-cancion-compu')
+  await captura(cel, 'colchon-cancion-celular')
+  // Mi mezcla del celular: el pad aparece para ajustarlo
+  await vistaCelular(cel, 'Mi mezcla')
+  await cel.getByRole('button', { name: 'Mute de Pad en este celular' }).waitFor()
+  await captura(cel, 'colchon-mi-mezcla-celular')
+  await vistaCelular(cel, 'Canción')
+
+  await esperar(c.inicio + 6000 - Date.now())
+  await cel.locator('.m-vista-cancion .m-marcador', { hasText: 'Puente' }).click()
+  await esperar(500)
+  const vuelta = cmds.filter((x) => x.accion === 'play').pop()!
+  assert.equal(vuelta.positionMs, 16500, 'vuelve en el Puente')
+  const hasta = vuelta.executeAtServerTime
+  assert.equal((hasta - c.inicio) % 2000, 0, 'en el "1" de un compás del colchón')
+  assert.equal(server.state.colchon?.hasta, hasta)
+  await esperar(hasta + 3000 - Date.now())
+  await compu.getByRole('button', { name: 'Stop' }).click()
+  await cel.locator('.m-colchon').waitFor({ state: 'detached' })
+
+  const pausa = cmds.find((x) => x.accion === 'pause' && x.executeAtServerTime > c.inicio)!
+  assert.equal(pausa.executeAtServerTime, c.inicio + 2000, 'la canción se pausa al terminar el compás en que se va la banda')
+
+  const resultados: Record<string, number[]> = {}
+  for (const { nombre, p: pg } of dispositivos) {
+    const m = (await pg.evaluate(() => (globalThis as unknown as { __muestras: number[][] }).__muestras)) as number[][]
+    const tramo = (a: number, b: number): number[][] => m.filter(([w]) => w >= a && w < b)
+    const max = (a: number, b: number, i: number): number => Math.max(0, ...tramo(a, b).map((x) => x[i]))
+    // el click: cada golpe (cancion, colchon y cancion otra vez, todos en la misma grilla) a tiempo, y nada en el medio
+    const ataques: number[] = []
+    for (let tg = t0 + 1000; tg < hasta + 2500; tg += 500) {
+      const cerca = tramo(tg - 60, tg + 60)
+      const pico = Math.max(0, ...cerca.map((x) => x[1]))
+      assert.ok(pico > 0.1, `${nombre}: falta el golpe de ${tg - t0} ms (pico ${pico.toFixed(3)}; colchón ${c.inicio - t0}..${hasta - t0})`)
+      ataques.push(cerca.find((x) => x[1] >= pico * 0.5)![0] - tg)
+      const entre = max(tg + 70, tg + 430, 1)
+      assert.ok(entre < 0.25 * pico, `${nombre}: golpe de más después de ${tg - t0} ms (${entre.toFixed(3)} vs ${pico.toFixed(3)})`)
+    }
+    resultados[nombre] = ataques
+    // la banda: suena hasta el colchon, se va en ese compas, no suena en el colchon y vuelve en el "1"
+    const bandaAntes = max(t0 + 500, c.inicio - 50, 2)
+    assert.ok(bandaAntes > 0.02, `${nombre}: la banda antes (${bandaAntes})`)
+    assert.ok(max(c.inicio + 2100, hasta - 50, 2) < bandaAntes * 0.05, `${nombre}: la banda sonó en el colchón (${max(c.inicio + 2100, hasta - 50, 2)})`)
+    assert.ok(max(c.inicio + 900, c.inicio + 1100, 2) < bandaAntes * 0.75, `${nombre}: la banda no se estaba yendo a mitad del compás`)
+    assert.ok(max(hasta + 100, hasta + 2000, 2) > bandaAntes * 0.8, `${nombre}: la banda no volvió`)
+    // el pad: no antes; en el colchon si (grave, a la derecha); despues de volver se va enseguida
+    const padAntes = max(t0 + 500, c.inicio - 50, 3)
+    const pad = max(c.inicio + 4000, hasta - 50, 3)
+    assert.ok(pad > 0.05 && pad > 10 * padAntes, `${nombre}: el pad (${pad.toFixed(3)}; antes ${padAntes.toFixed(3)})`)
+    assert.ok(max(hasta + 1800, hasta + 2500, 3) < pad * 0.1, `${nombre}: el pad no se fue al volver`)
+  }
+  if (process.env.E2E_VERBOSE) console.log('colchón, golpes (ms contra la hora pedida):', JSON.stringify(resultados, (_k, v) => (typeof v === 'number' ? Math.round(v * 10) / 10 : v)))
+  // cada golpe a tiempo en los dos (el audio falso de Chromium a veces se corre unos ms de golpe: tolerancia de 20)
+  for (const [nombre, ataques] of Object.entries(resultados)) {
+    ataques.forEach((a, i) => assert.ok(Math.abs(a) < 20, `${nombre}: golpe ${i} corrido ${a.toFixed(1)} ms`))
+  }
+  const juntos = resultados.compu.map((a, i) => Math.abs(a - resultados.celular[i]))
+  assert.ok(Math.max(...juntos) < 12, `compu y celular a destiempo: ${Math.max(...juntos).toFixed(1)} ms`)
+  assert.deepEqual(errores, [])
+})
+
+test('colchón de la lista con audio real: Empezar suena en todos (click a la izquierda, pad a la derecha) y al dar play a la canción acompaña la cuenta y se va', { timeout: 4 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-colchon-lista-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  assert.equal((await fetch(`${base}/pad/7.wav`)).status, 200) // el pad de Sol, ya hecho
+
+  // la cancion que sigue: solo el click (120 BPM desde 0,5 s)
+  const z = new AdmZip()
+  z.addFile('Click.wav', wav16(generarClick(120, 4, 20), SR))
+  const zip = path.join(tmp, 'Siguiente.zip')
+  z.writeZip(zip)
+  const sock = (await import('socket.io-client')).io(base, { auth: { origen: 'compu', token: 'e2e' } })
+  t.after(() => void sock.close())
+  await new Promise<void>((r) => sock.once('connect', () => r()))
+  const ack = <T,>(ev: string, payload: unknown): Promise<T> => new Promise((r) => sock.emit(ev, payload, r))
+  const colchon = await ack<{ ok: boolean; id: string }>('colchon:crear', { ajustes: { tonalidad: 'G', bpm: 90, compas: 4, click: true } })
+  assert.equal(colchon.ok, true)
+  await ack('project:load-from-zip', { filePath: zip })
+  const cancion = server.state.getActiveTab()!.proyecto
+  cancion.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 10 }, (_, k) => 500 + 2000 * k), clickPistaId: cancion.pistas[0].id, acentoClaro: true }
+  cancion.cuenta = 1
+  const lista = await ack<{ ok: boolean; id: string }>('listas:crear', { nombre: 'Culto', proyectos: [colchon.id, cancion.id] })
+  assert.equal((await ack<{ ok: boolean }>('listas:usar', { id: lista.id })).ok, true)
+
+  type Cmd = { accion: string; executeAtServerTime: number; playback: { cuenta?: { golpes: { t: number; n: number }[] } } }
+  const cmds: Cmd[] = []
+  const emitir = server.io.emit.bind(server.io)
+  server.io.emit = ((ev: string, ...args: unknown[]) => {
+    if (ev === 'playback:scheduled') cmds.push(args[0] as Cmd)
+    return emitir(ev, ...args)
+  }) as typeof server.io.emit
+
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    localStorage.setItem('multitrack:sonido-compu', 'true')
+    ;(globalThis as unknown as { electronAPI: unknown }).electronAPI = { isElectron: true, compuToken: 'e2e', pickZipFile: async () => null, getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }) }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(`${base}/?debug`)
+  const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
+  ctxCel.setDefaultTimeout(15000)
+  const cel = await ctxCel.newPage()
+  cel.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
+  await cel.goto(`${base}/?debug`)
+  await cel.getByRole('button', { name: /Tocá para empezar/ }).click()
+
+  // arriba, el colchon: en la compu su pantalla (tono, BPM) y en el celular la suya, con el pad y el click en "Mi mezcla"
+  await compu.locator('.pantalla-colchon').waitFor()
+  assert.match((await compu.locator('.colchon-grande').textContent())!, /G.*90 BPM · 4\/4/)
+  await cel.locator('.m-vista-colchon').waitFor()
+  await vistaCelular(cel, 'Mi mezcla')
+  await cel.getByRole('button', { name: 'Mute de Click en este celular' }).waitFor()
+  await cel.getByRole('button', { name: 'Mute de Pad en este celular' }).waitFor()
+  await vistaCelular(cel, 'Canción')
+
+  const dispositivos = [
+    { nombre: 'compu', p: compu },
+    { nombre: 'celular', p: cel }
+  ]
+  for (const { p: pg } of dispositivos) {
+    await pg.waitForFunction(() => !!(globalThis as unknown as { __mt?: { engineRef: { current: unknown } } }).__mt?.engineRef.current)
+    await pg.evaluate(async () => {
+      const g = globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode } } }; __muestras: number[][] }
+      const engine = g.__mt.engineRef.current
+      const codigo = `registerProcessor('grabador-colchon-lista', class extends AudioWorkletProcessor {
+        constructor() { super(); this.lote = []; this.a = 0; this.b = 0; this.k = 1 - Math.exp(-2 * Math.PI * 250 / sampleRate) }
+        process(inputs) {
+          const [L, R] = inputs[0] || []
+          if (L && R) {
+            let pl = 0, pr = 0, grave = 0
+            for (let i = 0; i < L.length; i++) {
+              pl = Math.max(pl, Math.abs(L[i])); pr = Math.max(pr, Math.abs(R[i]))
+              this.a += this.k * (R[i] - this.a); this.b += this.k * (this.a - this.b)
+              grave = Math.max(grave, Math.abs(this.b))
+            }
+            this.lote.push([currentTime, pl, pr, grave])
+          }
+          if (this.lote.length >= 8) { this.port.postMessage(this.lote); this.lote = [] }
+          return true
+        }
+      })`
+      await engine.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' })))
+      const nodo = new AudioWorkletNode(engine.ctx, 'grabador-colchon-lista', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' })
+      g.__muestras = []
+      nodo.port.onmessage = (e: MessageEvent<number[][]>) => {
+        const ts = engine.ctx.getOutputTimestamp()
+        const base = performance.timeOrigin + (ts.performanceTime ?? 0) - (ts.contextTime ?? 0) * 1000
+        for (const row of e.data) g.__muestras.push([base + row[0] * 1000, row[1], row[2], row[3]])
+      }
+      engine.masterGain.connect(nodo)
+    })
+  }
+  await esperar(1500)
+
+  await captura(compu, 'colchon-lista-compu-parado')
+  await compu.getByRole('button', { name: 'Empezar' }).click()
+  await compu.getByRole('button', { name: 'Terminar' }).waitFor()
+  const c = server.state.colchon!
+  assert.ok(c && !c.desdeCancion && c.pad === 'G')
+  await cel.locator('.m-vista-colchon .pulso-colchon').waitFor()
+  await esperar(700)
+  await captura(compu, 'colchon-lista-compu-sonando')
+  await captura(cel, 'colchon-lista-celular-sonando')
+  await esperar(c.inicio + 6000 - Date.now())
+  // a la canción que sigue (el colchón sigue sonando) y play: 1 compás de cuenta
+  await compu.keyboard.press('PageDown')
+  await compu.getByRole('button', { name: 'Reproducir' }).waitFor()
+  await compu.locator('.banner-colchon').waitFor()
+  await captura(compu, 'colchon-lista-compu-otra-cancion')
+  await compu.getByRole('button', { name: 'Reproducir' }).click()
+  await esperar(500)
+  const play = cmds.filter((x) => x.accion === 'play').pop()!
+  const golpesCuenta = play.playback.cuenta!.golpes
+  const hasta = server.state.colchon!.hasta!
+  assert.equal(hasta, golpesCuenta[0].t, 'el click del colchón para donde empieza la cuenta')
+  await esperar(play.executeAtServerTime + 3000 - Date.now())
+  await compu.getByRole('button', { name: 'Stop' }).click()
+
+  const pulso = 60000 / 90
+  for (const { nombre, p: pg } of dispositivos) {
+    const m = (await pg.evaluate(() => (globalThis as unknown as { __muestras: number[][] }).__muestras)) as number[][]
+    const tramo = (a: number, b: number): number[][] => m.filter(([w]) => w >= a && w < b)
+    const max = (a: number, b: number, i: number): number => Math.max(0, ...tramo(a, b).map((x) => x[i]))
+    // el click del colchon, a la izquierda y a tiempo; nada a la derecha salvo el pad (grave)
+    for (let tg = c.inicio + pulso; tg < hasta - 100; tg += pulso) {
+      const cerca = tramo(tg - 60, tg + 60)
+      const pico = Math.max(0, ...cerca.map((x) => x[1]))
+      assert.ok(pico > 0.05, `${nombre}: falta el golpe del colchón de ${Math.round(tg - c.inicio)} ms (${pico.toFixed(3)})`)
+      const ataque = cerca.find((x) => x[1] >= pico * 0.5)![0] - tg
+      assert.ok(Math.abs(ataque) < 20, `${nombre}: golpe del colchón corrido ${ataque.toFixed(1)} ms`)
+    }
+    const pad = max(c.inicio + 3500, hasta - 50, 3)
+    assert.ok(pad > 0.05, `${nombre}: el pad (${pad.toFixed(3)})`)
+    // desde la cuenta, solo los golpes de la cuenta (otro tempo): los del colchon ya no
+    for (let tg = hasta + pulso; tg < play.executeAtServerTime - 60; tg += pulso) {
+      if (golpesCuenta.some((g) => Math.abs(g.t - tg) < 120)) continue
+      assert.ok(max(tg - 30, tg + 30, 1) < 0.02, `${nombre}: sonó un golpe del colchón durante la cuenta (${Math.round(tg - hasta)} ms)`)
+    }
+    for (const g of golpesCuenta) assert.ok(max(g.t - 40, g.t + 60, 1) > 0.05, `${nombre}: falta el golpe ${g.n} de la cuenta`)
+    // el pad acompaña la cuenta, bajando, y se va al entrar la cancion
+    assert.ok(max(hasta + 200, hasta + 600, 3) > pad * 0.4, `${nombre}: el pad se cortó de golpe`)
+    assert.ok(max(play.executeAtServerTime + 1700, play.executeAtServerTime + 2500, 3) < pad * 0.1, `${nombre}: el pad no se fue`)
+  }
+  await cel.locator('.m-colchon').waitFor({ state: 'detached' })
+  assert.equal(server.state.colchon, null)
+  assert.deepEqual(errores, [])
 })

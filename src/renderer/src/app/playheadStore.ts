@@ -56,3 +56,26 @@ export function useGolpeCuenta(): number {
     () => golpe
   )
 }
+
+// colchon: compas y golpe que suenan ahora (compas * 100 + golpe; 0 = no hay colchon sonando)
+let golpeColchon = 0
+const oyentesColchon = new Set<() => void>()
+
+export function setGolpeColchon(n: number): void {
+  if (n === golpeColchon) return
+  golpeColchon = n
+  for (const o of oyentesColchon) o()
+}
+
+/** Compas y golpe del colchon que suena ("compás 12, golpe 3"); null si no hay colchon sonando. */
+export function useGolpeColchon(): { compas: number; golpe: number } | null {
+  const n = useSyncExternalStore(
+    (cb) => {
+      oyentesColchon.add(cb)
+      return () => oyentesColchon.delete(cb)
+    },
+    () => golpeColchon,
+    () => golpeColchon
+  )
+  return n > 0 ? { compas: Math.floor(n / 100), golpe: n % 100 } : null
+}

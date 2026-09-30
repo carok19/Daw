@@ -1,8 +1,9 @@
-import type { AnuncioSalto, ComandoProgramado, CuentaProgramada, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import type { AnuncioSalto, ColchonActivo, ComandoProgramado, CuentaProgramada, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 import { WAV_HEADER_FETCH_BYTES, WavHeaderError, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from '@shared/wav'
 import { posicionActualMs } from '@shared/playback'
-import { codificarMezcla, mezclaEfectiva } from '@shared/mezcla'
+import { clavePista, codificarMezcla, mezclaEfectiva } from '@shared/mezcla'
 import { LARGO_SONIDO_CUENTA_SEC } from '@shared/cuenta'
+import { ENTRADA_PAD_SOLO_MS, NOTAS_PAD, PAN_CLICK_COLCHON, PAN_PAD, golpesDeColchon } from '@shared/colchon'
 import type { MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
@@ -116,6 +117,33 @@ const RAMPA_CORRECCION_SEC = 0.15
 const HISTORIA_SEC = 3
 const VENTANA_DIAG_MS = 20000
 const ID_MEZCLA = 'mezcla'
+/** Colchon: golpes del click programados por delante (ms) */
+const HORIZONTE_COLCHON_MS = 2000
+/** Colchon: cambio de nota del pad (y el pad de un colchon que reemplaza a otro), en esto */
+const CRUCE_PAD_SEC = 1.5
+
+/**
+ * Un colchon sonando en este dispositivo (ver shared/colchon.ts): sus golpes
+ * de click ya programados y su pad. Puede haber dos a la vez un momento (el
+ * que se va y el que entra).
+ */
+interface VozColchon {
+  c: ColchonActivo
+  offset: () => number
+  /** click: golpes -> env (entrada) -> vol -> el canal de la cuenta (volumen y lado del click en esta mezcla) */
+  clickEnv: GainNode
+  clickVol: GainNode
+  golpes: { source: AudioBufferSourceNode; t: number }[]
+  /** hora del servidor hasta la que ya se programaron golpes */
+  programadoHasta: number
+  /** pad: fuente en loop -> cruce (cambio de nota) -> env (entrada y salida) -> vol -> lado de la banda */
+  padEnv: GainNode
+  padVol: GainNode
+  pad: { nota: string; fuente: AudioBufferSourceNode | null; cruce: GainNode } | null
+  /** termino (o la reemplazo otra): hora del servidor y en cuanto se apaga el pad */
+  fin: { hasta: number; salidaMs: number } | null
+  limpieza: ReturnType<typeof setTimeout> | null
+}
 
 class ErrorFatal extends Error {}
 
@@ -225,6 +253,11 @@ export class StreamingEngine implements PlaybackEngine {
   private anuncioGain: GainNode
   private anuncioPanner: StereoPannerNode
   private vozAnuncio: { id: string; buffer: AudioBuffer | null; fuente: AudioBufferSourceNode | null; callada: Canal | null } | null = null
+  // colchon (pad y click sin la banda): todo el audio de la cancion pasa por cancionGain, que el colchon apaga
+  private cancionGain: GainNode
+  private padPanner: StereoPannerNode
+  private vocesColchon: VozColchon[] = []
+  private buffersPad = new Map<string, Promise<AudioBuffer | null>>()
 
   constructor(readonly modo: ModoMotor = 'pistas') {
     this.ctx = new AudioContext()
@@ -246,6 +279,11 @@ export class StreamingEngine implements PlaybackEngine {
     this.anuncioPanner = this.ctx.createStereoPanner()
     this.anuncioGain.connect(this.anuncioPanner)
     this.anuncioPanner.connect(this.masterGain)
+    this.cancionGain = this.ctx.createGain()
+    this.cancionGain.connect(this.masterGain)
+    this.padPanner = this.ctx.createStereoPanner()
+    this.padPanner.pan.value = PAN_PAD
+    this.padPanner.connect(this.masterGain)
     this.intervalo = setInterval(() => this.tick(), INTERVALO_TICK_MS)
   }
 
@@ -266,6 +304,7 @@ export class StreamingEngine implements PlaybackEngine {
 
   setMezclaPersonal(mezcla: MezclaPersonal): void {
     this.mezclaPersonal = mezcla
+    this.volumenesColchon()
     if (this.ultimoProyecto) this.aplicarMezcla(this.ultimoProyecto)
     if (this.modo === 'mezcla' && this.precarga) this.reiniciarPrecarga()
   }
@@ -292,9 +331,9 @@ export class StreamingEngine implements PlaybackEngine {
       callarNode = this.ctx.createGain()
       gainNode.connect(callarNode)
       callarNode.connect(pannerNode)
-      pannerNode.connect(this.masterGain)
+      pannerNode.connect(this.cancionGain)
     } else {
-      gainNode.connect(this.masterGain)
+      gainNode.connect(this.cancionGain)
     }
     return {
       id,
@@ -333,7 +372,13 @@ export class StreamingEngine implements PlaybackEngine {
       const pre = this.precarga?.proyectoId === proyecto.id && this.precarga.revision === revision ? this.precarga : null
       this.cancelarPrecarga()
 
-      const fuentes = this.modo === 'mezcla' ? [{ id: ID_MEZCLA, nombre: 'Mezcla', archivo: null as string | null }] : proyecto.pistas.map((p) => ({ id: p.id, nombre: p.nombre, archivo: p.archivo as string | null }))
+      // (un colchon de la lista no tiene pistas: no hay nada que bajar)
+      const fuentes =
+        proyecto.pistas.length === 0
+          ? []
+          : this.modo === 'mezcla'
+            ? [{ id: ID_MEZCLA, nombre: 'Mezcla', archivo: null as string | null }]
+            : proyecto.pistas.map((p) => ({ id: p.id, nombre: p.nombre, archivo: p.archivo as string | null }))
       for (const f of fuentes) {
         const canal = this.crearCanal(f.id, f.nombre, f.archivo)
         const previa = pre?.canales.get(f.id)
@@ -366,7 +411,12 @@ export class StreamingEngine implements PlaybackEngine {
     const pre = this.precarga
     if (pre?.proyectoId === proyecto.id && pre.revision === revision && pre.indiceInicio === indiceInicio && pre.clave === clave) return
     this.cancelarPrecarga()
-    const fuentes = this.modo === 'mezcla' ? [{ id: ID_MEZCLA, archivo: null as string | null }] : proyecto.pistas.map((p) => ({ id: p.id, archivo: p.archivo as string | null }))
+    const fuentes =
+      proyecto.pistas.length === 0
+        ? []
+        : this.modo === 'mezcla'
+          ? [{ id: ID_MEZCLA, archivo: null as string | null }]
+          : proyecto.pistas.map((p) => ({ id: p.id, archivo: p.archivo as string | null }))
     this.precarga = {
       proyectoId: proyecto.id,
       revision,
@@ -769,6 +819,8 @@ export class StreamingEngine implements PlaybackEngine {
 
   dispose(): void {
     clearInterval(this.intervalo)
+    for (const v of this.vocesColchon) this.limpiarVoz(v)
+    this.vocesColchon = []
     if (this.timerMezcla) clearTimeout(this.timerMezcla)
     this.cancelarPrecarga()
     this.detener()
@@ -897,8 +949,14 @@ export class StreamingEngine implements PlaybackEngine {
     const clickId = proyecto.tempo?.clickPistaId ?? null
     const c = clickId ? this.mezclaDe(proyecto).find((x) => x.pistaId === clickId) : undefined
     const t = this.ctx.currentTime
-    this.cuentaGain.gain.setTargetAtTime(clickId ? (c?.ganancia ?? 0) : 0.5, t, 0.015)
-    this.cuentaPanner.pan.setTargetAtTime(c?.pan ?? 0, t, 0.015)
+    if (proyecto.colchon) {
+      // colchon de la lista (sin pistas): el click del lado del click, con el "Click" de "Mi mezcla"
+      this.cuentaGain.gain.setTargetAtTime(this.factorPersonal('Click'), t, 0.015)
+      this.cuentaPanner.pan.setTargetAtTime(PAN_CLICK_COLCHON, t, 0.015)
+    } else {
+      this.cuentaGain.gain.setTargetAtTime(clickId ? (c?.ganancia ?? 0) : 0.5, t, 0.015)
+      this.cuentaPanner.pan.setTargetAtTime(c?.pan ?? 0, t, 0.015)
+    }
     const de = `${proyecto.id}:${proyecto.revision ?? 0}:${clickId ?? ''}`
     if (de === this.sonidoCuentaDe) return
     this.sonidoCuentaDe = de
@@ -969,6 +1027,302 @@ export class StreamingEngine implements PlaybackEngine {
       } else quedan.push(g)
     }
     this.golpesCuenta = quedan
+  }
+
+  // ---- colchon: pad y click sin la banda (ver shared/colchon.ts) ----
+
+  /** "Mi mezcla" de este dispositivo para una fuente del colchon ("Click", "Pad"): 0 a 2. */
+  private factorPersonal(nombre: string): number {
+    const a = this.mezclaPersonal[clavePista(nombre)]
+    return !a ? 1 : a.mute ? 0 : clamp(a.ganancia, 0, 2)
+  }
+
+  /** Instante del AudioContext que se escucha a la hora `t` del servidor. */
+  private ctxDeServidor(t: number, offsetMs: number): number {
+    return this.ctxEscuchadoAhora() + (t - offsetMs - Date.now()) / 1000
+  }
+
+  /** Hora del servidor que se escucha en el instante `t` del AudioContext. */
+  private servidorDeCtx(t: number, offsetMs: number): number {
+    return Date.now() + offsetMs + (t - this.ctxEscuchadoAhora()) * 1000
+  }
+
+  /**
+   * El colchon que suena (null = ninguno). Cada dispositivo programa el click
+   * y el pad a la hora de la compu (`offsetMs` = reloj del servidor - el de
+   * este), asi suenan juntos en todos.
+   */
+  setColchon(c: ColchonActivo | null, offsetMs: () => number): void {
+    const ahoraS = Date.now() + offsetMs()
+    for (const v of this.vocesColchon) {
+      if (v.c.id === c?.id || v.fin) continue
+      // se termino (o se cancelo antes de tiempo) sin avisar el final: se va ya; si lo reemplaza otro, cuando entra el otro
+      if (c) this.terminarVoz(v, Math.max(ahoraS, c.empezo), CRUCE_PAD_SEC * 1000)
+      else this.terminarVoz(v, ahoraS + 30, 80)
+    }
+    if (!c) return
+    let v = this.vocesColchon.find((x) => x.c.id === c.id)
+    if (!v) {
+      const clickEnv = this.ctx.createGain()
+      const clickVol = this.ctx.createGain()
+      clickEnv.connect(clickVol)
+      clickVol.connect(this.cuentaGain)
+      const padEnv = this.ctx.createGain()
+      const padVol = this.ctx.createGain()
+      padEnv.gain.value = 0
+      padEnv.connect(padVol)
+      padVol.connect(this.padPanner)
+      v = { c, offset: offsetMs, clickEnv, clickVol, golpes: [], programadoHasta: -Infinity, padEnv, padVol, pad: null, fin: null, limpieza: null }
+      this.vocesColchon.push(v)
+    } else {
+      const antes = v.c
+      v.c = c
+      v.offset = offsetMs
+      // otro pulso (colchon de la lista con otro BPM): desde su nuevo "1"
+      if (antes.inicio !== c.inicio || antes.compasMs !== c.compasMs || antes.pulsos !== c.pulsos) {
+        this.cortarGolpes(v, this.ctxDeServidor(c.inicio, offsetMs()))
+        v.programadoHasta = Math.min(v.programadoHasta, c.inicio)
+      }
+      if (!c.click && antes.click) this.cortarGolpes(v, this.ctx.currentTime)
+      if (c.click && !antes.click) v.programadoHasta = Math.min(v.programadoHasta, ahoraS)
+    }
+    if (c.hasta !== null && (!v.fin || v.fin.hasta !== c.hasta)) this.terminarVoz(v, c.hasta, c.salidaPadMs)
+    else this.programarEnvolventes(v)
+    this.cambiarPad(v, c.pad)
+    this.volumenesColchon()
+    this.programarGolpes(v)
+  }
+
+  /** Volumen del click y del pad en este dispositivo (los del colchon y los de "Mi mezcla"). */
+  private volumenesColchon(): void {
+    const t = this.ctx.currentTime
+    for (const v of this.vocesColchon) {
+      v.clickVol.gain.setTargetAtTime((v.c.volumenClick / 100) ** 2, t, 0.02)
+      v.padVol.gain.setTargetAtTime((v.c.volumenPad / 100) ** 2 * this.factorPersonal('Pad'), t, 0.05)
+    }
+  }
+
+  /**
+   * Programa una envolvente lineal por tramos (instantes del AudioContext)
+   * desde ahora: lo que ya paso se saltea y se arranca del valor que
+   * corresponde a este instante (asi sirve para rehacerla cuando algo cambia).
+   */
+  private envolvente(param: AudioParam, puntos: [number, number][]): void {
+    const ahora = this.ctx.currentTime
+    const valorEn = (t: number): number => {
+      if (t <= puntos[0][0]) return puntos[0][1]
+      for (let i = 1; i < puntos.length; i++) {
+        const [t1, v1] = puntos[i]
+        if (t <= t1) {
+          const [t0, v0] = puntos[i - 1]
+          return t1 - t0 <= 1e-6 ? v1 : v0 + ((v1 - v0) * (t - t0)) / (t1 - t0)
+        }
+      }
+      return puntos[puntos.length - 1][1]
+    }
+    param.cancelScheduledValues(ahora)
+    param.setValueAtTime(valorEn(ahora), ahora)
+    for (const [t, v] of puntos) if (t > ahora) param.linearRampToValueAtTime(v, t)
+  }
+
+  /** Entradas y salidas: la banda que se apaga (colchon dentro de una cancion), el click que entra y el pad. */
+  private programarEnvolventes(v: VozColchon): void {
+    const off = v.offset()
+    const c = v.c
+    const tI = this.ctxDeServidor(c.empezo, off)
+    const compas = c.compasMs / 1000
+    const tFin = v.fin ? this.ctxDeServidor(v.fin.hasta, off) : Infinity
+    const salida = v.fin ? v.fin.salidaMs / 1000 : 0
+    // hasta el final, la curva de entrada; despues, al valor final
+    const cortar = (puntos: [number, number][], alFinal: [number, number][]): [number, number][] => {
+      if (!v.fin) return puntos
+      const antes = puntos.filter(([t]) => t < tFin)
+      let valor = puntos[0][1]
+      for (let i = 0; i < puntos.length; i++) {
+        if (puntos[i][0] <= tFin) valor = puntos[i][1]
+        else {
+          const [t0, v0] = puntos[i - 1] ?? puntos[i]
+          valor = v0 + ((puntos[i][1] - v0) * (tFin - t0)) / Math.max(1e-6, puntos[i][0] - t0)
+          break
+        }
+      }
+      return [...antes, [tFin, valor], ...alFinal]
+    }
+    // click: dentro de una cancion entra durante el compas en que se va la banda (el mismo pulso: se funden)
+    this.envolvente(v.clickEnv.gain, c.desdeCancion ? [[tI, 0], [tI + compas, 1]] : [[tI, 1]])
+    const entradaPad = c.desdeCancion ? 2 * compas : ENTRADA_PAD_SOLO_MS / 1000
+    this.envolvente(v.padEnv.gain, cortar([[tI, 0], [tI + entradaPad, 1]], [[tFin + salida, 0]]))
+    this.programarCancion()
+  }
+
+  /** La banda: se apaga en el primer compas del colchon de una cancion y vuelve (de golpe, en el "1") al terminar. */
+  private programarCancion(): void {
+    const v = [...this.vocesColchon].reverse().find((x) => x.c.desdeCancion)
+    const g = this.cancionGain.gain
+    const ahora = this.ctx.currentTime
+    if (!v) {
+      g.cancelScheduledValues(ahora)
+      g.setValueAtTime(g.value, ahora)
+      g.linearRampToValueAtTime(1, ahora + 0.01)
+      return
+    }
+    const off = v.offset()
+    const tI = this.ctxDeServidor(v.c.empezo, off)
+    const tF = tI + v.c.compasMs / 1000
+    const puntos: [number, number][] = [
+      [tI, 1],
+      [tF, 0]
+    ]
+    if (v.fin) {
+      const tFin = this.ctxDeServidor(v.fin.hasta, off)
+      if (tFin <= tI + 0.001) {
+        // se cancelo antes de empezar: la banda no se va
+        this.envolvente(g, [[tFin, 1]])
+        return
+      }
+      // vuelve al terminar (volver a la cancion siempre es despues de ese primer compas; si se termina
+      // a mitad de ese compas, la cancion igual se pausa al final, en silencio)
+      const tV = Math.max(tFin, tF)
+      const antes = puntos.filter(([t]) => t < tV - 0.004)
+      const valor = tV - 0.004 <= tI ? 1 : tV - 0.004 >= tF ? 0 : 1 - (tV - 0.004 - tI) / (tF - tI)
+      puntos.splice(0, puntos.length, ...antes, [tV - 0.004, valor], [tV, 1])
+    }
+    this.envolvente(g, puntos)
+  }
+
+  /** El colchon termina a la hora `hasta` del servidor: el click para ahi y el pad se apaga en `salidaMs`. */
+  private terminarVoz(v: VozColchon, hasta: number, salidaMs: number): void {
+    v.fin = { hasta, salidaMs }
+    const off = v.offset()
+    const tFin = this.ctxDeServidor(hasta, off)
+    this.cortarGolpes(v, tFin)
+    this.programarEnvolventes(v)
+    const finPad = Math.max(this.ctx.currentTime, tFin) + salidaMs / 1000 + 0.05
+    try {
+      v.pad?.fuente?.stop(finPad)
+    } catch {
+      // ya estaba detenida
+    }
+    if (v.limpieza) clearTimeout(v.limpieza)
+    v.limpieza = setTimeout(() => this.limpiarVoz(v), Math.max(0, (finPad - this.ctx.currentTime) * 1000) + 300)
+  }
+
+  private limpiarVoz(v: VozColchon): void {
+    if (v.limpieza) clearTimeout(v.limpieza)
+    v.limpieza = null
+    this.cortarGolpes(v, 0)
+    try {
+      v.pad?.fuente?.stop()
+    } catch {
+      // ya estaba detenida
+    }
+    for (const n of [v.clickEnv, v.clickVol, v.padEnv, v.padVol, v.pad?.cruce]) n?.disconnect()
+    this.vocesColchon = this.vocesColchon.filter((x) => x !== v)
+    this.programarCancion()
+  }
+
+  /** Programa los golpes del click que faltan hasta HORIZONTE_COLCHON_MS por delante. */
+  private programarGolpes(v: VozColchon): void {
+    if (!v.c.click) return
+    const off = v.offset()
+    const ahoraS = Date.now() + off
+    const hasta = ahoraS + HORIZONTE_COLCHON_MS
+    const desde = Math.max(v.programadoHasta, ahoraS + 10)
+    if (desde >= hasta) return
+    const c = v.fin ? { ...v.c, hasta: Math.min(v.fin.hasta, v.c.hasta ?? Infinity) } : v.c
+    const sonido = this.sonidoCuenta ?? this.clickSintetico()
+    for (const g of golpesDeColchon(c, desde, hasta)) {
+      const t = this.ctxDeServidor(g.t, off)
+      if (t < this.ctx.currentTime + 0.005) continue
+      const source = this.ctx.createBufferSource()
+      source.buffer = sonido
+      source.connect(v.clickEnv)
+      source.start(t, g.n === 1 ? 0 : LARGO_SONIDO_CUENTA_SEC, LARGO_SONIDO_CUENTA_SEC)
+      const golpe = { source, t }
+      source.onended = () => {
+        source.disconnect()
+        v.golpes = v.golpes.filter((x) => x !== golpe)
+      }
+      v.golpes.push(golpe)
+    }
+    v.programadoHasta = hasta
+  }
+
+  /** Saca los golpes del colchon que iban a sonar desde `t` (AudioContext; 0 = todos). */
+  private cortarGolpes(v: VozColchon, t: number): void {
+    const quedan: VozColchon['golpes'] = []
+    for (const g of v.golpes) {
+      if (g.t >= t - 0.001) {
+        g.source.onended = null
+        try {
+          g.source.stop()
+        } catch {
+          // ya estaba detenido
+        }
+        g.source.disconnect()
+      } else quedan.push(g)
+    }
+    v.golpes = quedan
+  }
+
+  /** El pad del colchon: arranca (o cambia de nota, cruzandose) cuando esta bajado. */
+  private cambiarPad(v: VozColchon, nota: string | null): void {
+    if ((v.pad?.nota ?? null) === nota) return
+    const ahora = this.ctx.currentTime
+    const viejo = v.pad
+    if (viejo) {
+      viejo.cruce.gain.cancelScheduledValues(ahora)
+      viejo.cruce.gain.setValueAtTime(viejo.cruce.gain.value, ahora)
+      viejo.cruce.gain.linearRampToValueAtTime(0, ahora + CRUCE_PAD_SEC)
+      try {
+        viejo.fuente?.stop(ahora + CRUCE_PAD_SEC + 0.05)
+      } catch {
+        // ya estaba detenida
+      }
+      setTimeout(() => viejo.cruce.disconnect(), (CRUCE_PAD_SEC + 0.3) * 1000)
+    }
+    v.pad = null
+    const i = nota ? NOTAS_PAD.indexOf(nota as (typeof NOTAS_PAD)[number]) : -1
+    if (i === -1 || v.fin) return
+    const cruce = this.ctx.createGain()
+    cruce.connect(v.padEnv)
+    const pad: NonNullable<VozColchon['pad']> = { nota: nota!, fuente: null, cruce }
+    v.pad = pad
+    void this.bufferDePad(i).then((buffer) => {
+      if (!buffer || v.pad !== pad || v.fin) return
+      const off = v.offset()
+      const tInicio = this.ctxDeServidor(v.c.empezo, off)
+      const t = Math.max(tInicio, this.ctx.currentTime + 0.02)
+      // todos en el mismo punto del loop (el pad "respira" igual en la compu y en los celulares)
+      const enLoop = (((this.servidorDeCtx(t, off) - v.c.empezo) / 1000) % buffer.duration + buffer.duration) % buffer.duration
+      const fuente = this.ctx.createBufferSource()
+      fuente.buffer = buffer
+      fuente.loop = true
+      fuente.connect(cruce)
+      // cambio de nota con el pad ya sonando (o llego tarde): entra despacio; si no, con la envolvente del colchon
+      if (viejo || t > tInicio + 0.05) {
+        cruce.gain.setValueAtTime(0, t)
+        cruce.gain.linearRampToValueAtTime(1, t + CRUCE_PAD_SEC)
+      }
+      fuente.start(t, enLoop)
+      pad.fuente = fuente
+    })
+  }
+
+  private bufferDePad(indice: number): Promise<AudioBuffer | null> {
+    const clave = String(indice)
+    let p = this.buffersPad.get(clave)
+    if (!p) {
+      p = fetch(`/pad/${indice}.wav`)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((bytes) => this.ctx.decodeAudioData(bytes))
+        .catch(() => {
+          this.buffersPad.delete(clave) // se vuelve a intentar la proxima vez
+          return null
+        })
+      this.buffersPad.set(clave, p)
+    }
+    return p
   }
 
   // ---- ventana / prebuffer ----
@@ -1052,6 +1406,7 @@ export class StreamingEngine implements PlaybackEngine {
         this.programarVozAnuncio()
       }
     }
+    for (const v of this.vocesColchon) this.programarGolpes(v)
     this.lanzarFetchsPendientes()
   }
 

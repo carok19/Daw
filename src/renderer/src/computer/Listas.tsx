@@ -17,12 +17,14 @@ import {
   Save,
   Search,
   Trash2,
+  Waves,
   X
 } from 'lucide-react'
 import type { DatosListas, ListaResumen, ProyectoResumen } from '@shared/types'
 import type { AppController } from '../app/useAppController'
 import { useConfirmar } from '../ui/Confirmar'
 import { formatDuracion } from '../format'
+import { NuevoColchon } from './Colchon'
 
 /**
  * Listas por dia: cada lista es el orden de canciones de un dia ("Sabado
@@ -539,6 +541,7 @@ export function ListaEditor({ controller, listaId, onListo, onUsada }: PropsEdit
   const [error, setError] = useState<string | null>(null)
   const [arrastrando, setArrastrando] = useState<number | null>(null)
   const [destino, setDestino] = useState<number | null>(null)
+  const [nuevoColchon, setNuevoColchon] = useState(false)
   const timerNombre = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const lista = datos?.listas.find((l) => l.id === listaId) ?? null
@@ -737,7 +740,7 @@ export function ListaEditor({ controller, listaId, onListo, onUsada }: PropsEdit
                     <div className="lista-principal">
                       <span className="lista-titulo">{p.nombre}</span>
                       <span className="lista-meta num">
-                        {formatDuracion(p.duracionTotalMs)}
+                        {p.colchon ? 'Colchón (pad y click)' : formatDuracion(p.duracionTotalMs)}
                         {p.bpm ? ` · ${Math.round(p.bpm)} BPM` : ''}
                         {p.categoria ? ` · ${p.categoria.split('/').join(' › ')}` : ''}
                         {ya ? ` · ya está en la lista (${proyectos.indexOf(p.id) + 1})` : ''}
@@ -762,9 +765,22 @@ export function ListaEditor({ controller, listaId, onListo, onUsada }: PropsEdit
         </section>
 
         <section className="lista-editor-lista" aria-label="Canciones de la lista">
-          <h3>
+          <h3 className="lista-editor-titulo-orden">
             La lista <span>· arrastrá para cambiar el orden</span>
+            <button className="btn-chico" onClick={() => setNuevoColchon(true)} title="Pad de ambiente y click, sin la banda (oración, ministración, entre canciones)">
+              <Waves size={14} /> Colchón
+            </button>
           </h3>
+          {nuevoColchon && (
+            <NuevoColchon
+              controller={controller}
+              onCerrar={() => setNuevoColchon(false)}
+              onCreado={(id) => {
+                setNuevoColchon(false)
+                cambiarProyectos([...(proyectos ?? []), id])
+              }}
+            />
+          )}
           {error && <p className="error-texto">{error}</p>}
           {cancionesLista.length === 0 ? (
             <p className="vacio">Todavía no tiene canciones: sumalas desde la biblioteca.</p>
@@ -796,7 +812,7 @@ export function ListaEditor({ controller, listaId, onListo, onUsada }: PropsEdit
                     <div className="lista-principal">
                       <span className="lista-titulo">{p.nombre}</span>
                       <span className="lista-meta num">
-                        {formatDuracion(p.duracionTotalMs)}
+                        {p.colchon ? 'Colchón (pad y click)' : formatDuracion(p.duracionTotalMs)}
                         {p.bpm ? ` · ${Math.round(p.bpm)} BPM` : ''}
                         {suena ? ' · sonando' : ''}
                       </span>
