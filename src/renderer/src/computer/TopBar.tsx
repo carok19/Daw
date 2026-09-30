@@ -100,7 +100,7 @@ export function TopBar(p: Props) {
               className={`setlist-tab ${activa ? 'activo' : ''} ${arrastrando === t.tabId ? 'arrastrando' : ''} ${
                 destino === t.tabId && arrastrando !== t.tabId ? 'destino' : ''
               }`}
-              onClick={() => !activa && p.onSwitch(t.tabId)}
+              onClick={() => p.onSwitch(t.tabId)}
               title={`${t.nombre} — arrastrá para reordenar el setlist`}
               draggable
               onDragStart={(e) => {

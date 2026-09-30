@@ -224,6 +224,7 @@ export function seccionesDesdeFrases(
 ): SeccionDetectada[] {
   const cuenta = new Map<TipoSeccion, number>()
   const resultado: SeccionDetectada[] = []
+  const tipos: TipoSeccion[] = []
   for (const { seccion: s, finMs } of anunciosDesdeFrases(frases)) {
     let tiempo = finMs
     if (compasesMs && compasesMs.length) {
@@ -232,16 +233,22 @@ export function seccionesDesdeFrases(
       if (c !== null && c - finMs < 4000) tiempo = c
     }
     tiempo = Math.max(0, Math.min(duracionMs - 1, Math.round(tiempo)))
+    // dos anuncios que caen en el mismo compas ("Verso… verso", o uno corregido): vale el ultimo,
+    // y el de antes no cuenta para numerar (si no, el primer verso sale "Verso 2")
+    const previa = resultado[resultado.length - 1]
+    if (previa && Math.abs(previa.tiempoMs - tiempo) < 300) {
+      resultado.pop()
+      const t = tipos.pop()!
+      cuenta.set(t, (cuenta.get(t) ?? 1) - 1)
+    }
     const n = (cuenta.get(s.tipo) ?? 0) + 1
     cuenta.set(s.tipo, n)
     let nombre: string = s.tipo
     if (s.tipo === 'Verso') nombre = `Verso ${s.numero ?? n}`
     else if (s.numero) nombre = `${s.tipo} ${s.numero}`
     else if (n > 1 && s.tipo !== 'Final') nombre = `${s.tipo} ${n}`
-    // dos anuncios que caen en el mismo compas: vale el ultimo
-    const previa = resultado[resultado.length - 1]
-    if (previa && Math.abs(previa.tiempoMs - tiempo) < 300) resultado.pop()
     resultado.push({ nombre, tiempoMs: tiempo })
+    tipos.push(s.tipo)
   }
   return resultado
 }

@@ -195,7 +195,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         tabs={estado?.tabs ?? []}
         activeTabId={estado?.activeTabId ?? null}
         sonando={sonando}
-        onSwitch={(tabId) => void cambiarCancion(tabId)}
+        onSwitch={(tabId) => {
+          // tocar una cancion (tambien la que ya esta) desde las listas vuelve al escenario
+          setVista({ tipo: 'escenario' })
+          void cambiarCancion(tabId)
+        }}
         onClose={cerrarCancion}
         onReorder={controller.reorderTabs}
         onNueva={() => setVentana({ tipo: 'canciones' })}
@@ -331,6 +335,8 @@ export function ComputerApp({ controller }: { controller: AppController }) {
               onCancelarSalto={controller.cancelarSalto}
               onCreate={controller.createMarker}
               onRename={(id, nombre) => controller.updateMarker(id, { nombre })}
+              onTonalidad={(id, tonalidad) => controller.updateMarker(id, { tonalidad })}
+              proyecto={proyecto}
               onDelete={controller.deleteMarker}
               onDetectar={() => void detectarSecciones()}
               onDescargarModelo={controller.descargarModeloVoz}

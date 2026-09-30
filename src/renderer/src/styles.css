@@ -4331,6 +4331,58 @@ input[type='date'] {
 .m-faltan.ultimo small {
   color: var(--warn);
 }
+/* la cancion cambia de tono: "Pasa a E" (los ultimos 2 compases) y "Tono E" (al entrar) */
+.m-aviso-tono {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent-soft, var(--panel-2));
+  line-height: 1;
+  flex: none;
+}
+.m-aviso-tono b {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--accent);
+}
+.m-aviso-tono small {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-bottom: 2px;
+}
+.m-aviso-tono.viene {
+  animation: latido 0.9s ease-in-out infinite;
+}
+.chip-seccion-dato {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.seccion-tono {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  color: var(--accent);
+}
+.seccion-tono-elegir {
+  font-size: 12px;
+  max-width: 150px;
+  padding: 1px 4px;
+}
 .m-barra-faltan {
   font-weight: 600;
   color: var(--text-3);

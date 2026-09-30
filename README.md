@@ -260,7 +260,15 @@ cambian a propósito.
     - La canción **recuerda su tono** (también en su ficha). Tocar “→ B +2”
       vuelve al original al instante.
     - La tonalidad original se lee del nombre (“Digno - A”, “Oceans (Bb)”,
-      “… - Key of F#m”); si no está o está mal, se elige en el mismo botón.
+      “… - Key of F#m”, “Coritos-MSM-G-115.00bpm”); si no está o está mal,
+      se elige en el mismo botón.
+    - **Canciones que cambian de tono:** en la tarjeta de la sección, el
+      botón ♪ marca el tono desde ahí (“Coro final: E”); rige hasta otra
+      sección que diga otro. Se escribe en el tono original (con el tono
+      cambiado, se transpone igual). El pad del colchón usa el tono de la
+      sección donde se entra, la compu muestra “Tono E” y “Sigue: Coro final ·
+      en E”, y en los celulares aparece grande **“Pasa a E”** los últimos 2
+      compases antes del cambio y **“Tono E”** al entrar.
     - **Afinado:** las pistas quedan en la nota exacta (medido: menos de
       1 cent de error, del bajo a los agudos).
 10b. **Cambiar la velocidad** (hasta 20 % más lenta o más rápida, **sin
@@ -302,7 +310,7 @@ cambian a propósito.
     formas:
     - **Dentro de una canción** (botón de las ondas al lado de “repetir”, o
       **C**; en el celular, el mismo botón en la barra de abajo): en el próximo compás la banda se va (se apaga en ese compás) y
-      siguen el click, en el mismo pulso, y el pad en el tono de la canción.
+      siguen el click, en el mismo pulso, y el pad en el tono de la canción (el de la sección, si cambia de tono).
       Para volver, **tocar una sección** (en la compu o en el celular): la
       canción entra ahí en el “1” del próximo compás, sin cuenta (el click
       nunca paró). **▶** vuelve donde quedó; **Terminar** (o **C**) para el
@@ -410,6 +418,18 @@ Al importar (y en segundo plano, **nunca mientras suena una canción**):
    regulares). De los golpes salen el BPM, el compás (4/4, 3/4, 6/8…) y
    dónde cae cada “1” (el golpe acentuado). Se muestra como **90 BPM · 4/4**
    en el transporte, con rayitas de compás en la línea de tiempo.
+   - **Click que marca corcheas o semicorcheas** (golpes más suaves entre
+     los tiempos): se toma el tiempo de la negra, no el doble. Si el nombre
+     trae el BPM (“… - 125BPM”), ayuda a decidir.
+   - **Compás por compás:** cada “1” acentuado del click abre un compás, así
+     un 2/4 o un 3/4 suelto no corre los que siguen, y los cambios de tempo
+     (una parte lenta en una canción rápida, un popurrí) se siguen solos.
+     Sonando una sección con otro tempo, al lado se ve “68 BPM aquí” (en el
+     celular, “68 BPM”). La cuenta y el colchón usan el compás típico de ese
+     lugar (un 2/4 suelto no los apura).
+   - Las canciones que se analizaron con un detector anterior vuelven a
+     detectar el tempo solas al abrir la app (en segundo plano, sin repetir
+     la voz guía); sus secciones de la guía pasan al “1” de la grilla nueva.
 2. **Secciones desde los archivos**, si el zip las trae: marcadores de los
    WAV (cue/labl, los que exportan Ableton, Reaper, Logic…), un `.mid` con
    marcadores (usa su mapa de tempo) o un `.txt`/`.csv` con líneas
@@ -420,6 +440,9 @@ Al importar (y en segundo plano, **nunca mientras suena una canción**):
    compu sin internet). “Verso uno”, “Coro”, “Puente”, “Final”, “Intro”…
    (también en inglés) se convierten en secciones que arrancan en el “1” del
    compás siguiente al anuncio; repetidas quedan como *Coro 2*, *Coro 3*.
+   Las secciones **van apareciendo mientras se reconoce** (no hace falta
+   esperar al final), y con una compu de 4 núcleos o más se reconocen 2 o 3
+   frases a la vez.
 4. Nunca pisa secciones marcadas a mano. **Detectar** (panel de secciones)
    vuelve a analizar la canción y las reemplaza (pide confirmación).
 5. **Imán de compás** (el botón al lado del BPM, prendido por defecto):
@@ -429,8 +452,8 @@ Al importar (y en segundo plano, **nunca mientras suena una canción**):
 El reconocedor (~80 MB) viene en el instalador si se corrió `npm run
 modelos`; si no, el panel de secciones ofrece bajarlo **una sola vez** de
 Hugging Face (después funciona sin internet). Corre en un *Web Worker* con
-WebAssembly (`@huggingface/transformers` + ONNX Runtime), de a una frase y
-pausado mientras suena música.
+WebAssembly (`@huggingface/transformers` + ONNX Runtime), uno a tres a la
+vez según los núcleos, y pausado mientras suena música.
 
 ### Carpeta de canciones (biblioteca)
 

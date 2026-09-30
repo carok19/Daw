@@ -5,10 +5,23 @@ import type { Marcador, PedidoVoz, Proyecto, TempoProyecto } from '../../shared/
 import { projectDir } from '../projects'
 import { aplicarPaneoAutomatico } from '../../shared/mezcla'
 import { decodificarMono } from './decodificar'
-import { calcularTempo, detectarGolpes, pareceNombreDeClick, puntajeClick, PUNTAJE_MIN_CLICK, SR_ANALISIS } from './tempo'
+import { bpmDesdeNombre, calcularTempo, compasMasCercano, detectarGolpes, pareceNombreDeClick, puntajeClick, PUNTAJE_MIN_CLICK, SR_ANALISIS } from './tempo'
 import { detectarFrases, guardarFrases, pareceNombreDeGuia, SR_VOZ } from './guia'
 import { anunciosDesdeFrases, faseDesdeAnuncios, seccionesDesdeFrases } from './secciones'
 import { velocidadAplicada } from '../../shared/velocidad'
+
+/**
+ * Version del detector de tempo. Al mejorarlo se sube: las canciones
+ * analizadas con uno anterior vuelven a detectar el tempo solas (solo el
+ * tempo, sin repetir la voz guia), en segundo plano.
+ * 2: click que marca corcheas/semicorcheas, BPM del nombre, compases irregulares.
+ */
+export const VERSION_TEMPO = 2
+
+/** true si el tempo de la cancion salio de un detector anterior (se vuelve a detectar). */
+export function tempoDesactualizado(p: Proyecto): boolean {
+  return !!p.tempo?.clickPistaId && (p.tempo.version ?? 1) < VERSION_TEMPO
+}
 
 /** Acceso a un proyecto (abierto en el setlist o solo en disco) y como guardarlo/avisar. */
 export interface AccesoProyecto {
@@ -32,7 +45,7 @@ export interface HooksAnalisis {
  * decodifica con ffmpeg en otro proceso): la cancion se puede usar mientras.
  */
 export class Analizador {
-  private cola: { id: string; reemplazar: boolean }[] = []
+  private cola: { id: string; reemplazar: boolean; soloTempo?: boolean }[] = []
   private trabajando = false
   private detenido = false
 
@@ -51,6 +64,14 @@ export class Analizador {
     if (this.detenido || (!this.automatico && !reemplazar)) return
     if (this.cola.some((c) => c.id === proyectoId)) return
     this.cola.push({ id: proyectoId, reemplazar })
+    void this.procesar()
+  }
+
+  /** Vuelve a detectar solo el tempo (canciones analizadas con un detector anterior). */
+  revisarTempo(proyectoId: string): void {
+    if (this.detenido || !this.automatico) return
+    if (this.cola.some((c) => c.id === proyectoId)) return
+    this.cola.push({ id: proyectoId, reemplazar: false, soloTempo: true })
     void this.procesar()
   }
 
@@ -83,6 +104,10 @@ export class Analizador {
         if (this.detenido) break
         const sig = this.cola.shift()
         if (!sig) break
+        if (sig.soloTempo) {
+          await this.redetectarTempo(sig.id).catch((err) => console.error('[analisis] tempo', err))
+          continue
+        }
         await this.analizar(sig.id, sig.reemplazar).catch((err) => {
           const acceso = this.hooks.obtener(sig.id)
           if (acceso) {
@@ -151,6 +176,42 @@ export class Analizador {
     this.hooks.pedidosVoz(this.pedidos())
   }
 
+  /**
+   * Tempo de nuevo con el detector actual (sin tocar lo demas). Si la grilla
+   * cambio, las secciones que puso la guia (sin editar) pasan al compas mas
+   * cercano de la grilla nueva: el anuncio ya se habia ubicado en un compas
+   * cerca del "1".
+   */
+  private async redetectarTempo(proyectoId: string): Promise<void> {
+    const antes = this.hooks.obtener(proyectoId)
+    if (!antes || !tempoDesactualizado(antes.proyecto)) return
+    const firma = (t: TempoProyecto | null | undefined): string => JSON.stringify(t ? [t.bpm, t.compas, t.compasesMs.slice(0, 4), t.version] : null)
+    const firmaAntes = firma(antes.proyecto.tempo) + velocidadAplicada(antes.proyecto)
+    const nuevo = await detectarTempo(antes.proyecto, projectDir(proyectoId))
+    // se borro, o cambio el tempo o la velocidad mientras tanto: queda para la proxima
+    const acceso = this.hooks.obtener(proyectoId)
+    if (!acceso || firma(acceso.proyecto.tempo) + velocidadAplicada(acceso.proyecto) !== firmaAntes) return
+    const p = acceso.proyecto
+    const viejo = p.tempo!
+    const v = velocidadAplicada(p)
+    const escalado = nuevo && v !== 1 ? { ...nuevo, bpm: nuevo.bpm * v, compasesMs: nuevo.compasesMs.map((c) => c / v) } : nuevo
+    const mismoBpm = !!escalado && Math.abs(escalado.bpm / viejo.bpm - 1) < 0.03 && escalado.compas === viejo.compas
+    if (!escalado || (mismoBpm && viejo.faseDesdeGuia && !escalado.acentoClaro)) {
+      // no se pudo, o el "1" ya lo habia puesto la guia: queda el de antes
+      p.tempo = { ...viejo, version: VERSION_TEMPO }
+    } else {
+      p.tempo = escalado
+      const grillaDistinta = !mismoBpm || escalado.compasesMs.some((c, i) => i < 8 && Math.abs(c - (viejo.compasesMs[i] ?? -1e9)) > 30)
+      if (grillaDistinta && !p.seccionesEditadas && p.marcadores.length && p.marcadores.every((m) => m.origen === 'guia')) {
+        p.marcadores = p.marcadores.map((m) => ({ ...m, tiempoMs: m.tiempoMs <= 0 ? m.tiempoMs : compasMasCercano(escalado.compasesMs, m.tiempoMs) }))
+        const vistos = new Set<number>()
+        p.marcadores = p.marcadores.filter((m) => !vistos.has(m.tiempoMs) && vistos.add(m.tiempoMs))
+      }
+    }
+    acceso.guardar()
+    this.hooks.cambio(p.id)
+  }
+
   /** La compu avisa en que va el reconocimiento (o que falta el modelo / hubo un error). */
   estadoVoz(proyectoId: string, estado: 'reconociendo' | 'falta-modelo' | 'error', mensaje?: string): void {
     const acceso = this.hooks.obtener(proyectoId)
@@ -159,6 +220,33 @@ export class Analizador {
     if (a.estado === estado && a.mensaje === mensaje) return
     a.estado = estado
     a.mensaje = mensaje
+    acceso.guardar()
+    this.hooks.cambio(proyectoId)
+  }
+
+  /**
+   * Resultado parcial del reconocimiento (la compu manda lo que lleva): las
+   * secciones van apareciendo mientras tanto, con las mismas reglas que al
+   * final (no pisa las que el usuario acomodo). El resultado final las rehace
+   * todas (y corrige el "1" con la guia si el click no tiene acento).
+   */
+  aplicarParcial(proyectoId: string, textos: { n: number; texto: string }[]): void {
+    const acceso = this.hooks.obtener(proyectoId)
+    const p = acceso?.proyecto
+    const a = p?.analisis
+    if (!acceso || !p || !a || !a.cues || (a.estado !== 'esperando-voz' && a.estado !== 'reconociendo')) return
+    const v = velocidadAplicada(p)
+    const frases = a.cues
+      .filter((c) => textos.some((t) => t.n === c.n))
+      .map((c) => ({ ...c, inicioMs: c.inicioMs / v, finMs: c.finMs / v, texto: textos.find((t) => t.n === c.n)!.texto }))
+    const secciones = seccionesDesdeFrases(frases, p.tempo?.compasesMs ?? null, p.duracionTotalMs)
+    const hayManuales = p.seccionesEditadas || p.marcadores.some((m) => m.origen !== 'guia')
+    if (secciones.length === 0 || (hayManuales && !a.reemplazar)) return
+    const iguales =
+      secciones.length === p.marcadores.length && secciones.every((s, i) => s.nombre === p.marcadores[i].nombre && s.tiempoMs === p.marcadores[i].tiempoMs)
+    if (iguales) return
+    p.marcadores = secciones.map((s): Marcador => ({ id: crypto.randomUUID(), nombre: s.nombre, tiempoMs: s.tiempoMs, origen: 'guia' }))
+    p.seccionesEditadas = false
     acceso.guardar()
     this.hooks.cambio(proyectoId)
   }
@@ -238,7 +326,8 @@ export async function detectarTempo(p: Proyecto, dir: string): Promise<TempoProy
   if (!click) return null
   const x = await decodificarMono(path.join(dir, click.archivo), SR_ANALISIS)
   const { golpes } = await detectarGolpes(x)
-  const r = calcularTempo(golpes, p.duracionTotalMs)
+  // (las pistas originales: la duracion, a la velocidad original)
+  const r = calcularTempo(golpes, p.duracionTotalMs * velocidadAplicada(p), bpmDesdeNombre(p.nombre))
   if (!r) return null
-  return { bpm: r.bpm, compas: r.compas, compasesMs: r.compasesMs, clickPistaId: click.id, acentoClaro: r.acentoClaro }
+  return { bpm: r.bpm, compas: r.compas, compasesMs: r.compasesMs, clickPistaId: click.id, acentoClaro: r.acentoClaro, version: VERSION_TEMPO }
 }

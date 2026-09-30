@@ -378,7 +378,8 @@ export class Transporte {
       compasMs,
       pulsos: Math.max(1, tempo.compas),
       desdeCancion: true,
-      pad: padDeCancion(tab.proyecto),
+      // el tono de la seccion donde entra (si la cancion cambia de tono)
+      pad: padDeCancion(tab.proyecto, limite.limiteMs),
       click: true,
       volumenPad: this.state.volumenPadColchon,
       volumenClick: 100,

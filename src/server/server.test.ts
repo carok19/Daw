@@ -27,10 +27,10 @@ import { compasesDeCuenta, golpeActual, golpesDeCuenta, LARGO_SONIDO_CUENTA_SEC,
 import { detectarCuentaPropia } from './cuenta'
 import { Voces } from './voces'
 import { esAdaptadorVirtual } from './network'
-import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
+import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadEn, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { generarClick, wav16 } from './__fixtures__/sintetico'
 import { candidatosDeSeccion, clavesDeArchivoDeVoz, planearAnuncio } from '../shared/anuncio'
-import { calcularSecciones, compasesQueFaltan, nuevoPlayback, posicionActualMs, seccionEn, textoQueFaltan } from '../shared/playback'
+import { bpmDeTramo, bpmDistintoEnSeccion, calcularSecciones, compasesQueFaltan, largoTipicoDeCompas, nuevoPlayback, posicionActualMs, seccionEn, textoQueFaltan } from '../shared/playback'
 import {
   compasYPulso,
   golpesDeColchon,
@@ -841,6 +841,11 @@ function energiaEn(x: Float32Array, f: number, sr: number): number {
 test('tono: tonalidad del nombre, qué pistas cambian y cómo se escribe', () => {
   assert.equal(tonalidadDesdeNombre('Gracia Sublime Es - 98 bpm - A'), 'A')
   assert.equal(tonalidadDesdeNombre('Digno (Bb)'), 'Bb')
+  // la tonalidad antes del BPM (como vienen de algunas páginas de secuencias)
+  assert.equal(tonalidadDesdeNombre('Coritos-MSM-G-115.00bpm'), 'G')
+  assert.equal(tonalidadDesdeNombre('Fiesta En El Desierto-E-125BPM'), 'E')
+  assert.equal(tonalidadDesdeNombre('Al Que Esta Sentado - F#m - 70 BPM'), 'F#m')
+  assert.equal(tonalidadDesdeNombre('Tu Fidelidad 120 bpm'), null)
   assert.equal(tonalidadDesdeNombre('Oceans - Key of D'), 'D')
   assert.equal(tonalidadDesdeNombre('Way Maker - F#m'), 'F#m')
   assert.equal(tonalidadDesdeNombre('Santo - tono G'), 'G')
@@ -1323,6 +1328,73 @@ test('compases que faltan: hasta el final de la sección (o hasta el salto elegi
   assert.equal(compasesQueFaltan(null, verso, 0), null)
   assert.equal(compasesQueFaltan([500, 2500, 4500], verso, 100), null)
   assert.deepEqual([textoQueFaltan(1), textoQueFaltan(3), textoQueFaltan(null)], ['último compás', 'faltan 3', null])
+})
+
+test('compases irregulares y cambios de tempo: la cuenta y el colchón siguen el compás típico; el BPM de la sección que suena', () => {
+  // 4/4 a 120 (2000 ms), un 2/4 suelto (1000 ms) y sigue en 4/4
+  const c = [0, 2000, 4000, 6000, 7000, 9000, 11000, 13000]
+  assert.equal(largoTipicoDeCompas(c, 3), 2000, 'el 2/4 suelto no cambia el pulso')
+  assert.equal(largoTipicoDeCompas(c, 4), 2000)
+  assert.equal(largoDeCompas(c, 6000), 2000, 'el colchón que entra en el 2/4 va al tempo de la canción')
+  // entrando justo en el 2/4: la cuenta es de 4 negras a 120, no al doble
+  assert.deepEqual(golpesDeCuenta({ compasesMs: c, compas: 4 }, 6000, 1)!.golpes.map((g) => g.ms), [4000, 4500, 5000, 5500])
+  // cambio de tempo: 4/4 a 120 y despues a 60 (4000 ms): desde ahi, el nuevo
+  const cambio = [0, 2000, 4000, 6000, 10000, 14000, 18000]
+  assert.equal(largoTipicoDeCompas(cambio, 4), 4000)
+  assert.deepEqual(golpesDeCuenta({ compasesMs: cambio, compas: 4 }, 10000, 1)!.golpes.map((g) => g.ms), [6000, 7000, 8000, 9000])
+  // BPM de cada parte (la mediana de sus compases)
+  const tempo = { compasesMs: cambio, compas: 4, bpm: 120 }
+  assert.equal(bpmDeTramo(tempo, 0, 6000), 120)
+  assert.equal(bpmDeTramo(tempo, 6000, 18000), 60)
+  assert.equal(bpmDistintoEnSeccion(tempo, { inicioMs: 0, finMs: 6000 }), null, 'la del tempo de la canción no se muestra aparte')
+  assert.equal(bpmDistintoEnSeccion(tempo, { inicioMs: 6000, finMs: 18000 }), 60)
+  // con un 2/4 suelto, la sección sigue en su tempo
+  assert.equal(bpmDeTramo({ compasesMs: c, compas: 4 }, 0, 13000), 120)
+  // una seccion mas corta que un compas: el del compas que la contiene
+  assert.equal(bpmDeTramo(tempo, 10500, 11000), 60)
+  assert.equal(bpmDeTramo(null, 0, 1000), null)
+})
+
+test('tono por sección: rige desde esa sección, se transpone con el tono, el pad del colchón lo sigue y se guarda en la ficha', async (t) => {
+  const p = {
+    nombre: 'Fiesta En El Desierto-D-125BPM',
+    tonoAplicado: 0,
+    marcadores: [
+      { tiempoMs: 0, nombre: 'Verso' },
+      { tiempoMs: 20000, nombre: 'Coro final', tonalidad: 'E' },
+      { tiempoMs: 40000, nombre: 'Final' }
+    ]
+  }
+  assert.equal(tonalidadEn(p, 0), 'D', 'antes: la del nombre')
+  assert.equal(tonalidadEn(p, 19000), 'D')
+  assert.equal(tonalidadEn(p, 20000), 'E')
+  assert.equal(tonalidadEn(p, 45000), 'E', 'sigue hasta otra sección que diga otro')
+  assert.equal(tonalidadEn({ ...p, tonoAplicado: -2 }, 25000), 'D', 'con el tono cambiado, transpuesto')
+  assert.equal(padDeCancion(p, 25000), 'E')
+  assert.equal(padDeCancion(p, 1000), 'D')
+  assert.equal(padDeCancion(p), 'D')
+
+  // se marca desde la compu (y se valida), y la ficha lo conserva
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const a = audiosDePrueba()
+  await cargarZip(compu, crearZip('Con tono', { 'Click.wav': a.wav2s }))
+  const conMarca = await Promise.all([
+    esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => (e.proyectoActivo?.marcadores.length ?? 0) > 0),
+    compu.emit('marker:create', { tiempoMs: 1000, nombre: 'Coro final' })
+  ]).then(([e]) => e)
+  const id = conMarca.proyectoActivo!.marcadores[0].id
+  const cambio = (patch: unknown, filtro: (e: EstadoCompleto) => boolean): Promise<EstadoCompleto> =>
+    Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', filtro), compu.emit('marker:update', { marcadorId: id, patch })]).then(([e]) => e)
+  const conTono = await cambio({ tonalidad: 'f#m' }, (e) => !!e.proyectoActivo?.marcadores[0]?.tonalidad)
+  assert.equal(conTono.proyectoActivo!.marcadores[0].tonalidad, 'F#m')
+  assert.equal(conTono.proyectoActivo!.marcadores[0].origen, 'manual')
+  const ficha = interpretarFicha(JSON.stringify(fichaDesdeProyecto(conTono.proyectoActivo!)))!
+  assert.equal(ficha.marcadores[0].tonalidad, 'F#m')
+  const invalido = await cambio({ tonalidad: 'X', nombre: 'Coro final 2' }, (e) => e.proyectoActivo?.marcadores[0]?.nombre === 'Coro final 2')
+  assert.equal(invalido.proyectoActivo!.marcadores[0].tonalidad, 'F#m', 'un tono inválido no cambia nada')
+  const sinTono = await cambio({ tonalidad: null }, (e) => !e.proyectoActivo?.marcadores[0]?.tonalidad)
+  assert.equal(sinTono.proyectoActivo!.marcadores[0].tonalidad, undefined)
 })
 
 test('cuenta propia: se detecta cuando la canción ya cuenta (la guía o el click, con la banda en silencio) y cuántos compases', async () => {

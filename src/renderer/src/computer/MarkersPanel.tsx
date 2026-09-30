@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Pencil, Repeat, Trash2, WandSparkles, X } from 'lucide-react'
-import type { AnalisisProyecto, InfoModeloVoz, InfoVoces, Marcador, ModoSalto, SaltoPendiente } from '@shared/types'
+import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Music, Pencil, Repeat, Trash2, WandSparkles, X } from 'lucide-react'
+import type { AnalisisProyecto, InfoModeloVoz, InfoVoces, Marcador, ModoSalto, Proyecto, SaltoPendiente } from '@shared/types'
+import { TONALIDADES, tonalidadEn, transponerTonalidad } from '@shared/tonalidad'
 import type { Seccion } from '@shared/playback'
 import { compasesQueFaltan, seccionEn } from '@shared/playback'
 import { usePlayheadPaso } from '../app/playheadStore'
@@ -24,6 +25,10 @@ interface Props {
   onCancelarSalto: () => void
   onCreate: (tiempoMs: number, nombre?: string) => void
   onRename: (marcadorId: string, nombre: string) => void
+  /** la cancion cambia de tono en esta seccion (null = no) */
+  onTonalidad: (marcadorId: string, tonalidad: string | null) => void
+  /** para el tono de cada seccion (el de la cancion y el tono cambiado) */
+  proyecto: Pick<Proyecto, 'nombre' | 'tonalidad' | 'tonoAplicado' | 'marcadores'>
   onDelete: (marcador: Marcador) => void
   onDetectar: () => void
   onDescargarModelo: () => void
@@ -201,6 +206,8 @@ export function MarkersPanel(p: Props) {
               onCancelarSalto={p.onCancelarSalto}
               onJump={(inmediato) => onJump(s.marcador!.id, inmediato)}
               onRename={(n) => onRename(s.marcador!.id, n)}
+              proyecto={p.proyecto}
+              onTonalidad={(t) => p.onTonalidad(s.marcador!.id, t)}
               onDelete={() => onDelete(s.marcador!)}
             />
           ))}
@@ -242,6 +249,8 @@ function TarjetaSeccion({
   onCancelarSalto,
   onJump,
   onRename,
+  proyecto,
+  onTonalidad,
   onDelete
 }: {
   seccion: Seccion
@@ -256,9 +265,14 @@ function TarjetaSeccion({
   onCancelarSalto: () => void
   onJump: (inmediato: boolean) => void
   onRename: (nombre: string) => void
+  proyecto: Pick<Proyecto, 'nombre' | 'tonalidad' | 'tonoAplicado' | 'marcadores'>
+  onTonalidad: (tonalidad: string | null) => void
   onDelete: () => void
 }) {
   const [editando, setEditando] = useState(false)
+  const [eligiendoTono, setEligiendoTono] = useState(false)
+  const tonoPropio = seccion.marcador?.tonalidad ?? null
+  const semitonos = proyecto.tonoAplicado ?? 0
   const [nombre, setNombre] = useState(seccion.nombre)
   const color = colorDeSeccion(seccion)
   const avance = actual ? Math.min(1, Math.max(0, (pos - seccion.inicioMs) / Math.max(1, seccion.finMs - seccion.inicioMs))) : 0
@@ -277,15 +291,56 @@ function TarjetaSeccion({
     <li
       className={`seccion-tarjeta ${actual ? 'actual' : ''} ${salto ? 'pendiente' : ''} ${loop ? 'loop' : ''}`}
       style={{ '--color-seccion': color } as React.CSSProperties}
-      onClick={(e) => !editando && onJump(e.shiftKey)}
+      onClick={(e) => !editando && !eligiendoTono && onJump(e.shiftKey)}
       title="Click para ir a esta sección (sonando, según el modo de salto; Shift+click: ya)"
     >
       <div className="seccion-tarjeta-arriba">
         {numero <= 9 && <kbd className="seccion-numero num">{numero}</kbd>}
         <OrigenSeccion marcador={seccion.marcador} />
         <span className="seccion-tiempo num">{formatMmSs(seccion.inicioMs)}</span>
-        {!editando && (
+        {tonoPropio && !eligiendoTono && (
+          <span
+            className="seccion-tono num"
+            title={`La canción pasa a ${transponerTonalidad(tonoPropio, semitonos)} en esta sección${semitonos ? ` (original: ${tonoPropio})` : ''}: el pad del colchón y los celulares lo siguen`}
+          >
+            <Music size={11} /> {transponerTonalidad(tonoPropio, semitonos)}
+          </span>
+        )}
+        {eligiendoTono && (
+          <select
+            className="seccion-tono-elegir"
+            autoFocus
+            value={tonoPropio ?? ''}
+            aria-label={`Tono de ${seccion.nombre}`}
+            title="La canción cambia de tono en esta sección (en el tono original de la canción; sigue así hasta otra sección que diga otro)"
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              onTonalidad(e.target.value || null)
+              setEligiendoTono(false)
+            }}
+            onBlur={() => setEligiendoTono(false)}
+            onKeyDown={(e) => e.key === 'Escape' && setEligiendoTono(false)}
+          >
+            <option value="">Sin cambio de tono</option>
+            {TONALIDADES.map((t) => (
+              <option key={t} value={t}>
+                {semitonos ? `${t} (suena ${transponerTonalidad(t, semitonos)})` : t}
+              </option>
+            ))}
+          </select>
+        )}
+        {!editando && !eligiendoTono && (
           <span className="seccion-acciones">
+            <button
+              title={tonoPropio ? 'Cambiar el tono de esta sección' : `Marcar un cambio de tono en esta sección (ahora: ${tonalidadEn(proyecto, seccion.inicioMs) ?? 'sin tonalidad'})`}
+              aria-label={`Tono de ${seccion.nombre}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                setEligiendoTono(true)
+              }}
+            >
+              <Music size={14} />
+            </button>
             <button
               title="Renombrar"
               aria-label={`Renombrar ${seccion.nombre}`}

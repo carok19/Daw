@@ -46,7 +46,8 @@ self.onmessage = async (e: MessageEvent<PedidoWorker>) => {
   const { id, audio } = e.data
   try {
     const reconocer = await modelo()
-    const r = await reconocer(audio, { language: 'spanish', task: 'transcribe' })
+    // un anuncio son pocas palabras: sin tope, un ruido puede hacer que Whisper "alucine" una frase larga (y tarde)
+    const r = await reconocer(audio, { language: 'spanish', task: 'transcribe', max_new_tokens: 24 })
     const texto = (Array.isArray(r) ? r[0]?.text : r.text) ?? ''
     ;(self as unknown as Worker).postMessage({ id, texto: texto.trim() } satisfies RespuestaWorker)
   } catch (err) {

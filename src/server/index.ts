@@ -10,7 +10,7 @@ import { DeviceRegistry } from './devices'
 import { registerSocketHandlers, restaurarSesion } from './socketHandlers'
 import { ensureBaseDir, esIdValido, leerSesion, listProyectos, loadProyecto, projectDir, projectsBaseDir } from './projects'
 import type { Transporte } from './transport'
-import type { Analizador } from './analisis'
+import { tempoDesactualizado, type Analizador } from './analisis'
 import type { Biblioteca } from './biblioteca'
 import { ModelosVoz } from './modelos'
 import { leerAjustes, type Ajustes } from './ajustes'
@@ -312,7 +312,11 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     for (const r of listProyectos()) {
       const p = loadProyecto(r.id)
       if (!p.analisis || p.analisis.estado === 'analizando') analizador.encolar(p.id)
-      else analizador.registrarPendiente(p)
+      else {
+        analizador.registrarPendiente(p)
+        // tempo de un detector anterior: se vuelve a detectar solo (en segundo plano)
+        if (tempoDesactualizado(p)) analizador.revisarTempo(p.id)
+      }
     }
     biblioteca.iniciar(bibliotecaPorDefecto)
 

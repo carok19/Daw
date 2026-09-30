@@ -36,6 +36,12 @@ export interface Marcador {
   color?: string
   /** de donde salio: puesto a mano, leido de los archivos del zip, o detectado por la voz guia */
   origen?: 'manual' | 'archivo' | 'guia'
+  /**
+   * la cancion cambia de tonalidad aca ("Coro final: E"): rige desde esta
+   * seccion hasta otra que diga otra. En la tonalidad original (con el tono
+   * cambiado, se transpone igual que la de la cancion)
+   */
+  tonalidad?: string
 }
 
 /** Tempo detectado a partir de la pista de click. */
@@ -56,6 +62,8 @@ export interface TempoProyecto {
    * entra directo; sin: todavia no se reviso (ver server/cuenta.ts)
    */
   cuentaPropia?: number
+  /** version del detector que lo calculo (las de antes se vuelven a detectar solas, ver VERSION_TEMPO) */
+  version?: number
 }
 
 /** Frase hablada de la voz guia, recortada para reconocerla ("Verso uno", "Coro"...). */
@@ -513,7 +521,8 @@ export interface MarcadorCrearPayload {
 }
 export interface MarcadorActualizarPayload {
   marcadorId: string
-  patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs' | 'color'>>
+  /** tonalidad: null = sin cambio de tono en esta seccion */
+  patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs' | 'color'>> & { tonalidad?: string | null }
 }
 export interface MarcadorEliminarPayload {
   marcadorId: string

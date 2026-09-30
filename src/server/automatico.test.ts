@@ -72,6 +72,19 @@ test('al importar: tempo del click, frases de la guía, y secciones ubicadas en 
       return { n: c.n, texto }
     })
   )
+  // mientras reconoce, la compu manda lo que lleva: las secciones van apareciendo
+  const ordenados = [...textos].sort((x, y) => x.n - y.n)
+  const primeras = ordenados.slice(0, Math.ceil(ordenados.length / 2))
+  const parcial = new Promise<EstadoCompleto>((res) =>
+    compu.on('estado:actualizado', (e: EstadoCompleto) => (e.proyectoActivo?.marcadores.length ?? 0) > 0 && res(e))
+  )
+  compu.emit('analisis:progreso', { proyectoId: pedido.proyectoId, hechos: primeras.length, total: textos.length })
+  compu.emit('analisis:parcial', { proyectoId: pedido.proyectoId, textos: primeras })
+  const aMitad = await parcial
+  assert.notEqual(aMitad.proyectoActivo!.analisis?.estado, 'listo', 'todavía reconociendo')
+  assert.ok(aMitad.proyectoActivo!.marcadores.length >= 1)
+  assert.ok(aMitad.proyectoActivo!.marcadores.every((m) => m.origen === 'guia'))
+
   const cambio = new Promise<EstadoCompleto>((res) => compu.on('estado:actualizado', (e: EstadoCompleto) => e.proyectoActivo?.analisis?.estado === 'listo' && res(e)))
   compu.emit('analisis:textos', { proyectoId: pedido.proyectoId, textos })
   const final = await cambio
@@ -296,6 +309,64 @@ test('ficha de la canción: en otra compu (o reinstalando) vuelve con sus seccio
     enA.marcadores.map((m) => m.nombre),
     'el análisis del audio nuevo no pisa las secciones del usuario'
   )
+  await b.cerrar()
+})
+
+test('tempo de un detector anterior: al abrir la app se vuelve a detectar solo y las secciones de la guía pasan a la grilla nueva', { timeout: 120000 }, async (t) => {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-version-'))
+  t.after(() => fs.rmSync(raiz, { recursive: true, force: true }))
+  const renderer = path.join(raiz, 'renderer')
+  fs.mkdirSync(renderer)
+  fs.writeFileSync(path.join(renderer, 'index.html'), '<html></html>')
+  process.env.MULTITRACK_APP_DIR = path.join(raiz, 'app')
+  async function abrirApp() {
+    const server: AppServer = createServer(renderer, { compuToken: TOKEN })
+    const port = await server.start(0)
+    const compu: ClientSocket = ioClient(`http://localhost:${port}`, { auth: { origen: 'compu', token: TOKEN }, reconnection: false })
+    await new Promise<void>((r) => compu.once('connect', () => r()))
+    const pedidos: PedidoVoz[][] = []
+    compu.on('analisis:pedidos', (p: PedidoVoz[]) => pedidos.push(p))
+    const ack = <T>(ev: string, payload: unknown, ms = 60000): Promise<T> =>
+      new Promise((res, rej) => compu.timeout(ms).emit(ev, payload, (err: unknown, r: T) => (err ? rej(err) : res(r))))
+    server.iniciarServicios(null, { descubrimiento: false, puertoCorto: null })
+    return { compu, ack, pedidos, cerrar: async () => (compu.close(), await server.close()) }
+  }
+
+  const a = await abrirApp()
+  assert.equal((await a.ack<{ ok: boolean }>('project:load-from-zip', { filePath: zipConGuia(raiz, 'Vieja') })).ok, true)
+  const pedido = await esperarQue(() => a.pedidos.flat().find((p) => p.nombre === 'Vieja'))
+  a.compu.emit('analisis:textos', { proyectoId: pedido.proyectoId, textos: pedido.cues.map((c) => ({ n: c.n, texto: textoDeFrase(c.finMs) })) })
+  const bien = await esperarQue(async () => {
+    const p = (await a.ack<EstadoCompleto>('state:request', {})).proyectoActivo
+    return p?.analisis?.estado === 'listo' ? p : null
+  })
+  assert.equal(bien.tempo!.version, 2)
+  await a.cerrar()
+
+  // como la dejaba un detector anterior: el doble de rapido en 2/4, y las secciones en esa grilla
+  const archivo = path.join(process.env.MULTITRACK_APP_DIR!, 'proyectos', bien.id, 'proyecto.json')
+  const guardado = JSON.parse(fs.readFileSync(archivo, 'utf-8'))
+  const c = bien.tempo!.compasesMs
+  guardado.tempo = { ...bien.tempo, bpm: bien.tempo!.bpm * 2, compas: 2, compasesMs: c.flatMap((x, i) => (i + 1 < c.length ? [x, (x + c[i + 1]) / 2] : [x])) }
+  delete guardado.tempo.version
+  guardado.marcadores = bien.marcadores.map((m) => ({ ...m, tiempoMs: m.tiempoMs + 250 }))
+  fs.writeFileSync(archivo, JSON.stringify(guardado))
+
+  const b = await abrirApp()
+  await b.ack('projects:open', { id: bien.id })
+  const arreglada = await esperarQue(async () => {
+    const p = (await b.ack<EstadoCompleto>('state:request', {})).proyectoActivo
+    return p?.tempo?.version === 2 ? p : null
+  })
+  assert.ok(Math.abs(arreglada.tempo!.bpm - 90) < 0.3, `bpm ${arreglada.tempo!.bpm}`)
+  assert.equal(arreglada.tempo!.compas, 4)
+  assert.deepEqual(arreglada.tempo!.compasesMs, bien.tempo!.compasesMs)
+  assert.deepEqual(
+    arreglada.marcadores.map((m) => [m.nombre, m.tiempoMs]),
+    bien.marcadores.map((m) => [m.nombre, m.tiempoMs]),
+    'las secciones de la guía vuelven al "1" de su compás'
+  )
+  assert.equal(b.pedidos.flat().length, 0, 'sin volver a reconocer la guía')
   await b.cerrar()
 })
 

@@ -66,7 +66,8 @@ export async function detectarFrases(x: Float32Array, sr = SR_VOZ): Promise<Fras
 }
 
 const PADDING_MS = 150
-const MAX_FRASES = 80
+// (las cuentas se recortan palabra por palabra: una cancion larga pasa las 80 frases)
+const MAX_FRASES = 160
 
 /**
  * Guarda el audio (16 kHz mono float32) de cada frase en

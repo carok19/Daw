@@ -23,7 +23,7 @@ export interface FichaCancion {
   nombre: string
   /** duracion del audio con el que se hizo: si el audio cambio, las secciones automaticas no sirven */
   duracionTotalMs: number
-  marcadores: Pick<Marcador, 'nombre' | 'tiempoMs' | 'origen' | 'color'>[]
+  marcadores: Pick<Marcador, 'nombre' | 'tiempoMs' | 'origen' | 'color' | 'tonalidad'>[]
   seccionesEditadas: boolean
   /** mezcla por nombre de pista (los ids de pista se regeneran al importar) */
   pistas: Pick<Pista, 'nombre' | 'volumen' | 'pan' | 'mute' | 'solo' | 'color' | 'rol' | 'panAutomatico'>[]
@@ -55,7 +55,13 @@ export function fichaDesdeProyecto(p: Proyecto): FichaCancion {
     id: p.id,
     nombre: p.nombre,
     duracionTotalMs: Math.round(p.duracionTotalMs * v),
-    marcadores: p.marcadores.map(({ nombre, tiempoMs, origen, color }) => ({ nombre, tiempoMs: Math.round(tiempoMs * v), origen, ...(color ? { color } : {}) })),
+    marcadores: p.marcadores.map(({ nombre, tiempoMs, origen, color, tonalidad }) => ({
+      nombre,
+      tiempoMs: Math.round(tiempoMs * v),
+      origen,
+      ...(color ? { color } : {}),
+      ...(tonalidad ? { tonalidad } : {})
+    })),
     seccionesEditadas: !!p.seccionesEditadas,
     pistas: p.pistas.map(({ nombre, volumen, pan, mute, solo, color, rol, panAutomatico }) => ({
       nombre,
@@ -107,7 +113,8 @@ export function interpretarFicha(texto: string): FichaCancion | null {
         nombre: m.nombre.slice(0, 60),
         tiempoMs: Math.round(m.tiempoMs),
         origen: m.origen === 'guia' || m.origen === 'archivo' ? m.origen : 'manual',
-        ...(typeof m.color === 'string' && /^#[0-9a-f]{6}$/i.test(m.color) ? { color: m.color } : {})
+        ...(typeof m.color === 'string' && /^#[0-9a-f]{6}$/i.test(m.color) ? { color: m.color } : {}),
+        ...(normalizarTonalidad(m.tonalidad) ? { tonalidad: normalizarTonalidad(m.tonalidad)! } : {})
       })),
       seccionesEditadas: !!f.seccionesEditadas,
       pistas,

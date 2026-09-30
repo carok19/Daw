@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { decodificarMono } from './decodificar'
-import { calcularTempo, detectarGolpes, puntajeClick, PUNTAJE_MIN_CLICK, SR_ANALISIS, pareceNombreDeClick } from './tempo'
+import { bpmDesdeNombre, calcularTempo, detectarGolpes, puntajeClick, PUNTAJE_MIN_CLICK, SR_ANALISIS, pareceNombreDeClick } from './tempo'
 import { detectarFrases, pareceNombreDeGuia, SR_VOZ } from './guia'
 import { anunciosDesdeFrases, esCuenta, faseDesdeAnuncios, interpretarSeccion, seccionesDesdeFrases, nombreDeMarcadorArchivo } from './secciones'
 import { marcadoresDeMidi, marcadoresDeTexto, marcadoresDeWav } from './archivos'
@@ -62,6 +62,84 @@ test('tempo: 3/4 a 72 BPM, y sin acento se asume 4/4 desde el primer golpe', asy
   assert.equal(t2.acentoClaro, false)
   assert.equal(t2.compas, 4)
   assert.ok(Math.abs(t2.compasesMs.find((c) => c >= 200)! - 250) <= 6)
+})
+
+/**
+ * Click compas por compas ([bpm, tiempos] de cada uno, desde 0,5 s), con `sub`
+ * golpes por tiempo (2 = corcheas) mas suaves. Devuelve la señal y donde cae cada "1" (ms).
+ */
+function clickPorCompases(compases: [number, number][], sub = 1): { x: Float32Array; unos: number[] } {
+  let t = 0.5
+  const golpes: { t: number; a: number; f: number }[] = []
+  const unos: number[] = []
+  for (const [bpm, tiempos] of compases) {
+    unos.push(Math.round(t * 1000))
+    for (let k = 0; k < tiempos; k++) {
+      for (let s = 0; s < sub; s++) {
+        const uno = k === 0 && s === 0
+        golpes.push({ t: t + (s * 60) / bpm / sub, a: s > 0 ? 0.3 : uno ? 0.9 : 0.55, f: uno ? 1600 : 1000 })
+      }
+      t += 60 / bpm
+    }
+  }
+  const x = new Float32Array(Math.ceil((t + 1) * SR_ANALISIS))
+  for (const g of golpes) {
+    const i0 = Math.round(g.t * SR_ANALISIS)
+    for (let i = 0; i < 0.03 * SR_ANALISIS && i0 + i < x.length; i++)
+      x[i0 + i] += g.a * Math.sin((2 * Math.PI * g.f * i) / SR_ANALISIS) * Math.exp(-i / (0.006 * SR_ANALISIS))
+  }
+  return { x, unos }
+}
+
+/** Cuantos "1" de verdad no tienen un compas de la grilla a menos de 30 ms, y compases de mas en el medio. */
+function errores(compasesMs: number[], unos: number[]): { corridos: number; deMas: number } {
+  const corridos = unos.filter((u) => !compasesMs.some((c) => Math.abs(c - u) <= 30)).length
+  const deMas = compasesMs.filter((c) => c > unos[0] - 30 && c < unos[unos.length - 1] + 30).length - unos.length
+  return { corridos, deMas }
+}
+
+test('tempo: click que marca corcheas (o semicorcheas) -> el tempo de la negra, no el doble', async () => {
+  const rep = (n: number, bpm: number, tiempos = 4): [number, number][] => Array.from({ length: n }, () => [bpm, tiempos])
+  const casos: { nombre: string; compases: [number, number][]; sub: number; pista?: number; bpm: number }[] = [
+    { nombre: 'corcheas a 140', compases: rep(24, 140), sub: 2, bpm: 140 },
+    { nombre: 'corcheas a 70 (lenta)', compases: rep(16, 70), sub: 2, bpm: 70 },
+    { nombre: 'semicorcheas a 100', compases: rep(16, 100), sub: 4, bpm: 100 },
+    { nombre: 'corcheas a 125 con el BPM en el nombre', compases: rep(24, 125), sub: 2, pista: 125, bpm: 125 },
+    { nombre: 'negras rápidas a 180 (no son corcheas)', compases: rep(24, 180), sub: 1, bpm: 180 }
+  ]
+  for (const c of casos) {
+    const { x, unos } = clickPorCompases(c.compases, c.sub)
+    const t = calcularTempo((await detectarGolpes(x)).golpes, (x.length / SR_ANALISIS) * 1000, c.pista ?? null)!
+    assert.ok(Math.abs(t.bpm - c.bpm) < 1, `${c.nombre}: bpm ${t.bpm}`)
+    assert.equal(t.compas, 4, c.nombre)
+    assert.deepEqual(errores(t.compasesMs, unos), { corridos: 0, deMas: 0 }, c.nombre)
+  }
+})
+
+test('tempo: un 2/4 o 3/4 suelto, y los cambios de tempo, no corren los "1" que siguen', async () => {
+  const rep = (n: number, bpm: number, tiempos = 4): [number, number][] => Array.from({ length: n }, () => [bpm, tiempos])
+  const casos: { nombre: string; compases: [number, number][]; sub?: number }[] = [
+    { nombre: 'un 2/4 en el medio', compases: [...rep(12, 75), [75, 2], ...rep(12, 75)] },
+    { nombre: 'un 3/4 y un 2/4', compases: [...rep(8, 120), [120, 3], ...rep(8, 120), [120, 2], ...rep(6, 120)] },
+    { nombre: '72 -> 84 BPM', compases: [...rep(12, 72), ...rep(16, 84)] },
+    { nombre: 'parte lenta en una canción rápida (136 -> 68 -> 136)', compases: [...rep(10, 136), ...rep(8, 68), ...rep(10, 136)] },
+    { nombre: 'corcheas con un 2/4 suelto', compases: [...rep(10, 140), [140, 2], ...rep(10, 140)], sub: 2 }
+  ]
+  for (const c of casos) {
+    const { x, unos } = clickPorCompases(c.compases, c.sub ?? 1)
+    const t = calcularTempo((await detectarGolpes(x)).golpes, (x.length / SR_ANALISIS) * 1000)!
+    assert.ok(t.acentoClaro, c.nombre)
+    assert.deepEqual(errores(t.compasesMs, unos), { corridos: 0, deMas: 0 }, c.nombre)
+  }
+})
+
+test('BPM desde el nombre de la canción', () => {
+  assert.equal(bpmDesdeNombre('Coritos-MSM-G-115.00bpm'), 115)
+  assert.equal(bpmDesdeNombre('Fiesta En El Desierto-E-125BPM'), 125)
+  assert.equal(bpmDesdeNombre('Gracia Sublime Es - 98 bpm - A'), 98)
+  assert.equal(bpmDesdeNombre('Digno (Bb)'), null)
+  assert.equal(bpmDesdeNombre('Canción 2024'), null)
+  assert.equal(bpmDesdeNombre('Algo 999 bpm'), null)
 })
 
 test('click por cómo suena: una batería o un pad no se confunden con el click', async () => {
@@ -126,6 +204,22 @@ test('secciones: interpretar anuncios y ubicarlos en el compás siguiente', () =
     { nombre: 'Coro 2', tiempoMs: 27170 },
     { nombre: 'Final', tiempoMs: 37838 }
   ])
+
+  // la guia dice "Verso" dos veces antes del mismo compas (o la frase se corto en dos): es el primer verso, no "Verso 2"
+  const repetido = seccionesDesdeFrases(
+    [
+      { inicioMs: 3500, finMs: 3900, texto: 'Verso' },
+      { inicioMs: 4800, finMs: 5500, texto: 'verso' },
+      { inicioMs: 15700, finMs: 16030, texto: 'Coro' },
+      { inicioMs: 26400, finMs: 26860, texto: 'Verso' }
+    ],
+    compases,
+    60000
+  )
+  assert.deepEqual(
+    repetido.map((x) => x.nombre),
+    ['Verso 1', 'Coro', 'Verso 2']
+  )
 })
 
 test('secciones: si la guía cuenta después del nombre ("Coro… tres, cuatro"), la sección empieza después de la cuenta', () => {

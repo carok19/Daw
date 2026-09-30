@@ -1,6 +1,7 @@
 import type { AjustesColchon, ColchonActivo, Proyecto } from './types'
 import { PAN_BANDA } from './mezcla'
-import { tonalidadOriginal, transponerTonalidad } from './tonalidad'
+import { tonalidadEn } from './tonalidad'
+import { largoTipicoDeCompas } from './playback'
 
 /**
  * Colchón: el click y un pad de ambiente sonando sin la banda.
@@ -38,10 +39,12 @@ export function notaDelPad(tonalidad: string | null | undefined): NotaPad | null
   return BEMOLES[nota] ?? null
 }
 
-/** La nota del pad para una canción: la de la tonalidad que suena (con el tono cambiado, la nueva). */
-export function padDeCancion(p: Pick<Proyecto, 'nombre' | 'tonalidad' | 'tonoAplicado'>): NotaPad | null {
-  const original = tonalidadOriginal(p)
-  return original ? notaDelPad(transponerTonalidad(original, p.tonoAplicado ?? 0)) : null
+/**
+ * La nota del pad para una canción en `posMs`: la de la tonalidad que suena
+ * ahí (la de la sección, si la canción cambia de tono; con el tono cambiado, la nueva).
+ */
+export function padDeCancion(p: Pick<Proyecto, 'nombre' | 'tonalidad' | 'tonoAplicado'> & { marcadores?: { tiempoMs: number; tonalidad?: string }[] }, posMs = 0): NotaPad | null {
+  return notaDelPad(tonalidadEn(p, posMs))
 }
 
 /** Pad: entra en este tiempo (colchón de la lista; dentro de una canción, en 2 compases). */
@@ -68,12 +71,14 @@ export function bpmDeColchon(c: Pick<ColchonActivo, 'compasMs' | 'pulsos'>): num
   return 60000 / pulsoMs(c)
 }
 
-/** Duración del compás de la canción que empieza en `ms` (el de antes, si es el último). */
+/**
+ * Duración del compás de la canción que empieza en `ms` (el de antes, si es
+ * el último): la típica de ahí, así un 2/4 suelto no apura el colchón.
+ */
 export function largoDeCompas(compasesMs: number[], ms: number): number {
   let i = compasesMs.findIndex((c) => c >= ms - 1)
   if (i === -1) i = compasesMs.length - 1
-  if (i + 1 < compasesMs.length) return compasesMs[i + 1] - compasesMs[i]
-  return i > 0 ? compasesMs[i] - compasesMs[i - 1] : 2000
+  return largoTipicoDeCompas(compasesMs, Math.min(i, compasesMs.length - 2)) || 2000
 }
 
 /** Primer golpe del colchón en `t` o después (hora del servidor). */

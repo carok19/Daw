@@ -1,4 +1,5 @@
 import type { CuentaProgramada, Proyecto, TempoProyecto } from './types'
+import { largoTipicoDeCompas } from './playback'
 
 /**
  * Cuenta antes de la cancion: al dar play (desde parado o en pausa) suena 1
@@ -14,12 +15,14 @@ import type { CuentaProgramada, Proyecto, TempoProyecto } from './types'
 /** Cuanto ocupa cada sonido (el "1" y el golpe comun) en el WAV de la cuenta (/cuenta/<cancion>.wav). */
 export const LARGO_SONIDO_CUENTA_SEC = 0.25
 
-/** Largo del compas en `ms` de la cancion (el que lo contiene, o el primero). */
+/**
+ * Largo del compas en `ms` de la cancion (el que lo contiene, o el primero):
+ * el tipico de ahi, asi entrar en un 2/4 suelto no cuenta al doble de rapido.
+ */
 function largoDeCompas(compases: number[], ms: number): { k: number; largo: number } {
   let k = 0
   while (k + 1 < compases.length && compases[k + 1] <= ms + 1) k++
-  const largo = k + 1 < compases.length ? compases[k + 1] - compases[k] : compases[k] - compases[k - 1]
-  return { k, largo }
+  return { k, largo: largoTipicoDeCompas(compases, Math.min(k, compases.length - 2)) }
 }
 
 /**

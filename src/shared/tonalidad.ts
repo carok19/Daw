@@ -34,12 +34,16 @@ export function normalizarTonalidad(texto: unknown): string | null {
 
 /**
  * La tonalidad escrita al final del nombre de la cancion (o entre
- * parentesis): "Gracia Sublime Es - 98 bpm - A", "Digno (Bb)", "Oceans -
- * Key of D". La nota tiene que estar en mayuscula y separada, para no
- * confundirla con una palabra.
+ * parentesis), o justo antes del BPM: "Gracia Sublime Es - 98 bpm - A",
+ * "Digno (Bb)", "Oceans - Key of D", "Coritos-MSM-G-115.00bpm". La nota
+ * tiene que estar en mayuscula y separada, para no confundirla con una palabra.
  */
 export function tonalidadDesdeNombre(nombre: string): string | null {
-  const m = /(?:^|[\s\-–—_(\[|,])(?:(?:tono|tonalidad|key(?:\s+of)?|en|in)\s*:?\s*)?([A-G])(#|b|♯|♭)?(m|min|menor|minor)?(?:\s*(?:mayor|major))?\s*[)\]]?\s*$/.exec(nombre.trim())
+  const sinBpm = nombre
+    .replace(/[\s\-–—_|,]*[(\[]?\s*\d{2,3}(?:[.,]\d+)?\s*bpm\s*[)\]]?/gi, ' ')
+    .replace(/[\s\-–—_|,]+$/, '')
+    .trim()
+  const m = /(?:^|[\s\-–—_(\[|,])(?:(?:tono|tonalidad|key(?:\s+of)?|en|in)\s*:?\s*)?([A-G])(#|b|♯|♭)?(m|min|menor|minor)?(?:\s*(?:mayor|major))?\s*[)\]]?\s*$/.exec(sinBpm)
   if (!m) return null
   return leer(m[1], m[2], !!m[3])
 }
@@ -47,6 +51,27 @@ export function tonalidadDesdeNombre(nombre: string): string | null {
 /** Tonalidad original de la cancion: la puesta a mano o, si no, la del nombre. */
 export function tonalidadOriginal(p: { nombre: string; tonalidad?: string }): string | null {
   return normalizarTonalidad(p.tonalidad) ?? tonalidadDesdeNombre(p.nombre)
+}
+
+/**
+ * Tonalidad que suena en `posMs` (con el tono cambiado, la nueva): la del
+ * ultimo cambio de tono marcado en una seccion hasta ahi ("Coro final: E"),
+ * o la de la cancion. null = no se sabe.
+ */
+export function tonalidadEn(
+  p: { nombre: string; tonalidad?: string; tonoAplicado?: number; marcadores?: { tiempoMs: number; tonalidad?: string }[] },
+  posMs: number
+): string | null {
+  let t = tonalidadOriginal(p)
+  let desde = -Infinity
+  for (const m of p.marcadores ?? []) {
+    const n = normalizarTonalidad(m.tonalidad)
+    if (n && m.tiempoMs <= posMs + 1 && m.tiempoMs >= desde) {
+      t = n
+      desde = m.tiempoMs
+    }
+  }
+  return t ? transponerTonalidad(t, p.tonoAplicado ?? 0) : null
 }
 
 /** La tonalidad `semitonos` mas arriba (o abajo): "A" +2 -> "B", "Am" -1 -> "G#m". */

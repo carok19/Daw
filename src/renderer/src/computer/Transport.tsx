@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square, Waves, X } from 'lucide-react'
 import type { OndaCancion, PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
-import { compasesQueFaltan, seccionEn } from '@shared/playback'
+import { bpmDistintoEnSeccion, compasesQueFaltan, seccionEn } from '@shared/playback'
+import { tonalidadEn } from '@shared/tonalidad'
 import { useGolpeCuenta, usePlayheadPaso } from '../app/playheadStore'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
@@ -93,17 +94,33 @@ export function FaltanCompases({ n, className = 'faltan-compases' }: { n: number
   )
 }
 
+/** true si la cancion tiene cambios de tono marcados en sus secciones. */
+export function cambiaDeTono(p: Pick<Proyecto, 'marcadores'>): boolean {
+  return p.marcadores.some((m) => !!m.tonalidad)
+}
+
+/**
+ * " · en E" si la seccion `s` suena en otro tono que el que suena en `desdeMs`
+ * (para "Sigue: Coro final · en E").
+ */
+export function textoCambioDeTono(p: Proyecto, desdeMs: number, s: Pick<Seccion, 'inicioMs'> | null | undefined): string {
+  if (!s || !cambiaDeTono(p)) return ''
+  const ahora = tonalidadEn(p, desdeMs)
+  const luego = tonalidadEn(p, s.inicioMs)
+  return luego && luego !== ahora ? ` · en ${luego}` : ''
+}
+
 function SeccionActual({
+  proyecto,
   secciones,
   loop,
   salto,
-  compasesMs,
   onCancelarSalto
 }: {
+  proyecto: Proyecto
   secciones: Seccion[]
   loop: boolean
   salto: SaltoPendiente | null
-  compasesMs: number[] | null
   onCancelarSalto: () => void
 }) {
   const pos = usePlayheadPaso(100)
@@ -112,6 +129,10 @@ function SeccionActual({
   const siguiente = actual ? secciones[actual.indice + 1] : null
   if (!actual) return null
   const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
+  const compasesMs = proyecto.tempo?.compasesMs ?? null
+  // una cancion que cambia de tempo o de tono: el de la parte que suena
+  const bpmAqui = bpmDistintoEnSeccion(proyecto.tempo, actual)
+  const tonoAqui = cambiaDeTono(proyecto) ? tonalidadEn(proyecto, pos) : null
   return (
     <div className="seccion-actual">
       <span className="seccion-pill" style={{ background: colorDeSeccion(actual) }}>
@@ -119,10 +140,21 @@ function SeccionActual({
         {actual.nombre}
       </span>
       {golpe === 0 && <FaltanCompases n={compasesQueFaltan(compasesMs, actual, pos, salto?.limiteMs)} />}
+      {tonoAqui && (
+        <span className="chip-seccion-dato num" title="Tono de esta parte (la canción cambia de tono)" data-testid="tono-seccion">
+          Tono {tonoAqui}
+        </span>
+      )}
+      {bpmAqui !== null && (
+        <span className="chip-seccion-dato num" title={`Tempo de esta sección (la canción va a ${Math.round(proyecto.tempo!.bpm)} BPM)`} data-testid="bpm-seccion">
+          {Math.round(bpmAqui)} BPM aquí
+        </span>
+      )}
       {salto && destino ? (
         <span className="salto-pendiente" role="status" style={{ '--color-seccion': colorDeSeccion(destino) } as React.CSSProperties}>
           <ArrowRight size={14} />
           <b>{salto.nombre}</b>
+          {textoCambioDeTono(proyecto, pos, destino)}
           <span className="num">{faltaParaSalto(salto, pos)}</span>
           <button onClick={onCancelarSalto} title="Cancelar el salto (Esc)" aria-label="Cancelar el salto">
             <X size={13} />
@@ -135,7 +167,7 @@ function SeccionActual({
           : loop
             ? 'Repitiendo esta sección'
             : siguiente
-              ? `Sigue: ${siguiente.nombre}`
+              ? `Sigue: ${siguiente.nombre}${textoCambioDeTono(proyecto, pos, siguiente)}`
               : 'Última sección'}
       </span>
       )}
@@ -186,13 +218,7 @@ export function Transport(p: Props) {
             <ControlTono proyecto={p.proyecto} sonando={sonando} progreso={p.progresoTono} onCambiar={p.onCambiarTono} onTonalidad={p.onTonalidad} />
           </div>
           <div className="transporte-meta">
-            <SeccionActual
-              secciones={p.secciones}
-              loop={p.loop}
-              salto={p.saltoPendiente}
-              compasesMs={p.proyecto.tempo?.compasesMs ?? null}
-              onCancelarSalto={p.onCancelarSalto}
-            />
+            <SeccionActual proyecto={p.proyecto} secciones={p.secciones} loop={p.loop} salto={p.saltoPendiente} onCancelarSalto={p.onCancelarSalto} />
             {p.proyecto.tempo && (
               <span className="chip-tempo num" title={
                   p.proyecto.tempo.acentoClaro

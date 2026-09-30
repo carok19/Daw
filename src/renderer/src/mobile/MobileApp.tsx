@@ -24,8 +24,8 @@ import {
   X
 } from 'lucide-react'
 import type { ColchonActivo, OndaCancion, Proyecto, SaltoPendiente } from '@shared/types'
-import { compasesQueFaltan, seccionEn, textoQueFaltan, type Seccion } from '@shared/playback'
-import { textoSemitonos, tonalidadOriginal, transponerTonalidad } from '@shared/tonalidad'
+import { bpmDistintoEnSeccion, compasesQueFaltan, seccionEn, textoQueFaltan, type Seccion } from '@shared/playback'
+import { textoSemitonos, tonalidadEn } from '@shared/tonalidad'
 import type { AppController } from '../app/useAppController'
 import { useGolpeColchon, useGolpeCuenta, usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
 import { leerPref } from '../app/preferencias'
@@ -370,14 +370,62 @@ function faltaPara(salto: SaltoPendiente, pos: number): string {
 }
 
 /** Tonalidad en la que suena la cancion ("B +2"): asi la banda sabe en que tono esta tocando. */
-function TonoQueSuena({ proyecto }: { proyecto: Proyecto }) {
+/** La tonalidad que suena en `pos` (la de la seccion, si la cancion cambia de tono), con el tono cambiado. */
+function TonoQueSuena({ proyecto, pos }: { proyecto: Proyecto; pos: number }) {
   const n = proyecto.tonoAplicado ?? 0
-  const original = tonalidadOriginal(proyecto)
-  if (!original && !n) return null
+  const tono = tonalidadEn(proyecto, pos)
+  if (!tono && !n) return null
   return (
     <span className={`m-barra-tono num ${n ? 'cambiado' : ''}`} title={n ? `Tono cambiado ${textoSemitonos(n)} semitonos` : 'Tonalidad'}>
-      {original && transponerTonalidad(original, n)}
+      {tono}
       {n !== 0 && <small>{textoSemitonos(n)}</small>}
+    </span>
+  )
+}
+
+/** " · en E" si la seccion `s` suena en otro tono que el de ahora. */
+function cambioDeTono(p: Proyecto, pos: number, s: Seccion | null | undefined): string {
+  if (!s || !p.marcadores.some((m) => m.tonalidad)) return ''
+  const luego = tonalidadEn(p, s.inicioMs)
+  return luego && luego !== tonalidadEn(p, pos) ? ` · en ${luego}` : ''
+}
+
+/** Cuanto se muestra "Tono: E" despues de que la cancion cambio de tono. */
+const AVISO_TONO_MS = 8000
+
+/**
+ * "Tono: E" grande cuando la cancion cambia de tono: los ultimos 2 compases
+ * antes (lo que viene: la seccion siguiente o la elegida) y los primeros
+ * segundos despues. null = no hay cambio cerca.
+ */
+function avisoDeTono(
+  p: Proyecto,
+  pos: number,
+  proxima: Seccion | null | undefined,
+  faltan: number | null,
+  finMs: number | null
+): { tono: string; ya: boolean } | null {
+  if (!p.marcadores.some((m) => m.tonalidad)) return null
+  const ahora = tonalidadEn(p, pos)
+  if (proxima) {
+    const luego = tonalidadEn(p, proxima.inicioMs)
+    const cerca = faltan !== null ? faltan <= 2 : finMs !== null && finMs - pos < 5000
+    if (luego && luego !== ahora && cerca) return { tono: luego, ya: false }
+  }
+  // donde empezo el tono que suena: si fue hace poco (y era otro), se sigue avisando
+  let desde = -Infinity
+  for (const m of p.marcadores) if (m.tonalidad && m.tiempoMs <= pos + 1 && m.tiempoMs > desde) desde = m.tiempoMs
+  if (ahora && desde > 0 && pos - desde < AVISO_TONO_MS && tonalidadEn(p, desde - 1) !== ahora) return { tono: ahora, ya: true }
+  return null
+}
+
+/** "Tono: E" (o "→ Tono: E" antes de que cambie). */
+function AvisoTono({ aviso }: { aviso: { tono: string; ya: boolean } | null }) {
+  if (!aviso) return null
+  return (
+    <span className={`m-aviso-tono num ${aviso.ya ? 'ya' : 'viene'}`} role="status" aria-label={aviso.ya ? `La canción pasó a ${aviso.tono}` : `La canción pasa a ${aviso.tono}`} data-testid="aviso-tono">
+      <small>{aviso.ya ? 'Tono' : 'Pasa a'}</small>
+      <b>{aviso.tono}</b>
     </span>
   )
 }
@@ -443,7 +491,7 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
       <button className="m-barra-info" onClick={() => onHoja('secciones')} aria-label="Ver secciones">
         <span className="m-barra-fila">
           <span className="m-barra-cancion">{proyecto.nombre}</span>
-          <TonoQueSuena proyecto={proyecto} />
+          <TonoQueSuena proyecto={proyecto} pos={pos} />
           <span className="m-barra-tiempo num">
             {formatMmSs(pos)} / {formatMmSs(proyecto.duracionTotalMs)}
           </span>
@@ -465,7 +513,13 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
               <ArrowRight size={14} /> {salto.nombre} <span className="num">{faltaPara(salto, pos)}</span>
             </span>
           ) : (
-            <span className="m-barra-sigue">{loop ? 'repitiendo' : siguiente ? `sigue ${siguiente.nombre}` : 'última sección'}</span>
+            <span className="m-barra-sigue">
+            {loop
+              ? 'repitiendo'
+              : siguiente
+                ? `sigue ${siguiente.nombre}${cambioDeTono(proyecto, pos, siguiente)}`
+                : 'última sección'}
+          </span>
           )}
         </span>
         <MiniTimeline controller={controller} />
@@ -574,6 +628,9 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
   const compases = proyecto.tempo?.compasesMs ?? null
   // compases que faltan para que termine la seccion (o para el salto elegido)
   const faltan = compasesQueFaltan(compases, actual, pos, salto?.limiteMs)
+  const bpmAqui = bpmDistintoEnSeccion(proyecto.tempo, actual)
+  const proxima = salto ? destino : loop ? null : siguiente
+  const aviso = avisoDeTono(proyecto, pos, proxima, faltan, salto ? salto.limiteMs : (actual?.finMs ?? null))
   const enSuColchon = !!estado?.colchon && estado.colchon.desdeCancion && estado.colchon.hasta === null && estado.colchon.tabId === estado.activeTabId
   const ayuda = locked
     ? null
@@ -593,11 +650,18 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
           <span>{proyecto.nombre}</span>
           <ChevronDown size={16} />
         </button>
-        <TonoQueSuena proyecto={proyecto} />
-        {velocidadAplicada(proyecto) !== 1 && proyecto.tempo && (
-          <span className="m-barra-tono cambiado num" title={`Velocidad cambiada (${textoPorcentaje(velocidadAplicada(proyecto))})`}>
-            {Math.round(proyecto.tempo.bpm)} BPM
+        <TonoQueSuena proyecto={proyecto} pos={pos} />
+        {bpmAqui !== null ? (
+          <span className="m-barra-tono cambiado num" title="Tempo de esta sección (la canción cambia de tempo)" data-testid="bpm-seccion">
+            {Math.round(bpmAqui)} BPM
           </span>
+        ) : (
+          velocidadAplicada(proyecto) !== 1 &&
+          proyecto.tempo && (
+            <span className="m-barra-tono cambiado num" title={`Velocidad cambiada (${textoPorcentaje(velocidadAplicada(proyecto))})`}>
+              {Math.round(proyecto.tempo.bpm)} BPM
+            </span>
+          )
         )}
         <span className="m-cancion-tiempo num">
           {formatMmSs(pos)} / {formatMmSs(proyecto.duracionTotalMs)}
@@ -620,11 +684,13 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
                 <small>{faltan === 1 ? 'último' : 'compases'}</small>
               </span>
             )}
+            <AvisoTono aviso={aviso} />
           </>
         )}
         {salto ? (
           <span className="m-salto" role="status">
-            <ArrowRight size={15} /> {salto.nombre} <span className="num">{faltaPara(salto, pos)}</span>
+            <ArrowRight size={15} /> {salto.nombre}
+            {cambioDeTono(proyecto, pos, destino)} <span className="num">{faltaPara(salto, pos)}</span>
             {!locked && (
               <button onClick={controller.cancelarSalto} aria-label="Cancelar el salto">
                 <X size={15} />
@@ -632,7 +698,13 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
             )}
           </span>
         ) : (
-          <span className="m-barra-sigue">{loop ? 'repitiendo' : siguiente ? `sigue ${siguiente.nombre}` : 'última sección'}</span>
+          <span className="m-barra-sigue">
+            {loop
+              ? 'repitiendo'
+              : siguiente
+                ? `sigue ${siguiente.nombre}${cambioDeTono(proyecto, pos, siguiente)}`
+                : 'última sección'}
+          </span>
         )}
       </div>
       <MiniTimeline controller={controller} onda={onda} grande />

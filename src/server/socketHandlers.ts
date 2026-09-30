@@ -1286,12 +1286,20 @@ export function registerSocketHandlers(
       aCompus('analisis:progreso', { proyectoId: payload.proyectoId, hechos: Number(payload.hechos) || 0, total: Number(payload.total) || 0 })
     })
 
-    socket.on('analisis:textos', (payload: { proyectoId?: string; textos?: unknown }) => {
-      if (!soloCompu(socket) || !esIdValido(payload?.proyectoId) || !Array.isArray(payload.textos)) return
-      const textos = payload.textos
+    const leerTextos = (textos: unknown[]): { n: number; texto: string }[] =>
+      textos
         .filter((t): t is { n: number; texto: string } => !!t && typeof (t as { n: unknown }).n === 'number' && typeof (t as { texto: unknown }).texto === 'string')
         .map((t) => ({ n: t.n, texto: t.texto.slice(0, 200) }))
-      analizador.aplicarTextos(payload.proyectoId, textos)
+
+    socket.on('analisis:textos', (payload: { proyectoId?: string; textos?: unknown }) => {
+      if (!soloCompu(socket) || !esIdValido(payload?.proyectoId) || !Array.isArray(payload.textos)) return
+      analizador.aplicarTextos(payload.proyectoId, leerTextos(payload.textos))
+    })
+
+    // lo que se lleva reconocido: las secciones van apareciendo
+    socket.on('analisis:parcial', (payload: { proyectoId?: string; textos?: unknown }) => {
+      if (!soloCompu(socket) || !esIdValido(payload?.proyectoId) || !Array.isArray(payload.textos)) return
+      analizador.aplicarParcial(payload.proyectoId, leerTextos(payload.textos))
     })
 
     socket.on('analisis:fallo', (payload: { proyectoId?: string; motivo?: string; mensaje?: string }) => {

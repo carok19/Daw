@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import type { ColchonActivo, InfoVoces, ListaActiva, Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
 import { posicionActualMs } from '../shared/playback'
+import { normalizarTonalidad } from '../shared/tonalidad'
 import { guardarSesion, saveProyecto, type SesionGuardada } from './projects'
 import { guardarLista, leerLista } from './listas'
 
@@ -238,7 +239,9 @@ export class AppState {
       id: marcador.id.slice(0, 64),
       nombre: limpiarNombre(marcador.nombre) || 'Sección',
       tiempoMs: this.limitarTiempo(tab, marcador.tiempoMs),
-      origen: marcador.origen === 'guia' || marcador.origen === 'archivo' ? marcador.origen : 'manual'
+      origen: marcador.origen === 'guia' || marcador.origen === 'archivo' ? marcador.origen : 'manual',
+      ...(typeof marcador.color === 'string' && /^#[0-9a-f]{6}$/i.test(marcador.color) ? { color: marcador.color } : {}),
+      ...(normalizarTonalidad(marcador.tonalidad) ? { tonalidad: normalizarTonalidad(marcador.tonalidad)! } : {})
     })
     tab.proyecto.seccionesEditadas = true
     this.ordenarMarcadores(tab)
@@ -249,7 +252,7 @@ export class AppState {
   actualizarMarcador(
     tabId: string,
     marcadorId: string,
-    patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs' | 'color'>>
+    patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs' | 'color'>> & { tonalidad?: string | null }
   ): boolean {
     const tab = this.tabs.get(tabId)
     const marcador = tab?.proyecto.marcadores.find((m) => m.id === marcadorId)
@@ -259,6 +262,8 @@ export class AppState {
     if (nombre) marcador.nombre = nombre
     if (numeroFinito(patch.tiempoMs)) marcador.tiempoMs = this.limitarTiempo(tab, patch.tiempoMs)
     if (typeof patch.color === 'string' && /^#[0-9a-f]{6}$/i.test(patch.color)) marcador.color = patch.color
+    if (patch.tonalidad === null || patch.tonalidad === '') delete marcador.tonalidad
+    else if (normalizarTonalidad(patch.tonalidad)) marcador.tonalidad = normalizarTonalidad(patch.tonalidad)!
     // una seccion automatica que se corrige a mano pasa a ser del usuario
     if (`${marcador.nombre}|${marcador.tiempoMs}` !== antes) marcador.origen = 'manual'
     tab.proyecto.seccionesEditadas = true

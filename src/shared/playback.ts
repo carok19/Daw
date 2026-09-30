@@ -1,4 +1,4 @@
-import type { Marcador, PlaybackState, TramoReproduccion } from './types'
+import type { Marcador, PlaybackState, TempoProyecto, TramoReproduccion } from './types'
 
 function posicionDeTramo(tramo: TramoReproduccion, nowMs: number): number {
   if (tramo.estado === 'playing' && nowMs > tramo.referenceServerTime) {
@@ -143,4 +143,49 @@ export function compasesQueFaltan(
 /** "faltan 3" / "último compás" (null = no se sabe). */
 export function textoQueFaltan(n: number | null): string | null {
   return n === null ? null : n === 1 ? 'último compás' : `faltan ${n}`
+}
+
+/**
+ * Largo "tipico" del compas `k` (ms): la mediana de ese y los de al lado. Un
+ * 2/4 o un 3/4 suelto no cambia el pulso de la cuenta ni del colchon; un
+ * cambio de tempo, si (a partir de ahi, los de al lado ya son los nuevos).
+ */
+export function largoTipicoDeCompas(compasesMs: number[], k: number): number {
+  const n = compasesMs.length - 1 // compases con largo conocido
+  if (n < 1) return 0
+  const largo = (i: number): number => compasesMs[i + 1] - compasesMs[i]
+  if (n < 3) return largo(Math.max(0, Math.min(k, n - 1)))
+  const i0 = Math.max(0, Math.min(k - 1, n - 3))
+  const largos = [largo(i0), largo(i0 + 1), largo(i0 + 2)].sort((a, b) => a - b)
+  return largos[1]
+}
+
+/**
+ * BPM de un tramo de la cancion (la mediana del largo de sus compases): en una
+ * cancion que cambia de tempo, el de la parte que suena. null = sin tempo.
+ */
+export function bpmDeTramo(tempo: Pick<TempoProyecto, 'compasesMs' | 'compas'> | null | undefined, desdeMs: number, hastaMs: number): number | null {
+  const c = tempo?.compasesMs
+  if (!c || c.length < 2 || !(tempo!.compas > 0)) return null
+  const largos: number[] = []
+  let k = 0
+  for (let i = 0; i + 1 < c.length; i++) {
+    if (c[i] <= desdeMs + 1) k = i
+    if (c[i] >= desdeMs - 1 && c[i] < hastaMs - 50) largos.push(c[i + 1] - c[i])
+  }
+  // tramo mas corto que un compas: el que lo contiene
+  if (largos.length === 0) largos.push(largoTipicoDeCompas(c, k))
+  largos.sort((a, b) => a - b)
+  const m = largos.length % 2 ? largos[(largos.length - 1) / 2] : (largos[largos.length / 2 - 1] + largos[largos.length / 2]) / 2
+  return m > 0 ? (60000 * tempo!.compas) / m : null
+}
+
+/**
+ * El BPM de la seccion que suena, si es otro que el de la cancion (una parte
+ * lenta, un popurri): null si es el mismo (±3 %) o no se sabe.
+ */
+export function bpmDistintoEnSeccion(tempo: Pick<TempoProyecto, 'compasesMs' | 'compas' | 'bpm'> | null | undefined, seccion: Pick<Seccion, 'inicioMs' | 'finMs'> | null): number | null {
+  if (!tempo || !seccion) return null
+  const b = bpmDeTramo(tempo, seccion.inicioMs, seccion.finMs)
+  return b !== null && Math.abs(b / tempo.bpm - 1) > 0.03 ? b : null
 }

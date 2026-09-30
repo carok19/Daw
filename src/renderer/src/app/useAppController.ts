@@ -16,6 +16,7 @@ import type {
   InfoModeloVoz,
   PedidoVoz,
   Marcador,
+  MarcadorActualizarPayload,
   ModoSalto,
   MixerActualizadoPayload,
   MotivoCodigo,
@@ -29,7 +30,7 @@ import type {
   EstadoFirewall,
   ProgresoTono
 } from '@shared/types'
-import { calcularSecciones, estaSonando, posicionActualMs, seccionEn, tramoVigente } from '@shared/playback'
+import { calcularSecciones, estaSonando, largoTipicoDeCompas, posicionActualMs, seccionEn, tramoVigente } from '@shared/playback'
 import { golpeActual } from '@shared/cuenta'
 import { compasYPulso } from '@shared/colchon'
 import { SocketClient } from '../sync/SocketClient'
@@ -44,17 +45,18 @@ import { codigoDesdeDireccion, puenteAndroid } from '../conexion'
 /** Compas mas cercano (si esta a menos de medio compas): "ajustar al compas". */
 export function ajustarACompas(compasesMs: number[] | undefined, ms: number): number {
   if (!compasesMs || compasesMs.length < 2) return ms
-  let mejor = ms
+  let mejor = 0
   let dist = Infinity
-  for (const c of compasesMs) {
+  compasesMs.forEach((c, i) => {
     const d = Math.abs(c - ms)
     if (d < dist) {
       dist = d
-      mejor = c
+      mejor = i
     }
-  }
-  const medioCompas = (compasesMs[1] - compasesMs[0]) / 2
-  return dist <= medioCompas ? mejor : ms
+  })
+  // (el compas de ahi: la cancion puede cambiar de tempo)
+  const medioCompas = largoTipicoDeCompas(compasesMs, Math.min(mejor, compasesMs.length - 2)) / 2
+  return dist <= medioCompas ? compasesMs[mejor] : ms
 }
 
 export interface Aviso {
@@ -730,7 +732,7 @@ export function useAppController() {
         const compases = estadoRef.current?.proyectoActivo?.tempo?.compasesMs
         emit('marker:create', { tiempoMs: ajustarRef.current ? ajustarACompas(compases, tiempoMs) : tiempoMs, nombre })
       },
-      updateMarker(marcadorId: string, patch: Partial<Pick<Marcador, 'nombre' | 'tiempoMs' | 'color'>>, sinAjustar = false): void {
+      updateMarker(marcadorId: string, patch: MarcadorActualizarPayload['patch'], sinAjustar = false): void {
         const compases = estadoRef.current?.proyectoActivo?.tempo?.compasesMs
         const p = { ...patch }
         if (p.tiempoMs !== undefined && ajustarRef.current && !sinAjustar) p.tiempoMs = ajustarACompas(compases, p.tiempoMs)
