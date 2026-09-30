@@ -178,9 +178,13 @@ cambian a propósito.
    baja cada pista (más click, menos pad…) sin cambiar lo que escuchan los
    demás. Los faders se mueven **deslizando de costado**; deslizando para
    arriba o abajo la pantalla scrollea sin tocar ningún volumen, y un toque
-   suelto no cambia nada (doble toque: vuelve a “igual”). La canción, la
-   sección y el transporte van en una **barra flotante** abajo, con las
-   secciones y las canciones del setlist a un toque.
+   suelto no cambia nada (doble toque: vuelve a “igual”). Cada pista tiene
+   **M** (mute) y **S** (solo) propios del celular: con una o varias pistas
+   en **S** ese músico escucha solo esas (el solo del celular manda sobre el
+   de la compu; lo muteado en la compu sigue apagado). El resto de la banda
+   no se entera. La canción, la sección y el transporte van en una **barra
+   flotante** abajo, con las secciones y las canciones del setlist a un
+   toque.
    **Volumen de este celular: hasta 200 %.** Si con el celular al máximo
    suena bajito (pasa con muchos auriculares), se sube por encima de 100 %
    (hasta +6 dB). Un limitador en el celular evita que distorsione: los
@@ -238,8 +242,11 @@ director + su “Mi mezcla”) y le manda **una sola pista estéreo**: ~1,4 Mbps
 por celular, tenga la canción 4 pistas o 20 (antes, con cada pista por
 separado, una canción de 20 pistas pedía más de 25 Mbps por celular y el WiFi
 no daba). Sigue siendo WAV sin comprimir, sin pérdida de calidad. Con 10
-celulares son ~14 Mbps en total: entra en cualquier router. Mover un fader de
-“Mi mezcla” se escucha en menos de un segundo.
+celulares son ~14 Mbps en total: entra en cualquier router. Un mute o un
+fader (de la compu o de “Mi mezcla”) se escucha en el celular en **~0,1 s**
+con buen WiFi y en **~0,6 s** con el WiFi cargado (medido con audio real,
+limitando el celular a 6 Mbps; un cambio justo al final de un pedazo de 2 s
+puede tardar hasta ~1,3 s).
 
 **¿Se corta?** En la ventana de Celulares, debajo de cada celular, se ve
 cuánto WiFi le da la red, cuánto necesita, cuántos segundos de audio tiene
@@ -393,7 +400,16 @@ cada segmento se libera apenas termina.
 - **Cambio de mezcla sin cortes:** mientras llega la mezcla nueva sigue
   sonando la anterior; cuando llega, se pasa a ella en el mismo punto exacto
   de la canción con un fundido de 20 ms (mientras se arrastra un fader, como
-  mucho cada 300 ms).
+  mucho cada 300 ms), aunque ese pedazo esté corrigiendo el sync.
+- **Primero lo urgente, de a uno:** después de un cambio de mezcla (un mute,
+  un fader) el celular pide **un solo pedazo por vez y en orden**, empezando
+  por el primero que llega a tiempo, hasta tener la mezcla nueva en todo lo
+  que ya estaba programado; recién después vuelve a bajar varios a la vez
+  para el colchón. Antes pedía 4 a la vez: con el WiFi cargado se repartían
+  la red, llegaban todos tarde y el mute tardaba 2-4 s. Para elegir por cuál
+  empezar estima cuánto tarda un pedazo solo (con lo último que bajó, cada
+  pedido con su parte de la red) y deja tiempo para el siguiente: así la
+  pista muteada nunca vuelve a sonar un rato.
 - **La compu (sonido local)** sigue pidiendo cada pista por **HTTP Range**
   (lee de su propio disco) con `GainNode` + `StereoPannerNode` por pista: sus
   faders suenan al instante. Colchón de 8 s. `?modo=pistas` / `?modo=mezcla`

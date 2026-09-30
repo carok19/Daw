@@ -572,7 +572,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
       if (r.url().includes('/media/') && !r.url().includes('/analisis/')) pedidosMedia.push(r.url())
     })
     // en este celular, sin el click (sus golpes taparian la posicion)
-    await cel.getByRole('button', { name: 'Silenciar Click en este celular' }).click()
+    await cel.getByRole('button', { name: 'Mute de Click en este celular' }).click()
     await compu.keyboard.press('Space')
     await esperar(4000)
 
@@ -1734,4 +1734,119 @@ test('Android con el navegador: "Abrir en la app" lleva a la app con la misma di
   await ios.goto(`http://localhost:${port}/`)
   await ios.getByRole('button', { name: /Tocá para empezar/ }).waitFor()
   assert.equal(await ios.getByRole('link', { name: /Abrir en la app/ }).count(), 0)
+})
+
+test('mute desde la compu y mute/solo en el celular: esa pista deja de escucharse enseguida (audio real, WiFi normal y cargado)', { timeout: 4 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-mute-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  // "Seno" (a la izquierda) es lo que se mutea; "Banda" (a la derecha) sigue sonando
+  const SEG = 150
+  const seno = new Float32Array(SEG * SR)
+  const banda = new Float32Array(SEG * SR)
+  for (let i = 0; i < seno.length; i++) {
+    seno[i] = 0.4 * Math.sin((2 * Math.PI * 330 * i) / SR)
+    banda[i] = 0.3 * Math.sin((2 * Math.PI * 220 * i) / SR)
+  }
+  const z = new AdmZip()
+  z.addFile('Seno.wav', wav16(seno, SR))
+  z.addFile('Banda.wav', wav16(banda, SR))
+  const zip = path.join(tmp, 'Mute.zip')
+  z.writeZip(zip)
+  const compuSock = (await import('socket.io-client')).io(base, { auth: { origen: 'compu', token: 'e2e' } })
+  t.after(() => void compuSock.close())
+  await new Promise<void>((r) => compuSock.once('connect', () => r()))
+  await new Promise((r) => compuSock.emit('project:load-from-zip', { filePath: zip }, r))
+  const p = server.state.getActiveTab()!.proyecto
+  const idSeno = p.pistas.find((x) => x.nombre === 'Seno')!.id
+  const idBanda = p.pistas.find((x) => x.nombre === 'Banda')!.id
+  server.state.actualizarMixer(server.state.getActiveTab()!.tabId, idSeno, { pan: -100 })
+  server.state.actualizarMixer(server.state.getActiveTab()!.tabId, idBanda, { pan: 100 })
+  server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
+
+  const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+  ctx.setDefaultTimeout(15000)
+  const cel = await ctx.newPage()
+  await cel.goto(`${base}/?debug`)
+  await cel.getByRole('button', { name: /Tocá para empezar/ }).click()
+  await cel.waitForFunction(() => !!(globalThis as unknown as { __mt?: { engineRef: { current: unknown } } }).__mt?.engineRef.current)
+  await cel.evaluate(async () => {
+    const g = globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode } } }; __muestras: [number, number][] }
+    const engine = g.__mt.engineRef.current
+    const codigo = `registerProcessor('grabador-mute', class extends AudioWorkletProcessor {
+      constructor() { super(); this.lote = [] }
+      process(inputs) {
+        const L = inputs[0] && inputs[0][0]
+        if (L) { let pico = 0; for (let i = 0; i < L.length; i++) pico = Math.max(pico, Math.abs(L[i])); this.lote.push([currentTime, pico]) }
+        if (this.lote.length >= 8) { this.port.postMessage(this.lote); this.lote = [] }
+        return true
+      }
+    })`
+    await engine.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' })))
+    const nodo = new AudioWorkletNode(engine.ctx, 'grabador-mute', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' })
+    g.__muestras = []
+    nodo.port.onmessage = (e: MessageEvent<[number, number][]>) => {
+      const ts = engine.ctx.getOutputTimestamp()
+      const b = performance.timeOrigin + (ts.performanceTime ?? 0) - (ts.contextTime ?? 0) * 1000
+      for (const [tc, v] of e.data) g.__muestras.push([b + tc * 1000, v])
+    }
+    engine.masterGain.connect(nodo)
+  })
+  compuSock.emit('transport:play', {})
+  await esperar(6000)
+
+  /** Mutea (o desmutea) el seno y mide cuanto tarda en escucharse en el celular. De entrada, como lo hace la compu. */
+  async function medir(mute: boolean, espera: number, accion = (): unknown => compuSock.emit('mixer:update', { pistaId: idSeno, patch: { mute } })): Promise<number> {
+    await cel.evaluate(() => ((globalThis as unknown as { __muestras: unknown[] }).__muestras = []))
+    // distintos momentos del pedazo de 2 s que suena (al final es lo mas dificil)
+    await esperar(espera)
+    const t0 = Date.now()
+    await accion()
+    await esperar(4000)
+    const m = (await cel.evaluate(() => (globalThis as unknown as { __muestras: [number, number][] }).__muestras)) as [number, number][]
+    const cambiado = ([, v]: [number, number]): boolean => (mute ? v < 0.02 : v > 0.1)
+    const cambio = m.find((x) => x[0] > t0 && cambiado(x))
+    assert.ok(cambio, `${mute ? 'mute' : 'desmute'}: no cambió en 4 s`)
+    // y queda asi: no vuelve un rato a como estaba (un pedazo de la mezcla vieja)
+    const vuelta = m.find((x) => x[0] > cambio![0] + 40 && !cambiado(x))
+    assert.ok(!vuelta, `${mute ? 'mute' : 'desmute'}: cambió a los ${Math.round(cambio![0] - t0)} ms y volvió a los ${Math.round((vuelta?.[0] ?? 0) - t0)} ms`)
+    return cambio![0] - t0
+  }
+  const esperas = [300, 800, 1300, 1800, 550, 1050, 1550, 2050]
+  const normal: number[] = []
+  for (const [k, e] of esperas.entries()) normal.push(await medir(k % 2 === 0, e))
+  // WiFi cargado: 6 Mbps y 30 ms de demora
+  const cdp = await ctx.newCDPSession(cel)
+  await cdp.send('Network.enable')
+  await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 30, downloadThroughput: (6e6 / 8) | 0, uploadThroughput: (2e6 / 8) | 0 })
+  await esperar(3000)
+  const cargado: number[] = []
+  for (const [k, e] of esperas.entries()) cargado.push(await medir(k % 2 === 0, e))
+  console.log('demora del mute en el celular (ms) · WiFi normal:', normal.map(Math.round).join(', '), '· WiFi cargado:', cargado.map(Math.round).join(', '))
+
+  // "Mi mezcla" en el celular: M silencia el seno; S en la banda lo deja afuera (solo en este celular)
+  const boton = (nombre: string) => cel.getByRole('button', { name: nombre })
+  const personal = [
+    await medir(true, 300, () => boton('Mute de Seno en este celular').click()),
+    await medir(false, 800, () => boton('Mute de Seno en este celular').click()),
+    await medir(true, 300, () => boton('Solo de Banda en este celular').click()),
+    await medir(false, 800, () => boton('Solo de Seno en este celular').click())
+  ]
+  assert.equal(await boton('Solo de Banda en este celular').getAttribute('aria-pressed'), 'true')
+  assert.equal(await boton('Solo de Seno en este celular').getAttribute('aria-pressed'), 'true')
+  console.log('Mi mezcla (M/S en el celular, WiFi cargado) (ms):', personal.map(Math.round).join(', '))
+  compuSock.emit('transport:stop', {})
+  assert.ok(Math.max(...normal) < 600, `WiFi normal: ${normal.map(Math.round).join(', ')} ms`)
+  // con la red cargada: casi siempre ~0,6 s; un mute justo al final de un pedazo espera al siguiente (hasta ~1,3 s)
+  const promedio = cargado.reduce((a, b) => a + b, 0) / cargado.length
+  assert.ok(Math.max(...cargado) < 1500 && promedio < 1000, `WiFi cargado: ${cargado.map(Math.round).join(', ')} ms`)
+  assert.ok(Math.max(...personal) < 1500, `Mi mezcla: ${personal.map(Math.round).join(', ')} ms`)
 })

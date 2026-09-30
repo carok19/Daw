@@ -15,7 +15,6 @@ import {
   SkipForward,
   UserPlus,
   Volume2,
-  VolumeX,
   WifiOff,
   X
 } from 'lucide-react'
@@ -25,7 +24,8 @@ import { textoSemitonos, tonalidadOriginal, transponerTonalidad } from '@shared/
 import type { AppController } from '../app/useAppController'
 import { useGolpeCuenta, usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
 import { leerPref } from '../app/preferencias'
-import { clavePista } from '../audio/PlaybackEngine'
+import { clavePista, type AjustePersonal } from '../audio/PlaybackEngine'
+import { fueraDelSolo } from '@shared/mezcla'
 import { VOLUMEN_MAX } from '../audio/streamConfig'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
@@ -198,14 +198,15 @@ function CanalGeneral({ controller }: { controller: AppController }) {
 function Mezcla({ controller, proyecto }: { controller: AppController; proyecto: Proyecto }) {
   const mezcla = controller.mezclaPersonal
   const hayCambios = Object.keys(mezcla).length > 0
-  const haySolo = proyecto.pistas.some((p) => p.solo)
+  const soloAca = proyecto.pistas.some((p) => mezcla[clavePista(p.nombre)]?.solo)
 
-  function set(nombre: string, patch: Partial<{ ganancia: number; mute: boolean }>): void {
+  function set(nombre: string, patch: Partial<AjustePersonal>): void {
     const clave = clavePista(nombre)
     const actual = mezcla[clave] ?? { ganancia: 1, mute: false }
     const nuevo = { ...actual, ...patch }
+    if (!nuevo.solo) delete nuevo.solo
     const copia = { ...mezcla }
-    if (Math.abs(nuevo.ganancia - 1) < 0.001 && !nuevo.mute) delete copia[clave]
+    if (Math.abs(nuevo.ganancia - 1) < 0.001 && !nuevo.mute && !nuevo.solo) delete copia[clave]
     else copia[clave] = nuevo
     controller.setMezclaPersonal(copia)
   }
@@ -223,15 +224,17 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
       </div>
       <CanalGeneral controller={controller} />
       {proyecto.pistas.map((p) => {
-        const ajuste = mezcla[clavePista(p.nombre)] ?? { ganancia: 1, mute: false }
+        const ajuste: AjustePersonal = mezcla[clavePista(p.nombre)] ?? { ganancia: 1, mute: false }
         const pct = Math.round(ajuste.ganancia * 100)
-        const apagadaEnCompu = p.mute || (haySolo && !p.solo)
+        const afueraDelSolo = fueraDelSolo(proyecto.pistas, mezcla, p)
+        const aviso = p.mute ? 'apagada en la compu' : afueraDelSolo ? (soloAca ? null : 'solo en la compu') : null
+        const noSuena = ajuste.mute || p.mute || afueraDelSolo
         return (
-          <div key={p.id} className={`m-canal ${ajuste.mute ? 'muteado' : ''}`}>
+          <div key={p.id} className={`m-canal ${noSuena ? 'muteado' : ''} ${ajuste.solo ? 'en-solo' : ''}`}>
             <div className="m-canal-cabeza">
               <span className="punto" style={{ background: p.color }} />
               <span className="m-canal-nombre">{p.nombre}</span>
-              {apagadaEnCompu && <span className="m-canal-aviso">apagada en la compu</span>}
+              {aviso && <span className="m-canal-aviso">{aviso}</span>}
               <small className="num">{ajuste.mute ? 'muda' : textoGanancia(pct)}</small>
             </div>
             <div className="m-canal-control">
@@ -247,21 +250,32 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
                 onCambio={(v) => set(p.nombre, { ganancia: v / 100 })}
               />
               <button
-                className={`m-mute ${ajuste.mute ? 'activo' : ''}`}
+                className={`m-ms m-mute ${ajuste.mute ? 'activo' : ''}`}
                 onClick={() => set(p.nombre, { mute: !ajuste.mute })}
                 aria-pressed={ajuste.mute}
-                aria-label={`${ajuste.mute ? 'Volver a escuchar' : 'Silenciar'} ${p.nombre} en este celular`}
+                aria-label={`Mute de ${p.nombre} en este celular`}
+                title="Mute: no escuchar esta pista (solo en este celular)"
               >
-                {ajuste.mute ? <VolumeX size={19} /> : <Volume2 size={19} />}
+                M
+              </button>
+              <button
+                className={`m-ms m-solo ${ajuste.solo ? 'activo' : ''}`}
+                onClick={() => set(p.nombre, { solo: !ajuste.solo })}
+                aria-pressed={!!ajuste.solo}
+                aria-label={`Solo de ${p.nombre} en este celular`}
+                title="Solo: escuchar solo las pistas en solo (solo en este celular)"
+              >
+                S
               </button>
             </div>
           </div>
         )
       })}
       <p className="m-mezcla-pie">
-        Deslizá los faders de costado (para arriba o abajo, la pantalla se mueve sin tocar nada). Doble toque: vuelve a “igual”. La
-        mezcla la arma la compu para este celular: los cambios se escuchan en menos de un segundo. Se recuerda por nombre de pista,
-        para todas las canciones.
+        Deslizá los faders de costado (para arriba o abajo, la pantalla se mueve sin tocar nada). Doble toque: vuelve a “igual”.
+        <b> M</b> silencia la pista y <b>S</b> la deja sola (podés poner varias en solo); es solo para vos, el resto de la banda sigue
+        igual. La mezcla la arma la compu para este celular: los cambios se escuchan en menos de un segundo. Se recuerda por nombre de
+        pista, para todas las canciones.
       </p>
     </section>
   )

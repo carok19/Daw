@@ -203,7 +203,12 @@ export class StreamingEngine implements PlaybackEngine {
     /** pedidos terminados: [fin (ms), bytes, duracion (ms)] */
     recibidos: [] as [number, number, number][],
     /** intervalos con algun pedido en curso: [desde, hasta] (ms) */
-    ocupado: [] as [number, number][]
+    ocupado: [] as [number, number][],
+    /** pedidos en curso con su parte de la red hasta ahora (ms): con 4 a la vez, a cada uno le toca un cuarto */
+    enCurso: new Set<{ parteMs: number }>(),
+    ultimoReparto: 0,
+    /** lo que tardo cada uno de los ultimos pedidos terminados si hubiera ido solo (ms) */
+    solos: [] as number[]
   }
   private intervalo: ReturnType<typeof setInterval>
   // cuenta antes de la cancion: sus golpes van por el canal del click (su volumen y su lado en esta mezcla)
@@ -878,9 +883,9 @@ export class StreamingEngine implements PlaybackEngine {
 
   /**
    * Primer indice que hace falta tener bajado: el proximo a encadenar. En modo
-   * mezcla, si lo que suena se hizo con una mezcla vieja y sigue de corrido
-   * hasta lo proximo (no hay un salto de por medio), desde lo que suena: asi
-   * se puede pasar a la mezcla nueva sin esperar al proximo segmento.
+   * mezcla, si lo que suena o lo ya programado se hizo con una mezcla vieja y
+   * sigue de corrido hasta lo proximo (no hay un salto de por medio), desde
+   * ahi: asi se pasa a la mezcla nueva sin esperar a lo que no esta programado.
    */
   private indiceBaseVentana(): number {
     if (!this.reproduciendo) return this.indiceReposo
@@ -888,8 +893,10 @@ export class StreamingEngine implements PlaybackEngine {
     if (!s) return this.indiceReposo
     if (this.modo !== 'mezcla') return s.indice
     const ahora = this.ctx.currentTime
-    const i = this.tramos.findIndex((t) => t.inicioCtx + t.duracionCtx > ahora)
-    if (i === -1 || this.tramos[i].clave === this.claveMezcla) return s.indice
+    // (lo que termina antes de que pueda llegar la mezcla nueva no: queda con la vieja)
+    const llega = ahora + 0.06 + this.descargaEstimadaSec()
+    const i = this.tramos.findIndex((t) => t.inicioCtx + t.duracionCtx > llega && t.clave !== this.claveMezcla)
+    if (i === -1) return s.indice
     let pos = this.tramos[i].posInicio
     for (let k = i; k < this.tramos.length; k++) {
       if (Math.abs(this.tramos[k].posInicio - pos) > 0.001) return s.indice
@@ -1099,11 +1106,13 @@ export class StreamingEngine implements PlaybackEngine {
 
     // 2) lo que esta sonando: fundido a la mezcla nueva
     const sonando = this.tramos.find((tr) => tr.inicioCtx <= ahora && tr.inicioCtx + tr.duracionCtx > ahora)
-    if (!sonando || sonando.clave === this.claveMezcla || sonando.rate !== 1) return
+    if (!sonando || sonando.clave === this.claveMezcla) return
     const tCambio = ahora + 0.06
     const fin = sonando.inicioCtx + sonando.duracionCtx
     if (tCambio >= fin - FUNDIDO_MEZCLA_SEC) return // el borde esta encima: lo resuelve el paso 1 en el proximo tick
-    const pos = sonando.posInicio + (tCambio - sonando.inicioCtx)
+    // si el tramo estaba corrigiendo el sync (un poco mas lento o rapido), hasta donde llego
+    const hecho = contenidoHasta(sonando, tCambio - sonando.inicioCtx)
+    const pos = sonando.posInicio + hecho
     const indice = Math.floor(pos / SEGMENT_DURATION_SEC + 1e-9)
     if (!fresco(indice)) return
     for (const f of sonando.fuentes) {
@@ -1116,7 +1125,11 @@ export class StreamingEngine implements PlaybackEngine {
       }
     }
     this.diag.cambiosMezcla++
-    sonando.contenido = tCambio - sonando.inicioCtx
+    // lo que ese tramo iba a corregir y no llego a corregir queda pendiente para lo que sigue
+    const absorbidoHecho = tCambio - sonando.inicioCtx - hecho
+    this.correccionPendiente += sonando.absorbido - absorbidoHecho
+    sonando.absorbido = absorbidoHecho
+    sonando.contenido = hecho
     sonando.duracionCtx = tCambio - sonando.inicioCtx
     this.reprogramarDesde(tCambio)
     this.siguiente = { indice, posInicio: pos, inicioCtx: tCambio }
@@ -1132,6 +1145,7 @@ export class StreamingEngine implements PlaybackEngine {
   private lanzarFetchsPendientes(): void {
     if (this.canales.size === 0) return
     const ahora = Date.now()
+    if (this.bajarUrgentesDeMezcla(ahora)) return
     const desde = this.indiceBaseVentana()
     const cantidad = this.reproduciendo ? this.cantidadIndicesVentana() : Math.ceil(BUFFER_MIN_START_SEC / SEGMENT_DURATION_SEC) + 1
     const canales = [...this.canales.values()].filter((c) => !c.error && ahora >= c.esperarHasta)
@@ -1172,6 +1186,65 @@ export class StreamingEngine implements PlaybackEngine {
       }
     }
     if (enVueloTotal === 0) this.lanzarPrecarga()
+  }
+
+  /**
+   * Modo mezcla, recien cambiada la mezcla (un mute, un fader): lo que suena y
+   * lo ya programado es la mezcla vieja. Se baja de a UN segmento y en orden,
+   * empezando por el primero donde se va a poder hacer el cambio: varios
+   * pedidos a la vez se reparten el WiFi y, con la red cargada, llegaban todos
+   * tarde (el mute tardaba segundos en oirse). Con eso ya en camino, el resto
+   * del colchon se baja como siempre. true = hay algo urgente (no se pide nada mas).
+   */
+  private bajarUrgentesDeMezcla(ahora: number): boolean {
+    // Lo pedido ahora llega en lo que tarda un segmento solo, y el siguiente en
+    // otro tanto: si el que suena termina antes de eso, pasarlo a la mezcla
+    // nueva haria que el siguiente vuelva un rato a la vieja (el mute se oiria
+    // y la pista volveria). Se empieza por el primero con tiempo para los dos.
+    const urgentes = this.viejosProgramados(0.06 + 2.5 * this.descargaEstimadaSec())
+    if (urgentes.length === 0) return false
+    const canal = this.canales.get(ID_MEZCLA)!
+    if (canal.error || ahora < canal.esperarHasta) return true
+    // lo que ya viene en camino y todavia llega a tiempo sigue; lo demas le quitaria red
+    const aTiempo = this.viejosProgramados(0.06)
+    for (const [i, v] of canal.enVuelo) {
+      if (aTiempo.includes(i)) continue
+      v.ctrl.abort()
+      canal.enVuelo.delete(i)
+    }
+    if (canal.enVuelo.size === 0) this.pedirSegmento(canal, urgentes[0])
+    return true
+  }
+
+  /**
+   * Modo mezcla: los segmentos programados con la mezcla vieja, sin la nueva
+   * bajada, que terminan despues de `margen` segundos (en orden).
+   */
+  private viejosProgramados(margen: number): number[] {
+    if (this.modo !== 'mezcla' || !this.reproduciendo) return []
+    const canal = this.canales.get(ID_MEZCLA)
+    if (!canal) return []
+    const limite = this.ctx.currentTime + margen
+    const indices: number[] = []
+    for (const tr of this.tramos) {
+      if (tr.clave === this.claveMezcla || tr.inicioCtx + tr.duracionCtx - FUNDIDO_MEZCLA_SEC <= limite) continue
+      if (indices.includes(tr.indice) || canal.segmentos.get(tr.indice)?.clave === this.claveMezcla) continue
+      if (canal.finEnIndice !== null && tr.indice >= canal.finEnIndice) continue
+      indices.push(tr.indice)
+    }
+    return indices.sort((a, b) => a - b)
+  }
+
+  /**
+   * Cuanto tarda en llegar un segmento pedido solo, con lo ultimo que se bajo
+   * (el WiFi cambia: se carga cuando hay mas gente). Si se bajaban varios a la
+   * vez, cada uno cuenta con su parte de la red.
+   */
+  private descargaEstimadaSec(): number {
+    const solos = this.diag.solos
+    if (solos.length === 0) return 0.3
+    const promedio = solos.reduce((a, b) => a + b, 0) / solos.length
+    return Math.min(1.5, Math.max(0.03, promedio / 1000))
   }
 
   /** Baja el principio de la proxima cancion, pocos pedidos a la vez (menos todavia si algo suena). */
@@ -1370,19 +1443,38 @@ export class StreamingEngine implements PlaybackEngine {
     const d = this.diag
     const inicio = Date.now()
     if (d.activos++ === 0) d.ocupadoDesde = inicio
+    this.repartirRed()
+    const pedido = { parteMs: 0 }
+    d.enCurso.add(pedido)
     try {
       const r = await fn()
       const bytes = r instanceof ArrayBuffer ? r.byteLength : r.bytes.byteLength
       const fin = Date.now()
       d.recibidos.push([fin, bytes, fin - inicio])
       if (d.recibidos.length > 400) d.recibidos.splice(0, d.recibidos.length - 400)
+      this.repartirRed()
+      d.solos.push(pedido.parteMs)
+      if (d.solos.length > 4) d.solos.shift()
       return r
     } finally {
+      this.repartirRed()
+      d.enCurso.delete(pedido)
       if (--d.activos === 0) {
         d.ocupado.push([d.ocupadoDesde, Date.now()])
         if (d.ocupado.length > 400) d.ocupado.splice(0, d.ocupado.length - 400)
       }
     }
+  }
+
+  /** Reparte el tiempo que paso desde la ultima vez entre los pedidos en curso (se reparten el WiFi). */
+  private repartirRed(): void {
+    const d = this.diag
+    const ahora = performance.now()
+    if (d.enCurso.size > 0) {
+      const parte = (ahora - d.ultimoReparto) / d.enCurso.size
+      for (const p of d.enCurso) p.parteMs += parte
+    }
+    d.ultimoReparto = ahora
   }
 
   /** `?v=`: si el zip se actualizo, el archivo cambia con el mismo nombre (que no sirva el cache viejo). */

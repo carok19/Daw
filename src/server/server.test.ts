@@ -1108,6 +1108,44 @@ test('cuenta: al dar play (parado o en pausa) la compu programa la cuenta con el
   await env.cerrar()
 })
 
+test('Mi mezcla: mute y solo de cada músico (el solo del celular manda sobre el de la compu; el mute de la compu vale igual)', () => {
+  const pista = (nombre: string, extra: Partial<Pista> = {}): Pista => ({
+    id: crypto.randomUUID(),
+    nombre,
+    archivo: `${nombre}.wav`,
+    volumen: 100,
+    pan: 0,
+    mute: false,
+    solo: false,
+    color: '#fff',
+    ...extra
+  })
+  const click = pista('Click')
+  const bajo = pista('Bajo')
+  const piano = pista('Piano', { solo: true })
+  const pad = pista('Pad', { mute: true })
+  const pistas = [click, bajo, piano, pad]
+  const suenan = (m: Parameters<typeof mezclaEfectiva>[1]): string[] =>
+    mezclaEfectiva(pistas, m).map((c) => pistas.find((p) => p.id === c.pistaId)!.nombre)
+
+  // sin nada en este celular: el solo de la compu (piano)
+  assert.deepEqual(suenan({}), ['Piano'])
+  // solo en el celular: se escucha lo que el musico puso en solo (el de la compu no cuenta aca)
+  assert.deepEqual(suenan({ click: { ganancia: 1, mute: false, solo: true } }), ['Click'])
+  assert.deepEqual(suenan({ click: { ganancia: 1, mute: false, solo: true }, bajo: { ganancia: 0.5, mute: false, solo: true } }), ['Click', 'Bajo'])
+  // lo apagado en la compu sigue apagado aunque este en solo aca
+  assert.deepEqual(suenan({ pad: { ganancia: 1, mute: false, solo: true } }), [])
+  // mute y solo juntos en la misma pista: manda el mute
+  assert.deepEqual(suenan({ click: { ganancia: 1, mute: true, solo: true }, bajo: { ganancia: 1, mute: false, solo: true } }), ['Bajo'])
+  // sin solos en ningun lado: todo menos lo muteado (en la compu o aca)
+  piano.solo = false
+  assert.deepEqual(suenan({ bajo: { ganancia: 1, mute: true } }), ['Click', 'Piano'])
+  // las ganancias del celular se mantienen con el solo
+  const [c] = mezclaEfectiva(pistas, { bajo: { ganancia: 0.5, mute: false, solo: true } })
+  assert.equal(c.pistaId, bajo.id)
+  assert.equal(c.ganancia, 0.5)
+})
+
 test('mezcla en hilos de trabajo (igual al hilo principal) y lo más urgente primero', async (t) => {
   const env = await entorno(t)
   const compu = await env.conectar(compuAuth)

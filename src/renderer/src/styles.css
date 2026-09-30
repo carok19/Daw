@@ -2337,17 +2337,27 @@ input[type='range'].slider::-moz-range-thumb {
   padding: 2px 7px;
   white-space: nowrap;
 }
-.m-mute {
-  width: 46px;
+.m-ms {
+  width: 44px;
   height: 40px;
   padding: 0;
   border-radius: 10px;
   flex-shrink: 0;
+  font-weight: 800;
+  font-size: 16px;
 }
 .m-mute.activo {
-  background: var(--danger-soft);
+  background: var(--danger);
   border-color: var(--danger);
-  color: #ff8a8a;
+  color: #fff;
+}
+.m-solo.activo {
+  background: var(--solo);
+  border-color: var(--solo);
+  color: #2a2200;
+}
+.m-canal.en-solo {
+  border-color: var(--solo);
 }
 
 /* fader tactil: solo se mueve deslizando de costado; vertical = scroll */

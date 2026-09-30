@@ -16,6 +16,8 @@ export interface AjustePersonal {
   /** multiplicador sobre la mezcla del director: 0 a 2 (1 = igual que el director) */
   ganancia: number
   mute: boolean
+  /** solo en este celular: si alguna pista esta en solo aca, se escuchan solo esas (en lugar del solo de la compu) */
+  solo?: boolean
 }
 
 export type MezclaPersonal = Record<string, AjustePersonal>
@@ -97,17 +99,24 @@ export interface CanalMezcla {
 
 const clamp = (v: number, min: number, max: number): number => Math.min(max, Math.max(min, v))
 
+/** ¿Esta pista queda afuera por un solo? El solo de este celular manda sobre el de la compu (el mute de la compu vale igual). */
+export function fueraDelSolo(pistas: Pista[], personal: MezclaPersonal, pista: Pista): boolean {
+  const soloPersonal = pistas.some((p) => personal[clavePista(p.nombre)]?.solo)
+  if (soloPersonal) return !personal[clavePista(pista.nombre)]?.solo
+  return pistas.some((p) => p.solo) && !pista.solo
+}
+
 /**
  * Ganancia y paneo finales de cada pista: fader y paneo del director (curva
- * cuadratica), mute/solo del director y "Mi mezcla" del dispositivo. Las
- * pistas que no suenan no se incluyen (el servidor ni las lee).
+ * cuadratica), mute/solo del director y "Mi mezcla" del dispositivo (con su
+ * propio mute y solo). Las pistas que no suenan no se incluyen (el servidor
+ * ni las lee).
  */
 export function mezclaEfectiva(pistas: Pista[], personal: MezclaPersonal = {}): CanalMezcla[] {
-  const haySolo = pistas.some((p) => p.solo)
   const res: CanalMezcla[] = []
   for (const p of pistas) {
     const ajuste = personal[clavePista(p.nombre)]
-    if (p.mute || (haySolo && !p.solo) || ajuste?.mute) continue
+    if (p.mute || ajuste?.mute || fueraDelSolo(pistas, personal, p)) continue
     const v = clamp(p.volumen, 0, 100) / 100
     const ganancia = v * v * (ajuste ? clamp(ajuste.ganancia, 0, 2) : 1)
     if (ganancia <= 0) continue
