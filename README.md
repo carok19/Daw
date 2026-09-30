@@ -211,7 +211,14 @@ cambian a propósito.
    acomodar) y se guarda en la ficha de la canción. Las canciones que ya
    estaban importadas se acomodan al abrirlas, si nadie les había tocado el
    paneo.
-9. **Elegir una sección con la canción sonando** no corta: la sección
+9. **Compases que faltan:** al lado de la sección que suena se ve cuántos
+   compases le quedan (en el celular, un número grande: “Verso 1 · **3**
+   compases”; en la compu, “faltan 3” en el transporte y en su tarjeta),
+   contando el que suena: en el último dice **“último compás”** y titila.
+   Así la batería prepara la entrada y el director elige el salto a tiempo.
+   Si hay un salto elegido, cuenta hasta el salto. Hace falta el tempo
+   detectado (sale del click).
+   **Elegir una sección con la canción sonando** no corta: la sección
    actual termina y la música sigue directo en la elegida (se ve “→ Coro en
    5 s” en la compu y en los celulares). Se puede cambiar por otra, o
    cancelar con ✕ / Esc. En el panel de secciones se elige si salta *al

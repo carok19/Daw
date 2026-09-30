@@ -24,7 +24,7 @@ import {
   X
 } from 'lucide-react'
 import type { ColchonActivo, OndaCancion, Proyecto, SaltoPendiente } from '@shared/types'
-import { seccionEn, type Seccion } from '@shared/playback'
+import { compasesQueFaltan, seccionEn, textoQueFaltan, type Seccion } from '@shared/playback'
 import { textoSemitonos, tonalidadOriginal, transponerTonalidad } from '@shared/tonalidad'
 import type { AppController } from '../app/useAppController'
 import { useGolpeColchon, useGolpeCuenta, usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
@@ -403,6 +403,7 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
   const hayColchon = !!colchon && colchon.hasta === null
   const enColchon = hayColchon && colchon!.desdeCancion && colchon!.tabId === estado?.activeTabId
   const conTempo = (proyecto.tempo?.compasesMs.length ?? 0) > 1
+  const faltanBarra = compasesQueFaltan(proyecto.tempo?.compasesMs, actual, pos, salto?.limiteMs)
 
   if (proyecto.colchon) {
     const c = estado?.colchon
@@ -456,6 +457,7 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
             <span className="m-barra-seccion" style={{ color: actual ? colorClaro(colorDeSeccion(actual)) : undefined }}>
               {loop && <Repeat size={15} />}
               {actual?.nombre ?? '—'}
+              {faltanBarra !== null && <small className={`m-barra-faltan num ${faltanBarra === 1 ? 'ultimo' : ''}`}> · {textoQueFaltan(faltanBarra)}</small>}
             </span>
           )}
           {salto ? (
@@ -570,6 +572,8 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
   const modo = estado?.modoSalto ?? 'seccion'
   const conMarcador = secciones.filter((s) => s.marcador)
   const compases = proyecto.tempo?.compasesMs ?? null
+  // compases que faltan para que termine la seccion (o para el salto elegido)
+  const faltan = compasesQueFaltan(compases, actual, pos, salto?.limiteMs)
   const enSuColchon = !!estado?.colchon && estado.colchon.desdeCancion && estado.colchon.hasta === null && estado.colchon.tabId === estado.activeTabId
   const ayuda = locked
     ? null
@@ -605,10 +609,18 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
             Cuenta {golpe}
           </span>
         ) : (
-          <span className="m-ahora-seccion" style={{ color: actual ? colorClaro(colorDeSeccion(actual)) : undefined }}>
-            {loop && <Repeat size={22} />}
-            {actual?.nombre ?? '—'}
-          </span>
+          <>
+            <span className="m-ahora-seccion" style={{ color: actual ? colorClaro(colorDeSeccion(actual)) : undefined }}>
+              {loop && <Repeat size={22} />}
+              {actual?.nombre ?? '—'}
+            </span>
+            {faltan !== null && (
+              <span className={`m-faltan ${faltan === 1 ? 'ultimo' : faltan === 2 ? 'penultimo' : ''}`} role="status" aria-label={faltan === 1 ? 'Último compás de la sección' : `Faltan ${faltan} compases`}>
+                <b className="num">{faltan}</b>
+                <small>{faltan === 1 ? 'último' : 'compases'}</small>
+              </span>
+            )}
+          </>
         )}
         {salto ? (
           <span className="m-salto" role="status">
@@ -645,7 +657,11 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
                   {s.nombre}
                 </span>
                 <small className="m-marcador-detalle num">
-                  {pendiente ? `sigue · ${faltaPara(salto!, pos)}` : esActual ? (loop ? 'repitiendo' : 'sonando') : largoDeSeccion(s, compases)}
+                  {pendiente
+                    ? `sigue · ${faltaPara(salto!, pos)}`
+                    : esActual
+                      ? [loop ? 'repitiendo' : null, faltan === null ? (loop ? null : 'sonando') : faltan === 1 ? 'último compás' : `faltan ${faltan}`].filter(Boolean).join(' · ')
+                      : largoDeSeccion(s, compases)}
                 </small>
                 {esActual && <i className="m-marcador-avance" style={{ width: `${avance * 100}%` }} />}
               </button>

@@ -2154,6 +2154,9 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
   await esperar(400)
   const t0 = cmds.filter((c) => c.accion === 'play').pop()!.executeAtServerTime
   await esperar(t0 + 3000 - Date.now())
+  // los compases que faltan para que termine la seccion (Inicio: compases desde 0,5 s hasta el Coro a los 8,5 s)
+  assert.match((await cel.locator('.m-faltan').textContent())!, /^[23]compases$/)
+  assert.match((await compu.locator('.faltan-compases').textContent())!, /^faltan [23]$/)
   const boton = compu.getByRole('button', { name: 'Colchón' })
   const botonCelular = cel.getByRole('button', { name: 'Colchón' })
   await botonCelular.click()

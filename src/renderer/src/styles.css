@@ -544,7 +544,12 @@ kbd {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 0;
+  min-width: min(100%, 190px);
+  flex: 1 1 auto;
+}
+.seccion-actual .seccion-pill,
+.seccion-actual .faltan-compases {
+  flex-shrink: 0;
 }
 .seccion-pill {
   display: inline-flex;
@@ -1916,7 +1921,8 @@ input[type='range'].slider::-moz-range-thumb {
 .transporte-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   min-width: 0;
 }
 .chip-tempo {
@@ -4253,4 +4259,82 @@ input[type='date'] {
   background: var(--colchon-soft);
   border-color: var(--colchon);
   color: var(--colchon);
+}
+
+/* ---------- compases que faltan para que termine la seccion ---------- */
+.faltan-compases {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.faltan-compases b {
+  font-size: 15px;
+  color: var(--text);
+}
+.faltan-compases.penultimo {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.faltan-compases.ultimo {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 700;
+  --color-seccion: var(--warn);
+  animation: latido 0.9s ease-in-out infinite;
+}
+.seccion-largo.ultimo {
+  color: var(--warn);
+  font-weight: 700;
+}
+.m-faltan {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  padding: 3px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--panel-2);
+  line-height: 1;
+  flex: none;
+}
+.m-faltan b {
+  font-size: 28px;
+  font-weight: 800;
+}
+.m-faltan small {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.m-faltan.penultimo {
+  border-color: var(--warn);
+}
+.m-faltan.penultimo b {
+  color: var(--warn);
+}
+.m-faltan.ultimo {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  --color-seccion: var(--warn);
+  animation: latido 0.9s ease-in-out infinite;
+}
+.m-faltan.ultimo b,
+.m-faltan.ultimo small {
+  color: var(--warn);
+}
+.m-barra-faltan {
+  font-weight: 600;
+  color: var(--text-3);
+}
+.m-barra-faltan.ultimo {
+  color: var(--warn);
 }

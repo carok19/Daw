@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square, Waves, X } from 'lucide-react'
 import type { OndaCancion, PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
-import { seccionEn } from '@shared/playback'
+import { compasesQueFaltan, seccionEn } from '@shared/playback'
 import { useGolpeCuenta, usePlayheadPaso } from '../app/playheadStore'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
@@ -77,18 +77,37 @@ export function faltaParaSalto(salto: SaltoPendiente, pos: number): string {
   return s <= 0 ? 'ya' : `en ${s} s`
 }
 
+/** Compases que faltan para que termine la seccion (o para el salto elegido): "faltan 3", "último compás". */
+export function FaltanCompases({ n, className = 'faltan-compases' }: { n: number | null; className?: string }) {
+  if (n === null) return null
+  return (
+    <span className={`${className} ${n === 1 ? 'ultimo' : n === 2 ? 'penultimo' : ''}`} role="status" aria-label={n === 1 ? 'Último compás de la sección' : `Faltan ${n} compases`}>
+      {n === 1 ? (
+        'último compás'
+      ) : (
+        <>
+          faltan <b className="num">{n}</b>
+        </>
+      )}
+    </span>
+  )
+}
+
 function SeccionActual({
   secciones,
   loop,
   salto,
+  compasesMs,
   onCancelarSalto
 }: {
   secciones: Seccion[]
   loop: boolean
   salto: SaltoPendiente | null
+  compasesMs: number[] | null
   onCancelarSalto: () => void
 }) {
   const pos = usePlayheadPaso(100)
+  const golpe = useGolpeCuenta()
   const actual = seccionEn(secciones, pos)
   const siguiente = actual ? secciones[actual.indice + 1] : null
   if (!actual) return null
@@ -99,6 +118,7 @@ function SeccionActual({
         {loop && <Repeat size={14} />}
         {actual.nombre}
       </span>
+      {golpe === 0 && <FaltanCompases n={compasesQueFaltan(compasesMs, actual, pos, salto?.limiteMs)} />}
       {salto && destino ? (
         <span className="salto-pendiente" role="status" style={{ '--color-seccion': colorDeSeccion(destino) } as React.CSSProperties}>
           <ArrowRight size={14} />
@@ -166,7 +186,13 @@ export function Transport(p: Props) {
             <ControlTono proyecto={p.proyecto} sonando={sonando} progreso={p.progresoTono} onCambiar={p.onCambiarTono} onTonalidad={p.onTonalidad} />
           </div>
           <div className="transporte-meta">
-            <SeccionActual secciones={p.secciones} loop={p.loop} salto={p.saltoPendiente} onCancelarSalto={p.onCancelarSalto} />
+            <SeccionActual
+              secciones={p.secciones}
+              loop={p.loop}
+              salto={p.saltoPendiente}
+              compasesMs={p.proyecto.tempo?.compasesMs ?? null}
+              onCancelarSalto={p.onCancelarSalto}
+            />
             {p.proyecto.tempo && (
               <span className="chip-tempo num" title={
                   p.proyecto.tempo.acentoClaro

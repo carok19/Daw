@@ -116,3 +116,31 @@ export function seccionEn(secciones: Seccion[], posicionMs: number): Seccion | n
   }
   return actual
 }
+
+/**
+ * Compases que faltan para que termine la seccion que suena en `posMs`,
+ * contando el que suena (en el ultimo, 1): el "9 BARS" de los reproductores
+ * de vivo, para que la bateria prepare la entrada y el director elija a
+ * tiempo. Si hay un salto elegido antes del final (`limiteMs`), hasta el
+ * salto. null = sin tempo (no se sabe) o antes del primer compas.
+ */
+export function compasesQueFaltan(
+  compasesMs: number[] | null | undefined,
+  seccion: Pick<Seccion, 'finMs'> | null,
+  posMs: number,
+  limiteMs?: number | null
+): number | null {
+  if (!compasesMs || compasesMs.length < 2 || !seccion) return null
+  const fin = limiteMs != null && limiteMs > posMs && limiteMs < seccion.finMs ? limiteMs : seccion.finMs
+  let actual = -1
+  for (let i = 0; i < compasesMs.length && compasesMs[i] <= posMs + 1; i++) actual = i
+  if (actual === -1) return null
+  let n = 0
+  for (let i = actual; i < compasesMs.length && compasesMs[i] < fin - 50; i++) n++
+  return n > 0 ? n : null
+}
+
+/** "faltan 3" / "último compás" (null = no se sabe). */
+export function textoQueFaltan(n: number | null): string | null {
+  return n === null ? null : n === 1 ? 'último compás' : `faltan ${n}`
+}

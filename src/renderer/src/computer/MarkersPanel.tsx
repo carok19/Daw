@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Pencil, Repeat, Trash2, WandSparkles, X } from 'lucide-react'
 import type { AnalisisProyecto, InfoModeloVoz, InfoVoces, Marcador, ModoSalto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
-import { seccionEn } from '@shared/playback'
+import { compasesQueFaltan, seccionEn } from '@shared/playback'
 import { usePlayheadPaso } from '../app/playheadStore'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
@@ -197,6 +197,7 @@ export function MarkersPanel(p: Props) {
               actual={actual?.indice === s.indice}
               loop={p.loop && actual?.indice === s.indice}
               salto={destino?.indice === s.indice ? p.saltoPendiente : null}
+              limiteSalto={p.saltoPendiente?.limiteMs ?? null}
               onCancelarSalto={p.onCancelarSalto}
               onJump={(inmediato) => onJump(s.marcador!.id, inmediato)}
               onRename={(n) => onRename(s.marcador!.id, n)}
@@ -237,6 +238,7 @@ function TarjetaSeccion({
   actual,
   loop,
   salto,
+  limiteSalto,
   onCancelarSalto,
   onJump,
   onRename,
@@ -249,6 +251,8 @@ function TarjetaSeccion({
   actual: boolean
   loop: boolean
   salto: SaltoPendiente | null
+  /** donde se hace el salto elegido (los compases que faltan cuentan hasta ahi) */
+  limiteSalto: number | null
   onCancelarSalto: () => void
   onJump: (inmediato: boolean) => void
   onRename: (nombre: string) => void
@@ -258,6 +262,7 @@ function TarjetaSeccion({
   const [nombre, setNombre] = useState(seccion.nombre)
   const color = colorDeSeccion(seccion)
   const avance = actual ? Math.min(1, Math.max(0, (pos - seccion.inicioMs) / Math.max(1, seccion.finMs - seccion.inicioMs))) : 0
+  const faltan = actual ? compasesQueFaltan(compasesMs, seccion, pos, limiteSalto) : null
 
   function empezar(): void {
     setNombre(seccion.nombre)
@@ -340,7 +345,11 @@ function TarjetaSeccion({
             </button>
           </span>
         ) : (
-          <span className="seccion-largo">{actual ? (loop ? 'repitiendo' : 'sonando') : largoDeSeccion(seccion, compasesMs)}</span>
+          <span className={`seccion-largo ${actual && faltan === 1 ? 'ultimo' : ''}`}>
+            {actual
+              ? [loop ? 'repitiendo' : null, faltan === null ? (loop ? null : 'sonando') : faltan === 1 ? 'último compás' : `faltan ${faltan} compases`].filter(Boolean).join(' · ')
+              : largoDeSeccion(seccion, compasesMs)}
+          </span>
         )}
       </span>
       {actual && <span className="seccion-avance" style={{ width: `${avance * 100}%` }} />}

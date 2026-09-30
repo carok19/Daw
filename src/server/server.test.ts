@@ -30,7 +30,7 @@ import { esAdaptadorVirtual } from './network'
 import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { generarClick, wav16 } from './__fixtures__/sintetico'
 import { candidatosDeSeccion, clavesDeArchivoDeVoz, planearAnuncio } from '../shared/anuncio'
-import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
+import { calcularSecciones, compasesQueFaltan, nuevoPlayback, posicionActualMs, seccionEn, textoQueFaltan } from '../shared/playback'
 import {
   compasYPulso,
   golpesDeColchon,
@@ -1302,6 +1302,27 @@ test('cuenta: al dar play (parado o en pausa) la compu programa la cuenta con el
   assert.equal(interpretarFicha(JSON.stringify(fichaDesdeProyecto({ ...p, cuenta: 1 })))!.cuenta, 1)
   void estado
   await env.cerrar()
+})
+
+test('compases que faltan: hasta el final de la sección (o hasta el salto elegido), contando el que suena', () => {
+  const c = [0, 2000, 4000, 6000, 8000, 10000]
+  const verso = { finMs: 8000 }
+  assert.equal(compasesQueFaltan(c, verso, 0), 4)
+  assert.equal(compasesQueFaltan(c, verso, 1990), 4)
+  assert.equal(compasesQueFaltan(c, verso, 2000), 3)
+  assert.equal(compasesQueFaltan(c, verso, 7990), 1, 'el último')
+  // la marca de la seccion unos ms corrida del compas: igual
+  assert.equal(compasesQueFaltan(c, { finMs: 8030 }, 6500), 1)
+  assert.equal(compasesQueFaltan(c, { finMs: 7970 }, 6500), 1)
+  // un salto elegido en el proximo compas: este es el ultimo; al final de la seccion, como sin salto
+  assert.equal(compasesQueFaltan(c, verso, 2500, 4000), 1)
+  assert.equal(compasesQueFaltan(c, verso, 2500, 8000), 3)
+  // la ultima seccion, hasta el final de la cancion
+  assert.equal(compasesQueFaltan(c, { finMs: 11000 }, 8200), 2)
+  // sin tempo, o antes del primer compas (una entrada antes del "1"): no se sabe
+  assert.equal(compasesQueFaltan(null, verso, 0), null)
+  assert.equal(compasesQueFaltan([500, 2500, 4500], verso, 100), null)
+  assert.deepEqual([textoQueFaltan(1), textoQueFaltan(3), textoQueFaltan(null)], ['último compás', 'faltan 3', null])
 })
 
 test('cuenta propia: se detecta cuando la canción ya cuenta (la guía o el click, con la banda en silencio) y cuántos compases', async () => {
