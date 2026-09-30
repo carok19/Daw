@@ -127,7 +127,7 @@ export class Transporte {
     const pos = valida ? clampPos(positionMs!, tab.proyecto.duracionTotalMs) : this.posicionDeReanudacion(tab, now)
     const inicio = now + this.margen()
     // desde parado o en pausa: primero la cuenta ("1 2 3 4, 1 2 3 4") y despues la musica, en el tiempo
-    const cuenta = tab.playback.estado !== 'playing' ? programarCuenta(tab.proyecto.tempo, pos, compasesDeCuenta(tab.proyecto), inicio) : null
+    const cuenta = tab.playback.estado !== 'playing' ? programarCuenta(tab.proyecto.tempo, pos, compasesDeCuenta(tab.proyecto, pos), inicio) : null
     // un colchon sonando (el de otra cancion o uno de la lista) termina cuando arranca esta: el pad acompana la cuenta y se va
     const otro = this.colchonSonando()
     if (otro) this.terminarColchonEn(otro, inicio, (cuenta ? cuenta.inicioMusica - inicio : 0) + SALIDA_PAD_VUELTA_MS)

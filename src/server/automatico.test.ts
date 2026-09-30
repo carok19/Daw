@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import AdmZip from 'adm-zip'
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
 import { createServer, type AppServer } from './index'
 import { ANUNCIOS, generarClick, inicioCompas, SR, SR_GUIA, textoDeFrase, wav16, zipConGuia } from './__fixtures__/sintetico'
@@ -322,4 +323,43 @@ test('"Detectar secciones" reemplaza las existentes y el modelo de voz se inform
     return s.proyectoActivo?.analisis?.fuente === 'guia' ? s : null
   })
   assert.deepEqual(final.proyectoActivo!.marcadores.map((m) => m.nombre), ['Coro'])
+})
+
+test('cuenta propia: al importar se detecta que la guía ya cuenta; desde el principio no se agrega otra, desde una sección 1 compás', { timeout: 60000 }, async (t) => {
+  const { tmp, compu, ack } = await entorno(t)
+  const seg = 24
+  // la guia cuenta "1, 2, 3, 4" dos compases (120 BPM desde 0,5 s) y recien entra la banda
+  const guia = new Float32Array(seg * SR)
+  for (let b = 0; b < 8; b++) {
+    const i0 = Math.round((0.5 + b * 0.5) * SR)
+    for (let i = 0; i < 0.25 * SR; i++) guia[i0 + i] = 0.4 * Math.sin((2 * Math.PI * 240 * i) / SR) * Math.sin((Math.PI * i) / (0.25 * SR))
+  }
+  const bajo = new Float32Array(seg * SR)
+  for (let i = Math.round(4.5 * SR); i < bajo.length; i++) bajo[i] = 0.3 * Math.sin((2 * Math.PI * 110 * i) / SR)
+  const zip = path.join(tmp, 'Con su cuenta.zip')
+  const z = new AdmZip()
+  z.addFile('Click.wav', wav16(generarClick(120, 4, seg), SR))
+  z.addFile('Guia.wav', wav16(guia, SR))
+  z.addFile('Bajo.wav', wav16(bajo, SR))
+  z.addFile('marcas.txt', Buffer.from('0:04.5 Verso\n0:12.5 Coro\n'))
+  z.writeZip(zip)
+  assert.equal((await ack<{ ok: boolean }>('project:load-from-zip', { filePath: zip })).ok, true)
+  const e = await esperarQue(async () => {
+    const s = await ack<EstadoCompleto>('state:request', {})
+    return s.proyectoActivo?.tempo?.cuentaPropia !== undefined ? s : null
+  })
+  assert.equal(e.proyectoActivo!.tempo!.cuentaPropia, 2)
+
+  type Cmd = { accion: string; positionMs: number; playback: { cuenta?: { golpes: unknown[] } } }
+  const comando = (): Promise<Cmd> => new Promise((r) => compu.once('playback:scheduled', r))
+  // desde el principio: cuenta la guia, sin otra antes
+  let [cmd] = await Promise.all([comando(), compu.emit('transport:play', {})])
+  assert.equal(cmd.positionMs, 0)
+  assert.equal(cmd.playback.cuenta, undefined)
+  await Promise.all([comando(), compu.emit('transport:stop')])
+  await esperar(100)
+  // desde el Coro: 1 compas del click
+  ;[cmd] = await Promise.all([comando(), compu.emit('transport:play', { positionMs: 12500 })])
+  assert.equal(cmd.playback.cuenta?.golpes.length, 4)
+  await Promise.all([comando(), compu.emit('transport:stop')])
 })

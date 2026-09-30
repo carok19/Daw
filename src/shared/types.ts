@@ -50,6 +50,12 @@ export interface TempoProyecto {
   acentoClaro: boolean
   /** con click sin acento, el "1" se dedujo de donde termina de hablar la voz guia */
   faseDesdeGuia?: boolean
+  /**
+   * compases de cuenta que trae la cancion al principio (desde el primer
+   * compas la banda esta en silencio mientras cuentan la guia o el click); 0 =
+   * entra directo; sin: todavia no se reviso (ver server/cuenta.ts)
+   */
+  cuentaPropia?: number
 }
 
 /** Frase hablada de la voz guia, recortada para reconocerla ("Verso uno", "Coro"...). */

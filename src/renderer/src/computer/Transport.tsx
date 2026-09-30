@@ -4,7 +4,6 @@ import type { OndaCancion, PlaybackState, ProgresoTono, Proyecto, SaltoPendiente
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
 import { useGolpeCuenta, usePlayheadPaso } from '../app/playheadStore'
-import { compasesDeCuenta } from '@shared/cuenta'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
 import { Timeline } from './Timeline'
@@ -195,10 +194,14 @@ export function Transport(p: Props) {
                 className="chip-cuenta"
                 value={p.proyecto.cuenta === undefined ? 'auto' : String(p.proyecto.cuenta)}
                 onChange={(e) => p.onCuenta(e.target.value === 'auto' ? null : (Number(e.target.value) as 0 | 1 | 2))}
-                title="Cuenta al dar play: el click cuenta 1 o 2 compases (“1 2 3 4, 1 2 3 4”) y recién entra la canción, en todos a la vez"
+                title={
+                  (p.proyecto.tempo.cuentaPropia ?? 0) > 0
+                    ? `Esta canción ya trae su cuenta (${p.proyecto.tempo.cuentaPropia === 1 ? '1 compás' : `${p.proyecto.tempo.cuentaPropia} compases`}): desde el principio cuenta ella; desde una sección o después de una pausa, el click cuenta 1 compás. Se puede forzar otra.`
+                    : 'Cuenta al dar play: el click cuenta un compás (“1 2 3 4”) y recién entra la canción, en todos a la vez'
+                }
                 aria-label="Cuenta antes de la canción"
               >
-                <option value="auto">Cuenta: {compasesDeCuenta({ tempo: p.proyecto.tempo }) === 1 ? '1 compás' : '2 compases'} (auto)</option>
+                <option value="auto">{(p.proyecto.tempo.cuentaPropia ?? 0) > 0 ? 'Cuenta: la de la canción (auto)' : 'Cuenta: 1 compás (auto)'}</option>
                 <option value="2">Cuenta: 2 compases</option>
                 <option value="1">Cuenta: 1 compás</option>
                 <option value="0">Sin cuenta</option>

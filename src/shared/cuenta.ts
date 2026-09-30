@@ -1,17 +1,18 @@
 import type { CuentaProgramada, Proyecto, TempoProyecto } from './types'
 
 /**
- * Cuenta antes de la cancion: al dar play (desde parado o en pausa) suenan 1
- * o 2 compases de click ("1 2 3 4, 1 2 3 4") y recien entra la musica. Los
- * golpes caen sobre la grilla de compases de la propia cancion (la que se
- * detecta del click), asi la cuenta sigue el mismo pulso que la musica.
+ * Cuenta antes de la cancion: al dar play (desde parado o en pausa) suena 1
+ * compas de click ("1 2 3 4") y recien entra la musica. Los golpes caen sobre
+ * la grilla de compases de la propia cancion (la que se detecta del click),
+ * asi la cuenta sigue el mismo pulso que la musica.
+ *
+ * Muchas canciones ya traen su cuenta (la guia dice "1, 2, 3, 4" con la banda
+ * en silencio): desde el principio, la automatica no agrega otra (cuenta la
+ * cancion). Desde una seccion o despues de una pausa, si.
  */
 
 /** Cuanto ocupa cada sonido (el "1" y el golpe comun) en el WAV de la cuenta (/cuenta/<cancion>.wav). */
 export const LARGO_SONIDO_CUENTA_SEC = 0.25
-
-/** Dos compases de cuenta que duren mas que esto (canciones lentas): se cuenta uno solo. */
-export const CUENTA_MAX_DOS_COMPASES_MS = 7000
 
 /** Largo del compas en `ms` de la cancion (el que lo contiene, o el primero). */
 function largoDeCompas(compases: number[], ms: number): { k: number; largo: number } {
@@ -21,13 +22,28 @@ function largoDeCompas(compases: number[], ms: number): { k: number; largo: numb
   return { k, largo }
 }
 
-/** Cuantos compases de cuenta lleva la cancion: los elegidos, o automatico (2; 1 en las lentas; 0 sin tempo). */
-export function compasesDeCuenta(p: Pick<Proyecto, 'cuenta' | 'tempo'>): 0 | 1 | 2 {
+/**
+ * ¿Arrancando en `posMs` suena la cuenta que trae la cancion? (queda al menos
+ * un compas de ella por delante: desde el principio, o desde adentro de esa cuenta)
+ */
+export function suenaSuCuenta(tempo: Pick<TempoProyecto, 'compasesMs' | 'cuentaPropia'> | null | undefined, posMs: number): boolean {
+  const n = tempo?.cuentaPropia ?? 0
+  const c = tempo?.compasesMs
+  if (!c || n <= 0 || c.length <= n) return false
+  return posMs <= c[n - 1] + 50
+}
+
+/**
+ * Cuantos compases de cuenta lleva la cancion arrancando en `posMs`: los
+ * elegidos, o automatico (1; ninguno si arranca desde el principio y la
+ * cancion ya trae su cuenta; 0 sin tempo).
+ */
+export function compasesDeCuenta(p: Pick<Proyecto, 'cuenta' | 'tempo'>, posMs?: number): 0 | 1 | 2 {
   const compases = p.tempo?.compasesMs
   if (!compases || compases.length < 2) return 0
   if (p.cuenta === 0 || p.cuenta === 1 || p.cuenta === 2) return p.cuenta
-  const { largo } = largoDeCompas(compases, compases[0])
-  return 2 * largo <= CUENTA_MAX_DOS_COMPASES_MS ? 2 : 1
+  if (posMs !== undefined && suenaSuCuenta(p.tempo, posMs)) return 0
+  return 1
 }
 
 /**

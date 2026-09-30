@@ -179,7 +179,8 @@ export class Analizador {
     // click sin acento: el "1" de cada compas se deduce de donde terminan los anuncios de la guia
     if (p.tempo && !p.tempo.acentoClaro) {
       const corregidos = faseDesdeAnuncios(p.tempo.compasesMs, p.tempo.compas, anunciosDesdeFrases(frases))
-      if (corregidos) p.tempo = { ...p.tempo, compasesMs: corregidos, faseDesdeGuia: true }
+      // (los compases se corrieron: la cuenta que trae la cancion se vuelve a revisar)
+      if (corregidos) p.tempo = { ...p.tempo, compasesMs: corregidos, faseDesdeGuia: true, cuentaPropia: undefined }
     }
     const secciones = seccionesDesdeFrases(frases, p.tempo?.compasesMs ?? null, p.duracionTotalMs)
     const hayManuales = p.seccionesEditadas || p.marcadores.some((m) => m.origen !== 'guia')

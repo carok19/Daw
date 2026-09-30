@@ -39,7 +39,19 @@ import type { AppState, Tab } from './state'
 import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ImportError, ZipSinPistasError } from './zip'
 import { primerVolumen } from './comprimidos'
-import { crearProyectoColchon, deleteProyecto, esIdValido, listProyectos, loadProyecto, migrarProyecto, proyectoExiste, saveProyecto, type SesionGuardada } from './projects'
+import {
+  crearProyectoColchon,
+  deleteProyecto,
+  esIdValido,
+  listProyectos,
+  loadProyecto,
+  migrarProyecto,
+  projectDir,
+  proyectoExiste,
+  saveProyecto,
+  type SesionGuardada
+} from './projects'
+import { detectarCuentaPropia } from './cuenta'
 import {
   agregarCarpeta,
   borrarCarpeta,
@@ -293,7 +305,35 @@ export function registerSocketHandlers(
   }
 
   function emitirEstado(): void {
+    revisarCuentasAbiertas()
     io.emit('estado:actualizado', buildEstadoCompleto(state))
+  }
+
+  /**
+   * La cuenta que ya trae cada cancion al principio (ver shared/cuenta.ts): se
+   * revisa una vez por tempo, en segundo plano, en las canciones abiertas (las
+   * que se importan, las de antes al abrirlas, y cuando el analisis cambia el tempo).
+   */
+  const revisando = new Set<string>()
+  function revisarCuentaPropia(p: Proyecto): void {
+    const tempo = p.tempo
+    if (!tempo || tempo.cuentaPropia !== undefined || revisando.has(p.id) || !proyectoExiste(p.id)) return
+    revisando.add(p.id)
+    void detectarCuentaPropia(projectDir(p.id), p)
+      .then((n) => {
+        if (p.tempo !== tempo) return // cambio el tempo mientras tanto: se revisa el nuevo
+        tempo.cuentaPropia = n
+        if (proyectoExiste(p.id)) saveProyecto(p)
+        if (state.tabDeProyecto(p.id)) emitirEstadoPronto()
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        revisando.delete(p.id)
+        if (p.tempo !== tempo && state.tabDeProyecto(p.id)) revisarCuentaPropia(p)
+      })
+  }
+  function revisarCuentasAbiertas(): void {
+    for (const p of state.listaProyectos()) revisarCuentaPropia(p)
   }
 
   function emitirDispositivos(): void {
@@ -327,7 +367,9 @@ export function registerSocketHandlers(
       return { proyecto: p, guardar: () => proyectoExiste(id) && saveProyecto(p) }
     },
     cambio(id, aviso) {
-      if (state.tabDeProyecto(id)) {
+      const tab = state.tabDeProyecto(id)
+      if (tab) {
+        revisarCuentaPropia(tab.proyecto)
         transporte.reprogramarTimers()
         emitirEstadoPronto()
       }
@@ -681,6 +723,7 @@ export function registerSocketHandlers(
     })
 
     socket.on('state:request', (_payload: unknown, ack?: Ack<ReturnType<typeof buildEstadoCompleto>>) => {
+      revisarCuentasAbiertas()
       ack?.(buildEstadoCompleto(state))
     })
 

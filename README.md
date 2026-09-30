@@ -262,17 +262,25 @@ cambian a propósito.
     música. En el celular se ve “76 BPM”. Se combina con el tono, la canción
     recuerda su velocidad y tocar “+6 %” vuelve a la original.
 11. **Cuenta antes de la canción:** al dar play (desde parado, en pausa o
-    desde una sección) el click cuenta **“1 2 3 4, 1 2 3 4”** y recién entra
-    la canción, en todos a la vez. Usa el tempo y el compás que la app
-    detecta del click (3/4: “1 2 3, 1 2 3”) y **el mismo sonido del click de
-    la canción** (el “1” con su acento), por el oído del click y con el
-    volumen de click de cada uno. En la compu el reloj muestra el número de
-    la cuenta y en los celulares “Cuenta 3”. Son 2 compases, o 1 en las
-    canciones lentas; al lado del BPM se elige por canción: automática, 2, 1
-    o **sin cuenta** (para las que ya traen su propia cuenta en el click).
-    Después de una pausa, la cuenta sigue el pulso de la canción y la música
-    vuelve justo donde quedó. Los saltos con la música sonando no llevan
-    cuenta. Sin tempo detectado, arranca directo como siempre.
+    desde una sección) el click cuenta un compás, **“1 2 3 4”**, y recién
+    entra la canción, en todos a la vez. Usa el tempo y el compás que la app
+    detecta del click (3/4: “1 2 3”) y **el mismo sonido del click de la
+    canción** (el “1” con su acento), por el oído del click y con el volumen
+    de click de cada uno. En la compu el reloj muestra el número de la cuenta
+    y en los celulares “Cuenta 3”.
+    - **Canciones que ya traen su cuenta** (la guía dice “1, 2, 3, 4” con la
+      banda en silencio, o cuenta solo el click): la app lo detecta sola y,
+      **desde el principio, no agrega otra** (cuenta la canción). Desde una
+      sección o después de una pausa, sí cuenta su compás (ahí la canción no
+      trae cuenta). Se ve en el selector: “Cuenta: la de la canción (auto)”.
+      Un pad bajito de fondo o un golpe de batería en el “4” no la engañan;
+      una intro suave, en cambio, es música (lleva cuenta). Las canciones que
+      ya estaban importadas se revisan solas al abrirlas.
+    - Al lado del BPM se puede forzar por canción: automática, 2 compases, 1
+      o **sin cuenta**.
+    - Después de una pausa, la cuenta sigue el pulso de la canción y la
+      música vuelve justo donde quedó. Los saltos con la música sonando no
+      llevan cuenta. Sin tempo detectado, arranca directo como siempre.
 12. **Colchón: pad y click, sin la banda.** Un **pad** de ambiente (un
     colchón sostenido en el tono) y el **click**, sonando en todos a la vez.
     El pad lo hace la app (no hay que bajar nada): raíz, quinta y octava, sin
@@ -624,7 +632,13 @@ estado. **Nada de su audio viaja por la red mientras suena:**
    reloj que la música, con el sonido del click recortado de la propia
    pista (`/cuenta/<canción>.wav`). Medido con audio real grabado en la
    compu y en un celular: cada golpe y la entrada de la canción, a 1–2 ms
-   entre ellos.
+   entre ellos. La cuenta que ya trae la canción (`tempo.cuentaPropia`, en
+   compases) la mide `server/cuenta.ts` una vez por tempo: la energía de la
+   banda (todo menos click y guía) en la primera parte de cada uno de los
+   primeros 12 compases; los primeros que están 24 dB por debajo del más
+   fuerte, con la guía hablando (o en silencio de verdad, si cuenta solo el
+   click), y después entra la banda (hasta 4 compases). Arrancando antes de
+   su último compás, la cuenta automática no suma otra.
 4. **Tramo previo:** entre que se emite un comando y su horario sigue
    sonando lo anterior; el estado lo describe (`previo`, una cadena corta si
    hay dos comandos seguidos), así la interfaz, el monitor de drift y un

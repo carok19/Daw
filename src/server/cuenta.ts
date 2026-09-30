@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Proyecto } from '../shared/types'
+import type { Pista, Proyecto } from '../shared/types'
+import { esClickOGuia } from '../shared/mezcla'
 import { bytesPorFrame, decodePcmSegment, totalFrames, type WavInfo } from '../shared/wav'
 import { encabezadoWav16, leerInfoWav } from './audio'
 import { LARGO_SONIDO_CUENTA_SEC } from '../shared/cuenta'
@@ -81,4 +82,113 @@ export function sonidosDeCuenta(dirProyecto: string, p: Proyecto): Buffer | null
   } finally {
     fs.closeSync(fd)
   }
+}
+
+// ---- la cuenta que ya trae la cancion ----
+
+/** Compases de cuenta propia que se buscan al principio, como mucho. */
+const MAX_CUENTA_PROPIA = 4
+/** Compases que se miran para saber cuanto suena la banda. */
+const COMPASES_REVISADOS = 12
+/**
+ * La banda "no suena" en un compas si tiene 24 dB menos que el compas mas
+ * fuerte del principio (un pad bajito de fondo durante la cuenta no engaña;
+ * una intro suave, si, suena).
+ */
+const SILENCIO_RELATIVO = 10 ** (-24 / 10)
+/** Silencio de verdad (-60 dBFS): la cuenta es solo el click. */
+const SILENCIO_ABSOLUTO = 10 ** (-60 / 10)
+const VENTANA_FRAMES = 1024
+
+/**
+ * Energia de un grupo de pistas en cada uno de los primeros `k` compases:
+ * ventanitas repartidas en la primera `fraccion` del compas; la media (o el
+ * pico) de las ventanas, sumando las pistas.
+ */
+async function energiaPorCompas(
+  dirProyecto: string,
+  p: Proyecto,
+  pistas: Pista[],
+  compases: number[],
+  k: number,
+  fraccion: number,
+  modo: 'media' | 'pico'
+): Promise<number[]> {
+  const total = new Array<number>(k).fill(0)
+  const ventanas = 12
+  for (const pista of pistas) {
+    const ruta = path.join(dirProyecto, archivoQueSuena(p, pista))
+    let fh: fs.promises.FileHandle
+    try {
+      fh = await fs.promises.open(ruta, 'r')
+    } catch {
+      continue
+    }
+    try {
+      const info = leerInfoWav(ruta)
+      const bpf = bytesPorFrame(info)
+      const frames = totalFrames(info)
+      const buf = Buffer.alloc(VENTANA_FRAMES * bpf)
+      for (let j = 0; j < k; j++) {
+        const largo = compases[j + 1] - compases[j]
+        let suma = 0
+        let pico = 0
+        for (let w = 0; w < ventanas; w++) {
+          const ms = compases[j] + largo * (0.02 + ((fraccion - 0.06) * w) / (ventanas - 1))
+          const desde = Math.round((ms / 1000) * info.sampleRate)
+          if (desde < 0 || desde + VENTANA_FRAMES > frames) continue
+          const { bytesRead } = await fh.read(buf, 0, buf.length, info.dataOffset + desde * bpf)
+          const utiles = bytesRead - (bytesRead % bpf)
+          if (utiles <= 0) continue
+          const copia = new Uint8Array(utiles)
+          copia.set(buf.subarray(0, utiles))
+          let e = 0
+          let n = 0
+          for (const canal of decodePcmSegment(info, copia.buffer)) {
+            for (const v of canal) e += v * v
+            n += canal.length
+          }
+          const media = n ? e / n : 0
+          suma += media
+          pico = Math.max(pico, media)
+        }
+        total[j] += modo === 'media' ? suma / ventanas : pico
+      }
+    } catch {
+      // una pista ilegible no frena a las demas
+    } finally {
+      await fh.close()
+    }
+  }
+  return total
+}
+
+/**
+ * Cuantos compases de cuenta trae la cancion al principio: desde el primer
+ * compas, la banda (todo menos el click y la guia) en silencio mientras la
+ * guia cuenta ("1, 2, 3, 4") o, sin guia, suena solo el click; y despues
+ * entra la banda. 0 = entra directo (o no se puede saber). Se mira la
+ * primera parte de cada compas: una entrada de bateria en el ultimo pulso
+ * de la cuenta no la esconde.
+ */
+export async function detectarCuentaPropia(dirProyecto: string, p: Proyecto): Promise<number> {
+  const c = p.tempo?.compasesMs
+  if (!c || c.length < 3) return 0
+  const banda = p.pistas.filter((x) => !esClickOGuia(p, x))
+  if (banda.length === 0) return 0
+  const guias = p.pistas.filter((x) => esClickOGuia(p, x) && x.id !== p.tempo?.clickPistaId)
+  const k = Math.min(COMPASES_REVISADOS, c.length - 1)
+  const eBanda = await energiaPorCompas(dirProyecto, p, banda, c, k, 0.72, 'media')
+  const ref = Math.max(...eBanda)
+  if (!(ref > SILENCIO_ABSOLUTO)) return 0
+  let n = 0
+  while (n < Math.min(MAX_CUENTA_PROPIA, k - 1) && eBanda[n] < ref * SILENCIO_RELATIVO) n++
+  // nada al principio, o un silencio largo que no es una cuenta
+  if (n === 0 || eBanda[n] < ref * SILENCIO_RELATIVO) return 0
+  // alguien cuenta: la guia habla en esos compases, o es solo el click (la banda en silencio de verdad)
+  const eGuia = guias.length ? await energiaPorCompas(dirProyecto, p, guias, c, k, 1, 'pico') : []
+  const refGuia = Math.max(0, ...eGuia)
+  const hablaLaGuia = refGuia > SILENCIO_ABSOLUTO && eGuia.slice(0, n).some((e) => e > refGuia * 0.05)
+  const soloClick = eBanda.slice(0, n).every((e) => e < SILENCIO_ABSOLUTO)
+  return hablaLaGuia || soloClick ? n : 0
 }
