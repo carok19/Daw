@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square, X } from 'lucide-react'
-import type { PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
+import type { OndaCancion, PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
 import { useGolpeCuenta, usePlayheadPaso } from '../app/playheadStore'
@@ -35,6 +35,10 @@ interface Props {
   onCambiarTono: (semitonos: number) => void
   onTonalidad: (tonalidad: string | null) => void
   onCuenta: (cuenta: 0 | 1 | 2 | null) => void
+  /** forma de onda de la cancion para la linea de tiempo */
+  onda: OndaCancion | null
+  /** linea de tiempo alta (vista de secciones) o finita (vista de mezcla) */
+  timelineGrande: boolean
 }
 
 function textoCompas(compas: number): string {
@@ -247,6 +251,8 @@ export function Transport(p: Props) {
         ajustar={p.ajustarCompas}
         onSeek={p.onSeek}
         onMoverMarcador={p.onMoverMarcador}
+        onda={p.onda}
+        grande={p.timelineGrande}
       />
     </section>
   )

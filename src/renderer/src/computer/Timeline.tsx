@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react'
 import type { Seccion } from '@shared/playback'
-import type { SaltoPendiente } from '@shared/types'
+import type { OndaCancion, SaltoPendiente } from '@shared/types'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadMs } from '../app/playheadStore'
 import { ajustarACompas } from '../app/useAppController'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
+import { OndaDibujo } from '../ui/Onda'
 
 interface Props {
   secciones: Seccion[]
@@ -21,6 +22,10 @@ interface Props {
   onSeek: (ms: number, inmediato: boolean) => void
   /** `sinAjustar`: se solto con Alt apretado (no ajustar al compas) */
   onMoverMarcador: (marcadorId: string, ms: number, sinAjustar: boolean) => void
+  /** forma de onda de la cancion (el "recorrido"); null = todavia no llego */
+  onda?: OndaCancion | null
+  /** alta, para la vista de secciones (en la de mezcla va finita) */
+  grande?: boolean
 }
 
 /**
@@ -28,7 +33,7 @@ interface Props {
  * Click = ir a ese punto. Las marcas blancas (triangulos) al inicio de cada
  * seccion se arrastran para mover el marcador.
  */
-export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, ajustar, onSeek, onMoverMarcador }: Props) {
+export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, ajustar, onSeek, onMoverMarcador, onda, grande }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const playhead = usePlayheadMs()
   const [hover, setHover] = useState<number | null>(null)
@@ -51,7 +56,7 @@ export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, ajust
   return (
     <div
       ref={ref}
-      className="timeline"
+      className={`timeline ${grande ? 'timeline-grande' : ''} ${onda ? 'con-onda' : ''}`}
       onClick={(e) => {
         if (!arrastre) onSeek(destinoDesdeX(e.clientX, e.altKey), e.shiftKey)
       }}
@@ -78,6 +83,7 @@ export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, ajust
           </div>
         )
       })}
+      {onda && <OndaDibujo onda={onda} duracionMs={dur} className="timeline-onda" />}
       {compasesMs && <RayasCompas compasesMs={compasesMs} duracionMs={dur} />}
       {salto && (
         <>

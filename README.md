@@ -139,6 +139,13 @@ cambian a propósito.
      **carpeta de canciones** (con subcarpetas por categoría) antes del
      culto; se importan y se analizan solos. Conviene abrir cada canción
      nueva una vez antes, para revisar sus secciones.
+   - **La pantalla de la canción** tiene dos vistas (se cambia con los dos
+     botones o con **Tab**): **Secciones**, con el **recorrido** de la canción
+     arriba (la forma de onda entera, dividida en secciones de colores, como
+     un reproductor: click para ir a un punto) y las secciones como
+     **tarjetas grandes** (click = ir ahí; la que suena muestra cuánto va, la
+     elegida “sigue en 21 s”), y **Mezcla**, el mixer a pantalla completa con
+     el recorrido finito arriba. La vista elegida se recuerda.
 4. **Celulares:** botón **Celulares** (arriba a la derecha) → escanear el QR →
    **“Tocá para empezar”** → conectar auriculares. En ⚙ cada músico puede
    ponerle nombre a su celular (“Batería”, “Bajo”…). Para no escanear en cada
@@ -174,9 +181,14 @@ cambian a propósito.
 7. La pantalla de los celulares queda encendida sola (conviene bajar el
    brillo). Si alguien usa **auriculares Bluetooth** y lo escucha atrasado:
    ⚙ → *Ajuste fino* → sumar milisegundos hasta que coincida.
-8. En el celular, la pantalla principal es **Mi mezcla**: cada músico sube o
+8. En el celular hay dos pantallas, a un toque arriba: **Canción** (la
+   principal) muestra la canción, la sección que suena en grande (y “→ Coro
+   en 21 s” si se eligió un salto), el **recorrido** con la forma de onda y
+   las secciones como **tarjetas grandes para tocar** (tocar = ir ahí, según
+   el modo de salto; si la compu bloqueó los celulares se ven pero no se
+   tocan). **Mi mezcla** es la otra pantalla, entera: cada músico sube o
    baja cada pista (más click, menos pad…) sin cambiar lo que escuchan los
-   demás. Los faders se mueven **deslizando de costado**; deslizando para
+   demás. El transporte va siempre abajo. Los faders se mueven **deslizando de costado**; deslizando para
    arriba o abajo la pantalla scrollea sin tocar ningún volumen, y un toque
    suelto no cambia nada (doble toque: vuelve a “igual”). Cada pista tiene
    **M** (mute) y **S** (solo) propios del celular: con una o varias pistas
@@ -457,6 +469,17 @@ cada segmento se libera apenas termina.
 | `BUFFER_MIN_START_SEC` | 3 | Mínimo para (re)arrancar |
 | `MAX_CUES` / `SEGMENTOS_POR_CUE` | 16 / 2 | Arranques de sección precargados |
 | `SEGMENTOS_PRECARGA_SIGUIENTE` | 2 | Comienzo de la próxima canción precargado |
+
+### Recorrido (forma de onda)
+
+`server/onda.ts`: `/onda/<canción>.json?v=<revisión>` da la forma de la
+canción entera (~1200 puntos de 0 a 100): cuánto suena **la banda** en cada
+momento, sin el click ni la guía (sonarían parejo y taparían la forma). Se
+calcula una vez por revisión del audio leyendo un pedacito de cada pista en
+cada punto (no la pista entera: tarda poco aunque sean 20 pistas) y queda en
+la carpeta de la canción (`onda.json`). La compu y los celulares la dibujan
+en un `<canvas>` encima de los colores de las secciones; lo que ya sonó se
+oscurece.
 
 ### Cambio de tono
 

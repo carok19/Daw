@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Pencil, Trash2, WandSparkles, X } from 'lucide-react'
+import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Pencil, Repeat, Trash2, WandSparkles, X } from 'lucide-react'
 import type { AnalisisProyecto, InfoModeloVoz, InfoVoces, Marcador, ModoSalto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadPaso } from '../app/playheadStore'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
+import { faltaParaSalto } from './Transport'
 
 interface Props {
   secciones: Seccion[]
@@ -17,6 +18,8 @@ interface Props {
   saltoPendiente: SaltoPendiente | null
   modoSalto: ModoSalto
   hayTempo: boolean
+  compasesMs: number[] | null
+  loop: boolean
   onModoSalto: (m: ModoSalto) => void
   onCancelarSalto: () => void
   onCreate: (tiempoMs: number, nombre?: string) => void
@@ -97,6 +100,7 @@ export function MarkersPanel(p: Props) {
   const pos = usePlayheadPaso(100)
   const actual = seccionEn(secciones, pos)
   const conMarcador = secciones.filter((s) => s.marcador)
+  const destino = p.saltoPendiente ? seccionEn(secciones, p.saltoPendiente.destinoMs) : null
 
   function agregar(): void {
     onCreate(pos, nombreNuevo.trim() || undefined)
@@ -104,21 +108,8 @@ export function MarkersPanel(p: Props) {
   }
 
   return (
-    <aside className="secciones">
-      <div className="secciones-cabecera">
-        <h3>
-          <span>
-            Secciones <span className="num">{conMarcador.length}</span>
-          </span>
-          <button
-            className="btn-detectar"
-            onClick={p.onDetectar}
-            disabled={EN_CURSO.includes(p.analisis?.estado ?? '')}
-            title="Detectar las secciones automáticamente por la voz guía (Verso, Coro, Puente…), ajustadas al compás del click"
-          >
-            <WandSparkles size={14} /> Detectar
-          </button>
-        </h3>
+    <section className="secciones" aria-label="Secciones">
+      <div className="secciones-herramientas">
         <div className="modo-salto" role="radiogroup" aria-label="Cuándo salta al elegir una sección sonando">
           <span>Al elegir una sección sonando, saltar:</span>
           <div className="segmentado segmentado-chico">
@@ -153,14 +144,6 @@ export function MarkersPanel(p: Props) {
           </div>
         </div>
         <VozDelSalto voces={p.voces} onImportar={p.onImportarVoces} onActivar={p.onActivarVoces} onBorrar={p.onBorrarVoces} />
-        <EstadoAnalisisVista
-          analisis={p.analisis}
-          progreso={p.progreso}
-          modeloVoz={p.modeloVoz}
-          sonando={p.sonando}
-          onDescargarModelo={p.onDescargarModelo}
-          onReintentar={p.onDetectar}
-        />
         <div className="secciones-nueva">
           <input
             placeholder="Nombre (Intro, Coro…)"
@@ -168,51 +151,90 @@ export function MarkersPanel(p: Props) {
             maxLength={60}
             onChange={(e) => setNombreNuevo(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && agregar()}
+            aria-label="Nombre de la sección nueva"
           />
           <button className="btn-primario" onClick={agregar} title="Marcar una sección en la posición actual (M)">
             <Flag size={15} />
             <span className="num">{formatMmSs(pos)}</span>
           </button>
         </div>
+        <button
+          className="btn-detectar"
+          onClick={p.onDetectar}
+          disabled={EN_CURSO.includes(p.analisis?.estado ?? '')}
+          title="Detectar las secciones automáticamente por la voz guía (Verso, Coro, Puente…), ajustadas al compás del click"
+        >
+          <WandSparkles size={14} /> Detectar
+        </button>
       </div>
+      <EstadoAnalisisVista
+        analisis={p.analisis}
+        progreso={p.progreso}
+        modeloVoz={p.modeloVoz}
+        sonando={p.sonando}
+        onDescargarModelo={p.onDescargarModelo}
+        onReintentar={p.onDetectar}
+      />
 
-      <ul className="secciones-lista">
-        {conMarcador.length === 0 && (
-          <li className="vacio">
-            Todavía no hay secciones.
-            <br />
-            Con la canción sonando, presioná <kbd>M</kbd> en cada parte
-            {p.analisis?.estado !== 'sin-guia' ? ', o dejá que se detecten por la voz guía.' : '.'}
-          </li>
-        )}
-        {conMarcador.map((s, i) => (
-          <FilaSeccion
-            key={s.marcador!.id}
-            seccion={s}
-            numero={i + 1}
-            actual={actual?.indice === s.indice}
-            pendiente={p.saltoPendiente?.destinoMs === s.inicioMs}
-            onCancelarSalto={p.onCancelarSalto}
-            onJump={(inmediato) => onJump(s.marcador!.id, inmediato)}
-            onRename={(n) => onRename(s.marcador!.id, n)}
-            onDelete={() => onDelete(s.marcador!)}
-          />
-        ))}
-      </ul>
+      {conMarcador.length === 0 ? (
+        <p className="secciones-vacio">
+          Todavía no hay secciones.
+          <br />
+          Con la canción sonando, presioná <kbd>M</kbd> en cada parte
+          {p.analisis?.estado !== 'sin-guia' ? ', o dejá que se detecten por la voz guía.' : '.'}
+        </p>
+      ) : (
+        <ul className="secciones-tarjetas">
+          {conMarcador.map((s, i) => (
+            <TarjetaSeccion
+              key={s.marcador!.id}
+              seccion={s}
+              numero={i + 1}
+              pos={pos}
+              compasesMs={p.compasesMs}
+              actual={actual?.indice === s.indice}
+              loop={p.loop && actual?.indice === s.indice}
+              salto={destino?.indice === s.indice ? p.saltoPendiente : null}
+              onCancelarSalto={p.onCancelarSalto}
+              onJump={(inmediato) => onJump(s.marcador!.id, inmediato)}
+              onRename={(n) => onRename(s.marcador!.id, n)}
+              onDelete={() => onDelete(s.marcador!)}
+            />
+          ))}
+        </ul>
+      )}
 
       <div className="secciones-pie">
-        <kbd>1</kbd>…<kbd>9</kbd> ir a una sección (con <kbd>Shift</kbd>, ya) · <kbd>←</kbd> <kbd>→</kbd> anterior / siguiente ·{' '}
-        <kbd>Esc</kbd> cancela el salto · arrastrá los triángulos de la línea de tiempo para mover una sección.
+        Click en una sección para ir (sonando, según el modo de salto; con <kbd>Shift</kbd>, ya) · <kbd>1</kbd>…<kbd>9</kbd> ·{' '}
+        <kbd>←</kbd> <kbd>→</kbd> anterior / siguiente · <kbd>Esc</kbd> cancela el salto · doble click en el nombre para renombrar ·
+        arrastrá los triángulos de la línea de tiempo para mover una sección.
       </div>
-    </aside>
+    </section>
   )
 }
 
-function FilaSeccion({
+/** Cuantos compases (con tempo) o cuanto dura una seccion. */
+function largoDeSeccion(s: Seccion, compasesMs: number[] | null): string {
+  if (compasesMs && compasesMs.length > 1) {
+    const n = compasesMs.filter((c) => c >= s.inicioMs - 50 && c < s.finMs - 50).length
+    if (n > 0) return `${n} ${n === 1 ? 'compás' : 'compases'}`
+  }
+  return formatMmSs(s.finMs - s.inicioMs)
+}
+
+/**
+ * Una seccion como tarjeta grande: click = ir ahi (sonando, segun el modo de
+ * salto; Shift = ya). La que suena muestra cuanto va; la elegida para saltar,
+ * cuanto falta.
+ */
+function TarjetaSeccion({
   seccion,
   numero,
+  pos,
+  compasesMs,
   actual,
-  pendiente,
+  loop,
+  salto,
   onCancelarSalto,
   onJump,
   onRename,
@@ -220,8 +242,11 @@ function FilaSeccion({
 }: {
   seccion: Seccion
   numero: number
+  pos: number
+  compasesMs: number[] | null
   actual: boolean
-  pendiente: boolean
+  loop: boolean
+  salto: SaltoPendiente | null
   onCancelarSalto: () => void
   onJump: (inmediato: boolean) => void
   onRename: (nombre: string) => void
@@ -229,6 +254,8 @@ function FilaSeccion({
 }) {
   const [editando, setEditando] = useState(false)
   const [nombre, setNombre] = useState(seccion.nombre)
+  const color = colorDeSeccion(seccion)
+  const avance = actual ? Math.min(1, Math.max(0, (pos - seccion.inicioMs) / Math.max(1, seccion.finMs - seccion.inicioMs))) : 0
 
   function empezar(): void {
     setNombre(seccion.nombre)
@@ -241,14 +268,40 @@ function FilaSeccion({
 
   return (
     <li
-      className={`seccion-fila ${actual ? 'actual' : ''} ${pendiente ? 'pendiente' : ''}`}
+      className={`seccion-tarjeta ${actual ? 'actual' : ''} ${salto ? 'pendiente' : ''} ${loop ? 'loop' : ''}`}
+      style={{ '--color-seccion': color } as React.CSSProperties}
       onClick={(e) => !editando && onJump(e.shiftKey)}
       title="Click para ir a esta sección (sonando, según el modo de salto; Shift+click: ya)"
     >
-      <span className="seccion-numero num">{numero <= 9 ? numero : ''}</span>
-      <span className="seccion-color" style={{ background: colorDeSeccion(seccion) }} />
-      <span className="seccion-tiempo num">{formatMmSs(seccion.inicioMs)}</span>
-      <OrigenSeccion marcador={seccion.marcador} />
+      <div className="seccion-tarjeta-arriba">
+        {numero <= 9 && <kbd className="seccion-numero num">{numero}</kbd>}
+        <OrigenSeccion marcador={seccion.marcador} />
+        <span className="seccion-tiempo num">{formatMmSs(seccion.inicioMs)}</span>
+        {!editando && (
+          <span className="seccion-acciones">
+            <button
+              title="Renombrar"
+              aria-label={`Renombrar ${seccion.nombre}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                empezar()
+              }}
+            >
+              <Pencil size={14} />
+            </button>
+            <button
+              title="Borrar (se puede deshacer)"
+              aria-label={`Borrar ${seccion.nombre}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete()
+              }}
+            >
+              <Trash2 size={14} />
+            </button>
+          </span>
+        )}
+      </div>
       {editando ? (
         <input
           className="seccion-nombre-input"
@@ -265,48 +318,30 @@ function FilaSeccion({
         />
       ) : (
         <span className="seccion-nombre" onDoubleClick={(e) => (e.stopPropagation(), empezar())}>
+          {loop && <Repeat size={16} />}
           {seccion.nombre}
         </span>
       )}
-      {pendiente && !editando && (
-        <span className="seccion-pendiente" title="Sigue esta sección">
-          <ArrowRight size={14} />
-          <button
-            title="Cancelar el salto (Esc)"
-            aria-label="Cancelar el salto"
-            onClick={(e) => {
-              e.stopPropagation()
-              onCancelarSalto()
-            }}
-          >
-            <X size={13} />
-          </button>
-        </span>
-      )}
-      {!editando && (
-        <span className="seccion-acciones">
-          <button
-            title="Renombrar"
-            aria-label={`Renombrar ${seccion.nombre}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              empezar()
-            }}
-          >
-            <Pencil size={14} />
-          </button>
-          <button
-            title="Borrar (se puede deshacer)"
-            aria-label={`Borrar ${seccion.nombre}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete()
-            }}
-          >
-            <Trash2 size={14} />
-          </button>
-        </span>
-      )}
+      <span className="seccion-tarjeta-abajo">
+        {salto ? (
+          <span className="seccion-pendiente" role="status">
+            <ArrowRight size={14} /> sigue <b className="num">{faltaParaSalto(salto, pos)}</b>
+            <button
+              title="Cancelar el salto (Esc)"
+              aria-label="Cancelar el salto"
+              onClick={(e) => {
+                e.stopPropagation()
+                onCancelarSalto()
+              }}
+            >
+              <X size={13} />
+            </button>
+          </span>
+        ) : (
+          <span className="seccion-largo">{actual ? (loop ? 'repitiendo' : 'sonando') : largoDeSeccion(seccion, compasesMs)}</span>
+        )}
+      </span>
+      {actual && <span className="seccion-avance" style={{ width: `${avance * 100}%` }} />}
     </li>
   )
 }

@@ -18,6 +18,7 @@ import { Descubrimiento } from './descubrimiento'
 import { Mezclador } from './mezclador'
 import { archivoQueSuena, type Tonos } from './tono'
 import { sonidosDeCuenta } from './cuenta'
+import { Ondas } from './onda'
 import { Licencias } from './licencia'
 import { decodificarMezcla, SEGMENTO_SEC } from '../shared/mezcla'
 import { posicionActualMs } from '../shared/playback'
@@ -157,6 +158,22 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     } catch {
       if (!res.headersSent) res.status(500).end()
     }
+  })
+
+  // forma de onda de la cancion (el "recorrido" de la pantalla principal): se calcula una vez y queda guardada
+  const ondas = new Ondas(projectDir)
+  app.get('/onda/:proyectoId', (req, res) => {
+    const m = /^(.+)\.json$/.exec(req.params.proyectoId)
+    const proyecto = m && esIdValido(m[1]) ? state.tabDeProyecto(m[1])?.proyecto : null
+    if (!proyecto) return res.status(404).end()
+    ondas.obtener(proyecto).then(
+      (o) => {
+        // la revision va en la direccion (?v=): lo que se pide con la misma revision no cambia
+        res.setHeader('Cache-Control', 'private, max-age=86400')
+        res.json(o)
+      },
+      () => res.status(500).end()
+    )
   })
 
   // la voz que avisa un salto, para el audio de la compu (los celulares la reciben dentro de su mezcla)

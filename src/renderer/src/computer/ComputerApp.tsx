@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, AudioLines, Square } from 'lucide-react'
+import { ArrowLeft, AudioLines, LayoutGrid, SlidersVertical, Square } from 'lucide-react'
 import type { AppController } from '../app/useAppController'
 import { getPlayheadMs } from '../app/playheadStore'
 import { useConfirmar } from '../ui/Confirmar'
+import { useOnda } from '../ui/Onda'
+import { guardarPref, leerPref } from '../app/preferencias'
 import { Avisos } from '../ui/Avisos'
 import { TopBar } from './TopBar'
 import { Transport } from './Transport'
@@ -17,6 +19,8 @@ import { ListaEditor, ListasScreen } from './Listas'
 type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' }
 /** escenario = la cancion (mixer, secciones); listas = las listas por dia; editar = armar una lista */
 type Vista = { tipo: 'escenario' } | { tipo: 'listas' } | { tipo: 'editar'; listaId: string }
+/** En el escenario: el recorrido de la cancion con sus secciones, o la mezcla (el mixer a pantalla completa). */
+type VistaCancion = 'secciones' | 'mezcla'
 
 /** Solo los campos donde se escribe texto "se comen" el teclado; faders, botones y casillas no. */
 function escribiendoTexto(el: EventTarget | null): boolean {
@@ -33,14 +37,20 @@ export function ComputerApp({ controller }: { controller: AppController }) {
   const confirmar = useConfirmar()
   const [ventana, setVentana] = useState<Ventana>(null)
   const [vistaElegida, setVista] = useState<Vista>({ tipo: 'escenario' })
+  const [vistaCancion, setVistaCancionState] = useState<VistaCancion>(() => (leerPref<string>('vista-cancion', 'secciones') === 'mezcla' ? 'mezcla' : 'secciones'))
+  const setVistaCancion = (v: VistaCancion): void => {
+    setVistaCancionState(v)
+    guardarPref('vista-cancion', v)
+  }
   const proyecto = estado?.proyectoActivo ?? null
+  const onda = useOnda(proyecto)
   const sonando = estado?.playbackActivo?.estado === 'playing'
   // sin canciones arriba (al abrir el programa, o si se cerraron todas): las listas
   const vista: Vista = vistaElegida.tipo === 'escenario' && estado && estado.tabs.length === 0 ? { tipo: 'listas' } : vistaElegida
 
   // Los atajos se registran una sola vez y leen siempre lo mas nuevo por ref.
-  const ctx = useRef({ controller, ventana, proyecto, vista })
-  ctx.current = { controller, ventana, proyecto, vista }
+  const ctx = useRef({ controller, ventana, proyecto, vista, vistaCancion })
+  ctx.current = { controller, ventana, proyecto, vista, vistaCancion }
   const cancionRelativaRef = useRef<(delta: number) => void>(() => {})
 
   useEffect(() => {
@@ -76,6 +86,9 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             return () => c.createMarker(getPlayheadMs())
           case 'KeyL':
             return () => c.setLoop(!c.estado?.loop)
+          case 'Tab':
+            // Tab: de las secciones a la mezcla y vuelta
+            return () => setVistaCancion(ctx.current.vistaCancion === 'secciones' ? 'mezcla' : 'secciones')
         }
         const n = /^(Digit|Numpad)([1-9])$/.exec(e.code)
         if (n) return () => c.irASeccion(Number(n[2]), e.shiftKey)
@@ -254,10 +267,36 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             onCambiarTono={(n) => void controller.cambiarTono(proyecto.id, n)}
             onTonalidad={(t) => controller.ponerTonalidad(proyecto.id, t)}
             onCuenta={(c) => controller.setCuenta(proyecto.id, c)}
+            onda={onda}
+            timelineGrande={vistaCancion === 'secciones'}
           />
-          <main className="compu-main">
-            <Mixer proyecto={proyecto} onUpdate={controller.updateMixer} onReorder={controller.reorderPistas} />
+          <div className="vista-cancion-tabs segmentado" role="tablist" aria-label="Vista">
+            <button
+              role="tab"
+              aria-selected={vistaCancion === 'secciones'}
+              className={vistaCancion === 'secciones' ? 'activo' : ''}
+              onClick={() => setVistaCancion('secciones')}
+              title="El recorrido de la canción y sus secciones (Tab cambia de vista)"
+            >
+              <LayoutGrid size={15} /> Secciones <span className="num">{proyecto.marcadores.length}</span>
+            </button>
+            <button
+              role="tab"
+              aria-selected={vistaCancion === 'mezcla'}
+              className={vistaCancion === 'mezcla' ? 'activo' : ''}
+              onClick={() => setVistaCancion('mezcla')}
+              title="El mixer a pantalla completa (Tab cambia de vista)"
+            >
+              <SlidersVertical size={15} /> Mezcla <span className="num">{proyecto.pistas.length}</span>
+            </button>
+          </div>
+          <main className={`compu-main vista-${vistaCancion}`}>
+            {vistaCancion === 'mezcla' ? (
+              <Mixer proyecto={proyecto} onUpdate={controller.updateMixer} onReorder={controller.reorderPistas} />
+            ) : (
             <MarkersPanel
+              compasesMs={proyecto.tempo?.compasesMs ?? null}
+              loop={estado?.loop ?? false}
               secciones={secciones}
               analisis={proyecto.analisis ?? null}
               progreso={controller.progresoAnalisis[proyecto.id] ?? null}
@@ -279,6 +318,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
               onActivarVoces={controller.activarVoces}
               onBorrarVoces={controller.borrarVoces}
             />
+            )}
           </main>
         </>
       ) : null}

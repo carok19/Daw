@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   ArrowRight,
+  ChevronDown,
   Headphones,
+  LayoutGrid,
   ListMusic,
   Lock,
   Pause,
@@ -13,13 +15,14 @@ import {
   Settings,
   SkipBack,
   SkipForward,
+  SlidersVertical,
   UserPlus,
   Volume2,
   WifiOff,
   X
 } from 'lucide-react'
-import type { Proyecto, SaltoPendiente } from '@shared/types'
-import { seccionEn } from '@shared/playback'
+import type { OndaCancion, Proyecto, SaltoPendiente } from '@shared/types'
+import { seccionEn, type Seccion } from '@shared/playback'
 import { textoSemitonos, tonalidadOriginal, transponerTonalidad } from '@shared/tonalidad'
 import type { AppController } from '../app/useAppController'
 import { useGolpeCuenta, usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
@@ -33,20 +36,30 @@ import { Avisos } from '../ui/Avisos'
 import { FaderTactil } from '../ui/FaderTactil'
 import { useConfirmar } from '../ui/Confirmar'
 import { useWakeLock } from './useWakeLock'
+import { OndaDibujo, useOnda } from '../ui/Onda'
+import { guardarPref } from '../app/preferencias'
 import { Hoja, HojaAjustes } from './Hojas'
 import { AbrirEnApp, AccesoFijo, HojaInvitar, PantallaCodigo, PantallaLicencia } from './Conectar'
 import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion'
 
 type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones' | 'invitar'
+/** La cancion (por donde va y sus secciones) o "Mi mezcla" a pantalla completa. */
+type VistaCelular = 'cancion' | 'mezcla'
 
 /**
- * Celular: lo que el musico toca es SU mezcla, asi que es la pantalla
- * principal. La cancion, la seccion y el transporte van en una barra
- * flotante abajo (con las secciones y las canciones a un toque).
+ * Celular: la pantalla principal es la cancion (el recorrido con la forma de
+ * onda y las secciones como tarjetas grandes: tocar = ir ahi) y "Mi mezcla"
+ * es otra pantalla entera, a un toque. El transporte va siempre abajo.
  */
 export function MobileApp({ controller }: { controller: AppController }) {
   const { estado, conectado } = controller
   const [hoja, setHoja] = useState<HojaAbierta>(null)
+  const [vista, setVistaState] = useState<VistaCelular>(() => (leerPref<string>('vista-celular', 'cancion') === 'mezcla' ? 'mezcla' : 'cancion'))
+  const setVista = (v: VistaCelular): void => {
+    setVistaState(v)
+    guardarPref('vista-celular', v)
+    window.scrollTo({ top: 0 })
+  }
   const wake = useWakeLock()
   const proyecto = estado?.proyectoActivo ?? null
   // dentro de la app Android: el audio arranca solo y la pantalla la mantiene encendida la app
@@ -72,7 +85,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
   }
 
   return (
-    <div className={`mobile ${proyecto ? 'con-barra' : ''}`}>
+    <div className={`mobile ${proyecto ? 'con-barra' : ''} vista-${vista}`}>
       <div className="m-top">
         <span className="m-conexion">
           <span className={`punto ${conectado ? 'verde' : 'rojo'}`} />
@@ -106,7 +119,21 @@ export function MobileApp({ controller }: { controller: AppController }) {
       )}
 
       {proyecto ? (
-        <Mezcla controller={controller} proyecto={proyecto} />
+        <>
+          <div className="m-vistas segmentado" role="tablist" aria-label="Pantalla">
+            <button role="tab" aria-selected={vista === 'cancion'} className={vista === 'cancion' ? 'activo' : ''} onClick={() => setVista('cancion')}>
+              <LayoutGrid size={17} /> Canción
+            </button>
+            <button role="tab" aria-selected={vista === 'mezcla'} className={vista === 'mezcla' ? 'activo' : ''} onClick={() => setVista('mezcla')}>
+              <SlidersVertical size={17} /> Mi mezcla
+            </button>
+          </div>
+          {vista === 'cancion' ? (
+            <VistaCancion controller={controller} proyecto={proyecto} onHoja={setHoja} />
+          ) : (
+            <Mezcla controller={controller} proyecto={proyecto} />
+          )}
+        </>
       ) : (
         <>
           <div className="m-esperando">
@@ -118,7 +145,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
         </>
       )}
 
-      {proyecto && <BarraFlotante controller={controller} onHoja={setHoja} />}
+      {proyecto && <BarraFlotante controller={controller} onHoja={setHoja} conInfo={vista === 'mezcla'} />}
 
       {!controller.audioActivo && mostrarActivar && (
         <div className="activar">
@@ -301,7 +328,11 @@ function TonoQueSuena({ proyecto }: { proyecto: Proyecto }) {
   )
 }
 
-function BarraFlotante({ controller, onHoja }: { controller: AppController; onHoja: (h: HojaAbierta) => void }) {
+/**
+ * Abajo, siempre: el transporte. En "Mi mezcla" ademas la cancion y la
+ * seccion (en la vista de la cancion eso ya esta grande arriba).
+ */
+function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppController; onHoja: (h: HojaAbierta) => void; conInfo: boolean }) {
   const { estado, secciones } = controller
   const proyecto = estado!.proyectoActivo!
   const pos = usePlayheadPaso(200)
@@ -315,7 +346,8 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
   const cantidadCanciones = estado?.tabs.length ?? 0
 
   return (
-    <div className="m-barra" role="region" aria-label="Canción y transporte">
+    <div className={`m-barra ${conInfo ? '' : 'solo-botones'}`} role="region" aria-label="Canción y transporte">
+      {conInfo && (
       <button className="m-barra-info" onClick={() => onHoja('secciones')} aria-label="Ver secciones">
         <span className="m-barra-fila">
           <span className="m-barra-cancion">{proyecto.nombre}</span>
@@ -326,7 +358,7 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
         </span>
         <span className="m-barra-fila">
           {golpe > 0 ? (
-            <span className="m-barra-seccion m-barra-contando num" role="status">
+            <span className="m-barra-seccion m-contando num" role="status">
               Cuenta {golpe}
             </span>
           ) : (
@@ -345,6 +377,7 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
         </span>
         <MiniTimeline controller={controller} />
       </button>
+      )}
       <div className="m-barra-botones">
         {locked ? (
           <span className="m-barra-bloqueado">
@@ -366,9 +399,11 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
             </button>
           </>
         )}
-        <button onClick={() => onHoja('secciones')} aria-label="Secciones">
-          <Rows3 size={19} />
-        </button>
+        {conInfo && (
+          <button onClick={() => onHoja('secciones')} aria-label="Secciones">
+            <Rows3 size={19} />
+          </button>
+        )}
         <button onClick={() => onHoja('canciones')} aria-label="Canciones del setlist">
           <ListMusic size={19} />
           {cantidadCanciones > 1 && <span className="m-barra-cuenta num">{cantidadCanciones}</span>}
@@ -378,24 +413,144 @@ function BarraFlotante({ controller, onHoja }: { controller: AppController; onHo
   )
 }
 
-function MiniTimeline({ controller }: { controller: AppController }) {
+/** La cancion de punta a punta, dividida en secciones. Grande (el "recorrido"), con la forma de onda y los nombres. */
+function MiniTimeline({ controller, onda, grande }: { controller: AppController; onda?: OndaCancion | null; grande?: boolean }) {
   const { secciones, estado } = controller
   const dur = Math.max(estado?.proyectoActivo?.duracionTotalMs ?? 1, 1)
   const pos = usePlayheadMs()
   const actual = seccionEn(secciones, pos)
   const salto = estado?.saltoPendiente ?? null
+  const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
+  const pct = (ms: number): string => `${Math.min(100, Math.max(0, (ms / dur) * 100))}%`
   return (
-    <span className="m-timeline" aria-hidden>
+    <span className={`m-timeline ${grande ? 'm-recorrido' : ''} ${onda ? 'con-onda' : ''}`} aria-hidden>
       {secciones.map((s) => (
         <span
           key={s.marcador?.id ?? 'inicio'}
-          className={`${actual?.indice === s.indice ? 'actual' : ''} ${salto?.destinoMs === s.inicioMs ? 'destino' : ''}`}
+          className={`${actual?.indice === s.indice ? 'actual' : ''} ${destino?.indice === s.indice ? 'destino' : ''}`}
           style={{ width: `${((s.finMs - s.inicioMs) / dur) * 100}%`, background: colorDeSeccion(s) }}
-        />
+        >
+          {grande && s.marcador && <em>{s.nombre}</em>}
+        </span>
       ))}
-      {salto && <span className="m-salto-limite" style={{ left: `${Math.min(100, (salto.limiteMs / dur) * 100)}%` }} />}
-      <span className="m-playhead" style={{ left: `${Math.min(100, (pos / dur) * 100)}%` }} />
+      {onda && <OndaDibujo onda={onda} duracionMs={dur} className="m-onda" />}
+      {grande && <span className="m-pasado" style={{ width: pct(pos) }} />}
+      {salto && <span className="m-salto-limite" style={{ left: pct(salto.limiteMs) }} />}
+      <span className="m-playhead" style={{ left: pct(pos) }} />
     </span>
+  )
+}
+
+/** Cuantos compases (con tempo) o cuanto dura una seccion. */
+function largoDeSeccion(s: Seccion, compasesMs: number[] | null): string {
+  if (compasesMs && compasesMs.length > 1) {
+    const n = compasesMs.filter((c) => c >= s.inicioMs - 50 && c < s.finMs - 50).length
+    if (n > 0) return `${n} ${n === 1 ? 'compás' : 'compases'}`
+  }
+  return formatMmSs(s.finMs - s.inicioMs)
+}
+
+// ---------- la cancion: recorrido + secciones ----------
+
+function VistaCancion({ controller, proyecto, onHoja }: { controller: AppController; proyecto: Proyecto; onHoja: (h: HojaAbierta) => void }) {
+  const { estado, secciones } = controller
+  const pos = usePlayheadPaso(200)
+  const golpe = useGolpeCuenta()
+  const onda = useOnda(proyecto)
+  const actual = seccionEn(secciones, pos)
+  const siguiente = actual ? secciones[actual.indice + 1] : null
+  const locked = estado?.locked ?? false
+  const loop = estado?.loop ?? false
+  const sonando = estado?.playbackActivo?.estado === 'playing'
+  const salto = estado?.saltoPendiente ?? null
+  const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
+  const modo = estado?.modoSalto ?? 'seccion'
+  const conMarcador = secciones.filter((s) => s.marcador)
+  const compases = proyecto.tempo?.compasesMs ?? null
+  const ayuda = locked
+    ? null
+    : !sonando || modo === 'inmediato'
+      ? 'Tocá una sección para ir ahí.'
+      : modo === 'compas'
+        ? 'Tocá una sección: salta en el próximo compás.'
+        : 'Tocá una sección: la actual termina y sigue la que elijas, sin cortes.'
+
+  return (
+    <section className="m-vista-cancion" aria-label="Canción">
+      <div className="m-cancion-cabeza">
+        <button className="m-cancion-nombre" onClick={() => onHoja('canciones')} aria-label={`${proyecto.nombre}: ver las canciones`}>
+          <span>{proyecto.nombre}</span>
+          <ChevronDown size={16} />
+        </button>
+        <TonoQueSuena proyecto={proyecto} />
+        <span className="m-cancion-tiempo num">
+          {formatMmSs(pos)} / {formatMmSs(proyecto.duracionTotalMs)}
+        </span>
+      </div>
+      <div className="m-ahora">
+        {golpe > 0 ? (
+          <span className="m-ahora-seccion m-contando num" role="status">
+            Cuenta {golpe}
+          </span>
+        ) : (
+          <span className="m-ahora-seccion" style={{ color: actual ? colorClaro(colorDeSeccion(actual)) : undefined }}>
+            {loop && <Repeat size={22} />}
+            {actual?.nombre ?? '—'}
+          </span>
+        )}
+        {salto ? (
+          <span className="m-salto" role="status">
+            <ArrowRight size={15} /> {salto.nombre} <span className="num">{faltaPara(salto, pos)}</span>
+            {!locked && (
+              <button onClick={controller.cancelarSalto} aria-label="Cancelar el salto">
+                <X size={15} />
+              </button>
+            )}
+          </span>
+        ) : (
+          <span className="m-barra-sigue">{loop ? 'repitiendo' : siguiente ? `sigue ${siguiente.nombre}` : 'última sección'}</span>
+        )}
+      </div>
+      <MiniTimeline controller={controller} onda={onda} grande />
+      {conMarcador.length === 0 ? (
+        <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>
+      ) : (
+        <div className="m-marcadores">
+          {conMarcador.map((s) => {
+            const esActual = actual?.indice === s.indice
+            const pendiente = !!salto && destino?.indice === s.indice
+            const avance = esActual ? Math.min(1, Math.max(0, (pos - s.inicioMs) / Math.max(1, s.finMs - s.inicioMs))) : 0
+            return (
+              <button
+                key={s.marcador!.id}
+                className={`m-marcador ${esActual ? 'actual' : ''} ${pendiente ? 'pendiente' : ''}`}
+                style={{ '--color-seccion': colorDeSeccion(s) } as React.CSSProperties}
+                disabled={locked}
+                onClick={() => controller.jumpToMarker(s.marcador!.id)}
+              >
+                <span className="m-marcador-nombre">
+                  {esActual && loop && <Repeat size={15} />}
+                  {s.nombre}
+                </span>
+                <small className="m-marcador-detalle num">
+                  {pendiente ? `sigue · ${faltaPara(salto!, pos)}` : esActual ? (loop ? 'repitiendo' : 'sonando') : largoDeSeccion(s, compases)}
+                </small>
+                {esActual && <i className="m-marcador-avance" style={{ width: `${avance * 100}%` }} />}
+              </button>
+            )
+          })}
+        </div>
+      )}
+      <p className="m-ayuda-salto">
+        {locked ? (
+          <>
+            <Lock size={14} /> El control lo tiene la computadora.
+          </>
+        ) : (
+          ayuda
+        )}
+      </p>
+    </section>
   )
 }
 

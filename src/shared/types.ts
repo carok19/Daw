@@ -115,8 +115,18 @@ export interface Proyecto {
    * el nuevo, sigue sonando este
    */
   tonoAplicado?: number
-  /** pistas que suenan transpuestas (el click, la guia y la bateria no) */
+  /**
+   * pistas que suenan preparadas (tono y/o velocidad): con otro tono solo, el
+   * click, la guia y la bateria no; con otra velocidad, todas
+   */
   tonoPistas?: string[]
+  /** velocidad elegida (1 = la original, 0,8 a 1,2; ver shared/velocidad.ts) */
+  velocidad?: number
+  /**
+   * velocidad a la que suena ahora (pistas ya preparadas). Los tiempos de la
+   * cancion (secciones, compases, duracion) estan en esta velocidad.
+   */
+  velocidadAplicada?: number
   /** tonalidad original puesta a mano ("A", "F#m"); sin: se lee del nombre de la cancion */
   tonalidad?: string
   /** compases de cuenta al dar play (0 = sin cuenta); sin: automatica (2, o 1 en las lentas) */
@@ -145,6 +155,8 @@ export interface EstadoFirewall {
 export interface ProgresoTono {
   proyectoId: string
   semitonos: number
+  /** velocidad que se esta preparando (1 = la original) */
+  velocidad?: number
   hechos: number
   total: number
 }
@@ -321,6 +333,15 @@ export interface AnuncioSalto {
   pistaId: string | null
   /** la guia de la cancion, que se calla mientras tanto */
   guiaPistaId: string | null
+}
+
+/** Forma de onda de la cancion entera (el "recorrido"): la banda, sin click ni guia (ver server/onda.ts). */
+export interface OndaCancion {
+  /** revision del audio con la que se calculo */
+  revision: number
+  msPorPunto: number
+  /** 0 a 100 */
+  puntos: number[]
 }
 
 /** El pack de voces importado en la compu (para avisar los saltos). */

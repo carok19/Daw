@@ -1285,6 +1285,35 @@ test('voz del salto: se importa el pack (el español) y los celulares la reciben
   compu.emit('transport:stop')
 })
 
+test('recorrido: la forma de onda de la canción (la banda, sin click ni guía), calculada una vez', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const sr = 44100
+  // 20 s: la banda suave 10 s y fuerte los otros 10; el click y la guia suenan fuerte todo el tiempo (no cuentan)
+  const banda = new Float32Array(20 * sr)
+  for (let i = 0; i < banda.length; i++) banda[i] = (i < 10 * sr ? 0.05 : 0.5) * Math.sin((2 * Math.PI * 220 * i) / sr)
+  const fuerte = new Float32Array(20 * sr)
+  for (let i = 0; i < fuerte.length; i++) fuerte[i] = 0.8 * Math.sin((2 * Math.PI * 1000 * i) / sr)
+  const estado = await cargarZip(compu, crearZip('Onda', { 'Click.wav': wav16(fuerte, sr), 'Guia.wav': wav16(fuerte, sr), 'Piano.wav': wav16(banda, sr) }))
+  const p = estado.proyectoActivo!
+  const url = `http://localhost:${env.port}/onda/${p.id}.json?v=${p.revision ?? 0}`
+  const onda = (await (await fetch(url)).json()) as { revision: number; msPorPunto: number; puntos: number[] }
+  assert.equal(onda.revision, p.revision ?? 0)
+  assert.ok(onda.puntos.length >= 1000 && onda.puntos.length <= 1200, `${onda.puntos.length} puntos`)
+  assert.ok(Math.abs(onda.puntos.length * onda.msPorPunto - p.duracionTotalMs) < onda.msPorPunto * 2)
+  const promedio = (desde: number, hasta: number): number => {
+    const x = onda.puntos.slice(Math.floor(desde / onda.msPorPunto), Math.floor(hasta / onda.msPorPunto))
+    return x.reduce((a, b) => a + b, 0) / x.length
+  }
+  // se ve la forma de la cancion (no la del click)
+  assert.ok(promedio(11000, 19000) > 95, `fuerte: ${promedio(11000, 19000)}`)
+  assert.ok(promedio(1000, 9000) < 25, `suave: ${promedio(1000, 9000)}`)
+  // queda guardada con la cancion: la proxima vez no se calcula
+  const guardada = JSON.parse(fs.readFileSync(path.join(env.appDir, 'proyectos', p.id, 'onda.json'), 'utf-8'))
+  assert.deepEqual(guardada.puntos, onda.puntos)
+  assert.equal((await fetch(`http://localhost:${env.port}/onda/${crypto.randomUUID()}.json`)).status, 404)
+})
+
 test('mezcla en hilos de trabajo (igual al hilo principal) y lo más urgente primero', async (t) => {
   const env = await entorno(t)
   const compu = await env.conectar(compuAuth)

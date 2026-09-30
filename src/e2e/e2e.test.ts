@@ -132,14 +132,24 @@ async function enSync(celulares: Page[], contexto: string, convergerMs = 25000):
   }
 }
 
-/** Cuantas secciones ve un celular (se abre y se cierra la hoja de secciones de la barra flotante). */
+/** La compu: la vista de la cancion con las secciones (tarjetas) o la de la mezcla (el mixer). */
+async function vistaCompu(compu: Page, vista: 'Secciones' | 'Mezcla'): Promise<void> {
+  const tab = compu.getByRole('tab', { name: new RegExp(`^${vista}`) })
+  if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click()
+}
+
+/** El celular: la pantalla de la cancion (recorrido y secciones) o "Mi mezcla". */
+async function vistaCelular(cel: Page, vista: 'Canción' | 'Mi mezcla'): Promise<void> {
+  const tab = cel.getByRole('tab', { name: vista })
+  if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click()
+}
+
+/** Cuantas secciones ve un celular (las tarjetas de la pantalla de la cancion) y si se pueden tocar. */
 async function seccionesEnCelular(cel: Page): Promise<{ cantidad: number; deshabilitadas: boolean }> {
-  await cel.getByRole('button', { name: 'Secciones', exact: true }).click()
-  await cel.waitForSelector('.hoja')
-  const cantidad = await cel.locator('.hoja .m-marcador').count()
-  const deshabilitadas = cantidad > 0 && (await cel.locator('.hoja .m-marcador').first().isDisabled())
-  await cel.getByRole('button', { name: 'Cerrar' }).click()
-  await cel.waitForSelector('.hoja', { state: 'detached' })
+  await vistaCelular(cel, 'Canción')
+  const tarjetas = cel.locator('.m-vista-cancion .m-marcador')
+  const cantidad = await tarjetas.count()
+  const deshabilitadas = cantidad > 0 && (await tarjetas.first().isDisabled())
   return { cantidad, deshabilitadas }
 }
 
@@ -220,6 +230,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     assert.equal(await compu.locator('.cancion-titulo').textContent(), 'Rey de Reyes')
     await compu.locator('.setlist-tab').nth(0).click()
     await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Cuan Grande Es El')
+    await vistaCompu(compu, 'Mezcla')
     assert.deepEqual(await compu.locator('.canal-nombre').allTextContents(), ['Click', 'Guia', 'Bajo', 'Pad'])
     const colores = await compu.locator('.canal').evaluateAll((els) => els.map((e) => getComputedStyle(e).getPropertyValue('--color-pista')))
     assert.equal(new Set(colores).size, colores.length)
@@ -244,6 +255,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   })
 
   await t.test('Espacio (aun con foco en un fader) reproduce y los celulares suenan en sync', async () => {
+    await vistaCompu(compu, 'Mezcla')
     await compu.locator('.fader').first().click()
     await compu.keyboard.press('Space')
     await esperar(6000)
@@ -256,12 +268,13 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
       await compu.keyboard.press('m')
       await esperar(1200)
     }
-    await compu.waitForFunction(() => document.querySelectorAll('.seccion-fila').length === 3)
-    const fila = compu.locator('.seccion-fila').nth(2)
+    await vistaCompu(compu, 'Secciones')
+    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 3)
+    const fila = compu.locator('.seccion-tarjeta').nth(2)
     await fila.hover()
     await fila.getByRole('button', { name: /Borrar/ }).click()
     await compu.getByRole('button', { name: 'Deshacer' }).click()
-    await compu.waitForFunction(() => document.querySelectorAll('.seccion-fila').length === 3)
+    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 3)
     assert.equal((await seccionesEnCelular(celulares[0])).cantidad, 3)
   })
 
@@ -296,7 +309,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     // queda pendiente: se ve en la compu y en los celulares
     await compu.waitForSelector('.salto-pendiente')
     assert.match((await compu.locator('.salto-pendiente').textContent()) ?? '', /Sección 3/)
-    for (const cel of celulares) await cel.waitForSelector('.m-barra-salto')
+    for (const cel of celulares) await cel.waitForSelector('.m-salto')
     const salto = server.state.saltoPendiente!
     assert.equal(salto.destinoMs, 24000)
     const secciones = server.state.getActiveTab()!.proyecto.marcadores.map((m) => m.tiempoMs)
@@ -327,6 +340,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
 
   await t.test('celular: la mezcla está a la vista; deslizar para scrollear no mueve los faders', async () => {
     const cel = celulares[0]
+    await vistaCelular(cel, 'Mi mezcla')
     const fader = cel.locator('.m-canal').nth(1).locator('.fader-tactil') // [0] es el volumen general
     await fader.scrollIntoViewIfNeeded()
     const valor = async (): Promise<number> => Number(await fader.getAttribute('aria-valuenow'))
@@ -447,7 +461,8 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   })
 
   await t.test('secciones automáticas por la voz guía, en el "1" del compás', async () => {
-    await compu.waitForFunction(() => document.querySelectorAll('.seccion-fila').length === 6, null, { timeout: 60000 })
+    await vistaCompu(compu, 'Secciones')
+    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 6, null, { timeout: 60000 })
     assert.deepEqual(await compu.locator('.seccion-nombre').allTextContents(), ['Verso 1', 'Coro', 'Verso 2', 'Coro 2', 'Puente', 'Final'])
     assert.equal(await compu.locator('.seccion-origen').count(), 6)
     assert.match((await compu.locator('.analisis-linea').textContent()) ?? '', /voz guía/)
@@ -572,6 +587,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
       if (r.url().includes('/media/') && !r.url().includes('/analisis/')) pedidosMedia.push(r.url())
     })
     // en este celular, sin el click (sus golpes taparian la posicion)
+    await vistaCelular(cel, 'Mi mezcla')
     await cel.getByRole('button', { name: 'Mute de Click en este celular' }).click()
     await compu.keyboard.press('Space')
     await esperar(4000)
@@ -710,6 +726,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
       assert.deepEqual(await paneos(), esperado)
     }
     // en la compu se ve en los paneos de la mezcla (el click, por su nombre; la banda a la derecha)
+    await vistaCompu(compu, 'Mezcla')
     const paneoEnCompu = async (i: number): Promise<string> => (await compu.locator('.canal').nth(i).getByRole('slider', { name: 'Paneo' }).getAttribute('aria-valuenow'))!
     assert.deepEqual(
       await compu.locator('.canal-nombre').allTextContents(),
@@ -1629,7 +1646,7 @@ test('cuenta: al dar play suena "1 2 3 4, 1 2 3 4" a la vez en la compu y el cel
   await t.test('suenan los 8 golpes en los dos, juntos y a tiempo; la canción entra en el "1"', async () => {
     const vistos = new Set<string>()
     const mirar = setInterval(() => {
-      void cel.locator('.m-barra-contando').textContent().then((x) => x && vistos.add(`cel ${x.trim()}`), () => undefined)
+      void cel.locator('.m-contando').textContent().then((x) => x && vistos.add(`cel ${x.trim()}`), () => undefined)
       void compu.locator('.reloj-contando .reloj-grande').textContent().then((x) => x && vistos.add(`compu ${x.trim()}`), () => undefined)
     }, 100)
     /** Un play con cuenta: cuanto antes (-) o despues (+) de su hora sono cada golpe y la entrada de la banda, en cada dispositivo. */
@@ -1834,6 +1851,7 @@ test('mute desde la compu y mute/solo en el celular: esa pista deja de escuchars
 
   // "Mi mezcla" en el celular: M silencia el seno; S en la banda lo deja afuera (solo en este celular)
   const boton = (nombre: string) => cel.getByRole('button', { name: nombre })
+  await vistaCelular(cel, 'Mi mezcla')
   const personal = [
     await medir(true, 300, () => boton('Mute de Seno en este celular').click()),
     await medir(false, 800, () => boton('Mute de Seno en este celular').click()),
