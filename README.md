@@ -208,6 +208,19 @@ cambian a propósito.
    (aunque la marca haya quedado unos ms corrida), un click en la línea de
    tiempo espera al próximo compás, y la vuelta de “repetir” también va de
    compás a compás. Así, aunque se salte muy lejos, el pulso no se corta.
+   **Voz que avisa el salto:** en el último compás antes de saltar se
+   escucha la sección elegida en el “1” y la cuenta en los dos últimos
+   pulsos (“**Coro… 3, 4**”; en 3/4 “2, 3”), con el volumen y el lado de la
+   guía de cada uno. En ese compás la guía de la canción se calla (diría la
+   sección que venía, no la elegida). Las voces no vienen con la app: se
+   importan una vez en el panel de secciones → **Importar voces…** (un .zip
+   o .rar con un audio por sección —*Coro*, *Verso 1*, *Puente*…— y los
+   números 1 a 7; si trae varios idiomas se usa el español). Los nombres se
+   reconocen aunque varíen (“Estribillo” → Coro, “Coro 5” → Coro,
+   “Precoro” → Pre Coro) y se usa el momento exacto en que empieza a
+   hablar cada archivo. Si el salto se elige tan encima que el “1” ya pasó,
+   el nombre va en el primer pulso que llega; sin la voz de esa sección,
+   solo la cuenta. Se puede apagar sin borrar el pack.
 10. **Cambiar el tono** (de −6 a +6 semitonos): en la compu, al lado del
     nombre de la canción, **− A +**. Cada toque sube o baja medio tono y se
     ve “A → B +2”. La compu prepara las pistas en el tono nuevo (unos
@@ -664,6 +677,19 @@ habitual de los programas que se venden sin conexión.
    sobre la línea de tiempo del audio que ese celular está tocando (no sobre
    el reloj): si iba unos ms corrido, el pulso igual queda parejo en el
    salto, y el corrimiento lo sigue corrigiendo el monitor de drift.
+7c. **Voz del salto** (`shared/anuncio.ts`, `server/voces.ts`): al elegir el
+   salto el servidor arma el audio del aviso (el compás antes del límite,
+   cada voz en su pulso) y lo manda en `saltoPendiente.anuncio`. Los
+   celulares lo reciben **dentro de su mezcla**: los pedazos de ese compás
+   se vuelven a pedir con `&a=<id>` y la compu los mezcla con la guía
+   callada (fundidos de 10 ms) y la voz con el volumen y el paneo de la guía
+   en esa mezcla (sin guía, los del click); así cae exacta en el tiempo de
+   cada uno, como cualquier cambio de mezcla. La compu (pistas sueltas) baja
+   `/anuncio/<id>.wav`, lo programa en ese punto de la canción y calla la
+   guía con un `GainNode` propio. Como la orden del salto llega antes de
+   que suene, el aviso se sigue escuchando hasta el salto; si se cancela o
+   se elige otra sección, se corta. Medido con audio real: la cuenta cae a
+   menos de 3 ms del pulso y la guía queda en silencio todo el compás.
 8. **Cada dispositivo tiene un id estable** (localStorage): al reconectar
    vuelve a su misma fila con su nombre, sin "fantasmas". Los desconectados
    quedan visibles (para notar si alguien se cayó) hasta que se limpian. Al

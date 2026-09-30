@@ -1850,3 +1850,125 @@ test('mute desde la compu y mute/solo en el celular: esa pista deja de escuchars
   assert.ok(Math.max(...cargado) < 1500 && promedio < 1000, `WiFi cargado: ${cargado.map(Math.round).join(', ')} ms`)
   assert.ok(Math.max(...personal) < 1500, `Mi mezcla: ${personal.map(Math.round).join(', ')} ms`)
 })
+
+test('voz del salto con audio real: en el último compás se calla la guía y se cuenta a tiempo (celular y compu)', { timeout: 3 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-voz-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  const tono = (f: number, seg: number, amp: number, sr = SR): Float32Array => {
+    const x = new Float32Array(Math.round(seg * sr))
+    for (let i = 0; i < x.length; i++) x[i] = amp * Math.sin((2 * Math.PI * f * i) / sr)
+    return x
+  }
+  // pack de voces: "Puente" (con silencio antes de hablar), "3" y "4"
+  const conSilencio = (x: Float32Array, antes: number): Float32Array => {
+    const y = new Float32Array(x.length + Math.round(antes * 48000) + 9600)
+    y.set(x, Math.round(antes * 48000))
+    return y
+  }
+  const pack = new AdmZip()
+  pack.addFile('Spanish Guides/Spanish - Puente (Bridge).wav', wav16(conSilencio(tono(1000, 0.4, 0.5, 48000), 0.1), 48000))
+  pack.addFile('Spanish Guides/Spanish - 3.wav', wav16(conSilencio(tono(1500, 0.2, 0.5, 48000), 0), 48000))
+  pack.addFile('Spanish Guides/Spanish - 4.wav', wav16(conSilencio(tono(1500, 0.2, 0.5, 48000), 0), 48000))
+  const zipPack = path.join(tmp, 'Voces.zip')
+  pack.writeZip(zipPack)
+  // la cancion: la guia suena todo el tiempo (izquierda), la banda a la derecha; 120 BPM 4/4
+  const z = new AdmZip()
+  z.addFile('Guia.wav', wav16(tono(300, 20, 0.3), SR))
+  z.addFile('Click.wav', wav16(new Float32Array(20 * SR), SR))
+  z.addFile('Banda.wav', wav16(tono(220, 20, 0.3), SR))
+  z.addFile('marcas.txt', Buffer.from('0:04 Verso\n0:08 Coro\n0:12 Puente\n'))
+  const zip = path.join(tmp, 'Voz.zip')
+  z.writeZip(zip)
+  const compuSock = (await import('socket.io-client')).io(base, { auth: { origen: 'compu', token: 'e2e' } })
+  t.after(() => void compuSock.close())
+  await new Promise<void>((r) => compuSock.once('connect', () => r()))
+  const importado = await new Promise<{ ok: boolean; error?: string }>((r) => compuSock.emit('voces:importar', { filePath: zipPack }, r))
+  assert.equal(importado.ok, true, importado.error)
+  await new Promise((r) => compuSock.emit('project:load-from-zip', { filePath: zip }, r))
+  const tab = server.state.getActiveTab()!
+  const p = tab.proyecto
+  p.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 11 }, (_, k) => k * 2000), clickPistaId: p.pistas.find((x) => x.nombre === 'Click')!.id, acentoClaro: true }
+  p.cuenta = 0
+  server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
+
+  // un celular con la mezcla de la compu y otro con las pistas sueltas (como suena la compu)
+  const paginas: Page[] = []
+  for (const modo of ['', '&modo=pistas']) {
+    const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+    ctx.setDefaultTimeout(15000)
+    const cel = await ctx.newPage()
+    await cel.goto(`${base}/?debug${modo}`)
+    await cel.getByRole('button', { name: /Tocá para empezar/ }).click()
+    await cel.waitForFunction(() => !!(globalThis as unknown as { __mt?: { engineRef: { current: unknown } } }).__mt?.engineRef.current)
+    // se graba el oido izquierdo (guia y voz) con la posicion de la cancion de cada pedacito
+    await cel.evaluate(async () => {
+      const g = globalThis as unknown as {
+        __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode; posicionNodoEn(t: number): number | null } } }
+        __muestras: [number, number][]
+      }
+      const engine = g.__mt.engineRef.current
+      const codigo = `registerProcessor('grabador-voz', class extends AudioWorkletProcessor {
+        constructor() { super(); this.lote = [] }
+        process(inputs) {
+          const L = inputs[0] && inputs[0][0]
+          if (L) { let pico = 0; for (let i = 0; i < L.length; i++) pico = Math.max(pico, Math.abs(L[i])); this.lote.push([currentTime, pico]) }
+          if (this.lote.length >= 4) { this.port.postMessage(this.lote); this.lote = [] }
+          return true
+        }
+      })`
+      await engine.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' })))
+      const nodo = new AudioWorkletNode(engine.ctx, 'grabador-voz', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' })
+      g.__muestras = []
+      nodo.port.onmessage = (e: MessageEvent<[number, number][]>) => {
+        for (const [tc, v] of e.data) {
+          const pos = engine.posicionNodoEn(tc)
+          if (pos !== null) g.__muestras.push([pos, v])
+        }
+      }
+      engine.masterGain.connect(nodo)
+    })
+    paginas.push(cel)
+  }
+
+  // sonando en el Inicio, se elige el Puente: salta al terminar el Inicio (4 s); la voz va en el ultimo compas (2 a 4 s)
+  compuSock.emit('transport:play', { positionMs: 0 })
+  await esperar(2200)
+  const antes = buildEstadoCompleto(server.state).playbackActivo!
+  assert.equal(antes.estado, 'playing')
+  compuSock.emit('seccion:saltar', { posicionMs: 12000 })
+  await esperar(500)
+  const anuncio = server.state.saltoPendiente?.anuncio
+  assert.ok(anuncio, 'el salto trae la voz')
+  assert.deepEqual([anuncio.desdeMs, anuncio.hastaMs], [2000, 4000])
+  await esperar(4500)
+  compuSock.emit('transport:stop', {})
+
+  for (const [k, cel] of paginas.entries()) {
+    const quien = k === 0 ? 'celular (mezcla de la compu)' : 'pistas sueltas (como la compu)'
+    const m = (await cel.evaluate(() => (globalThis as unknown as { __muestras: [number, number][] }).__muestras)) as [number, number][]
+    const pico = (desde: number, hasta: number): number => Math.max(0, ...m.filter(([pos]) => pos >= desde && pos < hasta).map(([, v]) => v))
+    // antes del ultimo compas se oye la guia; en el hueco entre "Puente" y "3", nada (la guia se calla)
+    assert.ok(pico(1.2, 1.95) > 0.1, `${quien}: la guía suena antes (${pico(1.2, 1.95)})`)
+    assert.ok(pico(2.5, 2.95) < 0.02, `${quien}: la guía se calla en el compás del aviso (${pico(2.5, 2.95)})`)
+    // "Puente" en el 1 y el "3" justo en su pulso (a 3 s de la cancion)
+    assert.ok(pico(2.0, 2.35) > 0.2, `${quien}: suena "Puente" (${pico(2.0, 2.35)})`)
+    const tres = m.find(([pos, v]) => pos >= 2.95 && pos < 3.3 && v > 0.05)
+    assert.ok(tres, `${quien}: suena el "3"`)
+    assert.ok(Math.abs(tres[0] - 3.0) < 0.006, `${quien}: el "3" a los ${tres[0].toFixed(4)} s de la canción (debía ser 3,000)`)
+    // el "4" suena aunque la orden del salto ya llego (la voz sigue hasta el salto)
+    const cuatro = m.find(([pos, v]) => pos >= 3.3 && pos < 3.8 && v > 0.05)
+    assert.ok(cuatro && Math.abs(cuatro[0] - 3.5) < 0.006, `${quien}: el "4" a los ${cuatro?.[0].toFixed(4)} s (debía ser 3,500)`)
+    // salta al Puente (12 s) y la guia vuelve
+    assert.ok(pico(12.2, 13.5) > 0.1, `${quien}: después del salto vuelve la guía (${pico(12.2, 13.5)})`)
+    console.log(`voz del salto · ${quien}: "3" a ${(tres[0] * 1000).toFixed(1)} ms (debía 3000), guía en el compás ${pico(2.5, 2.95).toFixed(4)}`)
+  }
+})

@@ -274,6 +274,10 @@ export function ComputerApp({ controller }: { controller: AppController }) {
               onDelete={controller.deleteMarker}
               onDetectar={() => void detectarSecciones()}
               onDescargarModelo={controller.descargarModeloVoz}
+              voces={estado?.voces ?? null}
+              onImportarVoces={controller.importarVoces}
+              onActivarVoces={controller.activarVoces}
+              onBorrarVoces={controller.borrarVoces}
             />
           </main>
         </>

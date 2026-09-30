@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Mic, Pencil, Trash2, WandSparkles, X } from 'lucide-react'
-import type { AnalisisProyecto, InfoModeloVoz, Marcador, ModoSalto, SaltoPendiente } from '@shared/types'
+import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Pencil, Trash2, WandSparkles, X } from 'lucide-react'
+import type { AnalisisProyecto, InfoModeloVoz, InfoVoces, Marcador, ModoSalto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { seccionEn } from '@shared/playback'
 import { usePlayheadPaso } from '../app/playheadStore'
@@ -24,9 +24,72 @@ interface Props {
   onDelete: (marcador: Marcador) => void
   onDetectar: () => void
   onDescargarModelo: () => void
+  voces: InfoVoces | null
+  onImportarVoces: () => Promise<boolean>
+  onActivarVoces: (activo: boolean) => void
+  onBorrarVoces: () => void
 }
 
 const EN_CURSO = ['analizando', 'esperando-voz', 'reconociendo']
+
+const IDIOMA_VOCES: Record<InfoVoces['idioma'], string> = { es: 'en español', en: 'en inglés', otro: '' }
+
+/**
+ * Voz que avisa el salto ("Coro… 3, 4" en el último compás antes de saltar),
+ * con un pack de voces que se importa una vez (no viene con la app).
+ */
+function VozDelSalto(p: { voces: InfoVoces | null; onImportar: () => Promise<boolean>; onActivar: (a: boolean) => void; onBorrar: () => void }) {
+  const [importando, setImportando] = useState(false)
+  async function importar(): Promise<void> {
+    setImportando(true)
+    try {
+      await p.onImportar()
+    } finally {
+      setImportando(false)
+    }
+  }
+  if (importando) {
+    return (
+      <div className="voz-salto">
+        <LoaderCircle size={14} className="girando" /> Importando las voces…
+      </div>
+    )
+  }
+  if (!p.voces) {
+    return (
+      <div className="voz-salto">
+        <Megaphone size={14} />
+        <span>Avisar el salto con voz</span>
+        <button
+          className="btn-chico"
+          onClick={() => void importar()}
+          title="Elegí un .zip o .rar con un audio por sección (Coro, Verso 1, Puente…) y los números 1 a 7. Si trae varios idiomas se usa el español."
+        >
+          Importar voces…
+        </button>
+      </div>
+    )
+  }
+  const v = p.voces
+  return (
+    <div className={`voz-salto ${v.activo ? 'activa' : ''}`}>
+      <label title="En el último compás antes del salto se escucha la sección elegida y la cuenta, con el volumen y el lado de la guía (la guía de la canción se calla en ese compás)">
+        <input type="checkbox" checked={v.activo} onChange={(e) => p.onActivar(e.target.checked)} />
+        <Megaphone size={14} /> Avisar con voz <em>“Coro… 3, 4”</em>
+      </label>
+      <small className="num" title={v.numeros ? undefined : 'El pack no trae los números: se avisa solo el nombre'}>
+        {v.cantidad} voces {IDIOMA_VOCES[v.idioma]}
+        {!v.numeros && ' · sin números'}
+      </small>
+      <button className="btn-icono" onClick={() => void importar()} title="Cambiar el pack de voces">
+        <Download size={13} />
+      </button>
+      <button className="btn-icono" onClick={p.onBorrar} title="Quitar las voces">
+        <Trash2 size={13} />
+      </button>
+    </div>
+  )
+}
 
 export function MarkersPanel(p: Props) {
   const { secciones, onJump, onCreate, onRename, onDelete } = p
@@ -89,6 +152,7 @@ export function MarkersPanel(p: Props) {
             </button>
           </div>
         </div>
+        <VozDelSalto voces={p.voces} onImportar={p.onImportarVoces} onActivar={p.onActivarVoces} onBorrar={p.onBorrarVoces} />
         <EstadoAnalisisVista
           analisis={p.analisis}
           progreso={p.progreso}

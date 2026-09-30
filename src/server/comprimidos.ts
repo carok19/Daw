@@ -93,6 +93,8 @@ export interface PedidoExtraccion {
   maxPistas: number
   maxBytesPorPista: number
   maxBytesTotal: number
+  /** solo el audio cuya ruta dentro del comprimido cumple esta expresion (sin mayusculas/minusculas) */
+  filtro?: string
 }
 
 export type MensajeExtraccion =

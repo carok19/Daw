@@ -18,9 +18,11 @@ export function buildEstadoCompleto(state: AppState): EstadoCompleto {
             destinoMs: state.saltoPendiente.destinoMs,
             nombre: state.saltoPendiente.nombre,
             limiteMs: state.saltoPendiente.limiteMs,
-            tSalto: state.saltoPendiente.tSalto
+            tSalto: state.saltoPendiente.tSalto,
+            anuncio: state.saltoPendiente.anuncio ?? null
           }
         : null,
+    voces: state.voces,
     lista: state.listaActiva,
     serverTime: Date.now()
   }

@@ -1,4 +1,4 @@
-import type { ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import type { AnuncioSalto, ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 
 export { clavePista } from '@shared/mezcla'
 export type { AjustePersonal, MezclaPersonal } from '@shared/mezcla'
@@ -22,6 +22,8 @@ export interface PlaybackEngine {
   aplicarMezcla(proyecto: Proyecto): void
   /** tiempos (ms) cuyo arranque conviene tener precargado (marcadores) */
   setCues(tiemposMs: number[]): void
+  /** la voz que avisa el salto elegido (null = no hay o se cancelo) */
+  setAnuncio(anuncio: AnuncioSalto | null): void
 
   ejecutar(cmd: ComandoProgramado, clockOffsetMs: number): void
   /** corta todo ya (p.ej. se cerro la cancion que sonaba) */

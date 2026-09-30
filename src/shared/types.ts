@@ -302,6 +302,37 @@ export interface SaltoPendiente {
   limiteMs: number
   /** hora del servidor en la que suena el salto */
   tSalto: number
+  /** la voz que lo avisa ("Coro… 3, 4"); null = sin voces importadas o no entra */
+  anuncio?: AnuncioSalto | null
+}
+
+/**
+ * Voz que avisa un salto (ver shared/anuncio.ts): suena en el ultimo compas
+ * antes del salto, con el volumen y el paneo de la guia, y mientras tanto la
+ * guia de la cancion no se escucha. Los celulares lo reciben ya dentro de su
+ * mezcla (piden esos pedazos con `&a=<id>`); la compu baja /anuncio/<id>.wav.
+ */
+export interface AnuncioSalto {
+  id: string
+  /** posicion de la cancion donde empieza y termina (= donde se salta) */
+  desdeMs: number
+  hastaMs: number
+  /** pista con cuyo volumen y paneo suena la voz (la guia; si no hay, el click) */
+  pistaId: string | null
+  /** la guia de la cancion, que se calla mientras tanto */
+  guiaPistaId: string | null
+}
+
+/** El pack de voces importado en la compu (para avisar los saltos). */
+export interface InfoVoces {
+  idioma: 'es' | 'en' | 'otro'
+  /** avisar los saltos con voz (se puede apagar sin borrar el pack) */
+  activo: boolean
+  cantidad: number
+  /** tiene los numeros para contar ("3, 4") */
+  numeros: boolean
+  /** algunas secciones que trae (Coro, Verso...) */
+  ejemplos: string[]
 }
 
 /** Snapshot completo enviado a un cliente que se conecta o ante cambios estructurales. */
@@ -317,6 +348,8 @@ export interface EstadoCompleto {
   playbackActivo: PlaybackState | null
   modoSalto: ModoSalto
   saltoPendiente: SaltoPendiente | null
+  /** voces para avisar los saltos (null = no se importo ningun pack) */
+  voces?: InfoVoces | null
   /** la lista del dia cargada arriba (null = canciones sueltas) */
   lista: ListaActiva | null
   serverTime: number

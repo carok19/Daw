@@ -2219,6 +2219,46 @@ input[type='range'].slider::-moz-range-thumb {
 .modo-salto .segmentado-chico button:disabled {
   opacity: 0.4;
 }
+/* voz que avisa el salto (pack de voces importado) */
+.voz-salto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 5px 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+.voz-salto > span {
+  flex: 1;
+}
+.voz-salto.activa {
+  border-style: solid;
+  color: var(--text-2);
+}
+.voz-salto label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  color: var(--text);
+}
+.voz-salto label em {
+  color: var(--text-3);
+  font-style: normal;
+  white-space: nowrap;
+}
+.voz-salto small {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.voz-salto .btn-icono {
+  padding: 3px;
+}
 .timeline-salto-limite {
   position: absolute;
   top: 0;

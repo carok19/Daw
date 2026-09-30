@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  AnuncioSalto,
   AjustesConexion,
   ComandoProgramado,
   DatosInvitacion,
@@ -198,6 +199,10 @@ export function useAppController() {
   ajustarRef.current = ajustarCompas
   // espejo del estado, para callbacks/intervalos registrados una sola vez
   const estadoRef = useRef<EstadoCompleto | null>(null)
+  // voz que avisa el salto elegido (ver actualizarAnuncio) y la ultima orden de transporte
+  const anuncioRef = useRef<{ anuncio: AnuncioSalto; destinoMs: number; tSalto: number } | null>(null)
+  const soltarAnuncioRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const ultimoComandoRef = useRef<ComandoProgramado | null>(null)
   estadoRef.current = estado
   const prefsRef = useRef({ volumenGeneral, ajusteManualMs, mezclaPersonal })
   prefsRef.current = { volumenGeneral, ajusteManualMs, mezclaPersonal }
@@ -312,7 +317,10 @@ export function useAppController() {
 
   /** Crea el motor de audio de este dispositivo y lo engancha a lo que este sonando. */
   const encenderAudio = useCallback(async () => {
-    if (!engineRef.current) engineRef.current = crearEngine()
+    if (!engineRef.current) {
+      engineRef.current = crearEngine()
+      engineRef.current.setAnuncio(anuncioRef.current?.anuncio ?? null)
+    }
     await engineRef.current.resumeSiHaceFalta()
     sincronizarMotor(estadoRef.current, 400)
   }, [crearEngine, sincronizarMotor])
@@ -352,6 +360,35 @@ export function useAppController() {
       setEstado(nuevo)
       estadoRef.current = nuevo
       sincronizarMotor(nuevo, esReconexion ? 600 : 300, esReconexion)
+      actualizarAnuncio(nuevo)
+    }
+
+    /**
+     * La voz que avisa el salto elegido. Cuando el salto se hace, el servidor
+     * lo saca de "pendiente" con la orden del salto (un momento ANTES de que
+     * suene): la voz tiene que seguir hasta el salto. Si se cancelo, se corta.
+     */
+    function actualizarAnuncio(nuevo: EstadoCompleto): void {
+      const s = nuevo.saltoPendiente
+      const previo = anuncioRef.current
+      if (s?.anuncio) {
+        clearTimeout(soltarAnuncioRef.current)
+        anuncioRef.current = { anuncio: s.anuncio, destinoMs: s.destinoMs, tSalto: s.tSalto }
+        engineRef.current?.setAnuncio(s.anuncio)
+        return
+      }
+      if (!previo) return
+      anuncioRef.current = null
+      const cmd = ultimoComandoRef.current
+      const hecho = cmd?.accion === 'play' && cmd.positionMs === previo.destinoMs && Math.abs(cmd.executeAtServerTime - previo.tSalto) < 250
+      if (!hecho) {
+        engineRef.current?.setAnuncio(null)
+        return
+      }
+      clearTimeout(soltarAnuncioRef.current)
+      soltarAnuncioRef.current = setTimeout(() => {
+        if (!anuncioRef.current) engineRef.current?.setAnuncio(null)
+      }, Math.max(0, previo.tSalto - socket.serverNow()) + 500)
     }
 
     const offs = [
@@ -359,6 +396,7 @@ export function useAppController() {
       // la compu mide cuanto tardan en llegar sus ordenes (ver server/entrega.ts)
       socket.on<{ t: number }>('sync:ping', (p) => socket.emit('sync:pong', { t: p.t })),
       socket.onPlaybackScheduled((cmd: ComandoProgramado) => {
+        ultimoComandoRef.current = cmd
         // llego sin tiempo para programarla: la compu vuelve a esperar mas antes de cada orden
         if (origen === 'celular' && cmd.accion !== 'stop' && cmd.accion !== 'seek' && cmd.executeAtServerTime - socket.serverNow() < 60) socket.emit('sync:tarde', {})
         const actual = estadoRef.current
@@ -761,6 +799,29 @@ export function useAppController() {
       },
       setLocked(locked: boolean): void {
         emit('lock:set', { locked })
+      },
+
+      // ---- voces que avisan los saltos ----
+      /** Importa un pack de voces (.zip o .rar con un audio por seccion y los numeros). true = quedo importado. */
+      async importarVoces(): Promise<boolean> {
+        if (!window.electronAPI) return false
+        const filePath = await window.electronAPI.pickZipFile()
+        if (!filePath) return false
+        try {
+          const r = await socket.emitAck<{ ok: boolean; error?: string }>('voces:importar', { filePath }, 5 * 60 * 1000)
+          if (!r.ok) avisar({ tipo: 'error', texto: r.error ?? 'No se pudieron importar las voces' })
+          else avisar({ tipo: 'info', texto: 'Voces importadas: al elegir una sección con la música sonando, se avisa con voz' }, 6000)
+          return r.ok
+        } catch {
+          avisar({ tipo: 'error', texto: 'La importación de las voces tardó demasiado' })
+          return false
+        }
+      },
+      activarVoces(activo: boolean): void {
+        emit('voces:activar', { activo })
+      },
+      borrarVoces(): void {
+        emit('voces:borrar', {})
       },
 
       // ---- canciones guardadas ----

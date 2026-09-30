@@ -27,6 +27,7 @@ import { compasesDeCuenta, golpeActual, golpesDeCuenta, LARGO_SONIDO_CUENTA_SEC,
 import { esAdaptadorVirtual } from './network'
 import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { generarClick, wav16 } from './__fixtures__/sintetico'
+import { candidatosDeSeccion, clavesDeArchivoDeVoz, planearAnuncio } from '../shared/anuncio'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn } from '../shared/playback'
 import type {
   AjustesConexion,
@@ -1144,6 +1145,144 @@ test('Mi mezcla: mute y solo de cada músico (el solo del celular manda sobre el
   const [c] = mezclaEfectiva(pistas, { bajo: { ganancia: 0.5, mute: false, solo: true } })
   assert.equal(c.pistaId, bajo.id)
   assert.equal(c.ganancia, 0.5)
+})
+
+test('voz del salto: nombres del pack, sinónimos y en qué pulso va cada voz', () => {
+  // de que archivo sale cada nombre (el idioma adelante no cuenta; lo de entre parentesis, tambien vale)
+  assert.deepEqual(clavesDeArchivoDeVoz('Spanish Guides/Song Sections/Spanish - Coro 2 (Chorus 2).wav'), ['coro 2', 'chorus 2'])
+  assert.deepEqual(clavesDeArchivoDeVoz('Spanish - Baja Intensidad (Breakdown).wav'), ['baja intensidad', 'breakdown'])
+  assert.deepEqual(clavesDeArchivoDeVoz('Spanish - 3.wav'), ['3'])
+  assert.deepEqual(clavesDeArchivoDeVoz('mis voces/Pre-Coro.wav'), ['pre coro'])
+  assert.deepEqual(clavesDeArchivoDeVoz('French Guide -  Bridge.wav'), ['bridge'])
+  // lo que se busca para cada seccion, de lo mas exacto a lo mas general
+  assert.deepEqual(candidatosDeSeccion('CORO 5 (x2)'), ['coro 5', 'coro'])
+  assert.deepEqual(candidatosDeSeccion('Precoro'), ['precoro', 'pre coro'])
+  assert.deepEqual(candidatosDeSeccion('Estribillo 2'), ['estribillo 2', 'coro 2', 'estribillo', 'coro'])
+  assert.deepEqual(candidatosDeSeccion('Tag'), ['tag', 'repetir'])
+
+  const pack: Record<string, number> = { coro: 500, puente: 450, instrumental: 1100, '2': 300, '3': 300, '4': 300 }
+  const duracion = (c: string): number | null => pack[c] ?? null
+  // 120 BPM 4/4 (compas de 2 s): "Coro" en el 1 del ultimo compas y "3, 4"
+  const compases = [0, 2000, 4000, 6000]
+  const plan = (nombre: string, limiteMs: number, minInicioMs = 0, extra: Partial<Parameters<typeof planearAnuncio>[0]> = {}) =>
+    planearAnuncio({ nombre, limiteMs, minInicioMs, compasesMs: compases, pulsos: 4, duracion, ...extra })
+  assert.deepEqual(plan('Coro', 6000), {
+    desdeMs: 4000,
+    hastaMs: 6000,
+    partes: [
+      { clave: 'coro', enMs: 4000 },
+      { clave: '3', enMs: 5000 },
+      { clave: '4', enMs: 5500 }
+    ]
+  })
+  // un nombre largo que pisa el pulso 3: solo "4"
+  assert.deepEqual(plan('Instrumental', 6000)!.partes.map((p) => `${p.clave}@${p.enMs}`), ['instrumental@4000', '4@5500'])
+  // el salto esta tan cerca que el "1" ya paso: el nombre en el primer pulso que llega a tiempo
+  const tarde = plan('Puente', 6000, 4300)!
+  assert.deepEqual(tarde.partes.map((p) => `${p.clave}@${p.enMs}`), ['puente@4500', '3@5000', '4@5500'])
+  assert.equal(tarde.desdeMs, 4500, 'la guia se calla desde la primera voz')
+  // sin la voz de esa seccion: solo la cuenta (y la guia igual se calla: diria otra seccion)
+  assert.deepEqual(plan('Rap', 6000)!.partes.map((p) => p.clave), ['3', '4'])
+  // en 3/4: "2, 3"
+  assert.deepEqual(plan('Coro', 6000, 0, { pulsos: 3 })!.partes.map((p) => p.clave), ['coro', '2', '3'])
+  // sin tempo: el nombre termina justo antes del salto
+  assert.deepEqual(plan('Coro', 6000, 0, { compasesMs: null })!.partes, [{ clave: 'coro', enMs: 5350 }])
+  // sin voces (no se importo el pack) o sin lugar: nada
+  assert.equal(plan('Coro', 6000, 0, { duracion: () => null }), null)
+  assert.equal(plan('Coro', 6000, 5900), null)
+})
+
+test('voz del salto: se importa el pack (el español) y los celulares la reciben en su mezcla, con la guía callada', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  // un pack como los de verdad: varios idiomas, silencio antes de hablar, basura de macOS
+  const tono = (f: number, seg: number, antes = 0, despues = 0.2, sr = 48000): Buffer => {
+    const x = new Float32Array(Math.round((antes + seg + despues) * sr))
+    for (let i = 0; i < seg * sr; i++) x[Math.round(antes * sr) + i] = 0.5 * Math.sin((2 * Math.PI * f * i) / sr)
+    return wav16(x, sr)
+  }
+  const pack = crearZip('Voces', {
+    'Guides/Spanish Guides/Song Sections/Spanish - Puente (Bridge).wav': tono(1000, 0.4, 0.1),
+    'Guides/Spanish Guides/Song Sections/Spanish - Coro (Chorus).wav': tono(800, 0.4),
+    'Guides/Spanish Guides/Song Sections/Spanish - 3.wav': tono(1500, 0.2),
+    'Guides/Spanish Guides/Song Sections/Spanish - 4.wav': tono(1500, 0.2),
+    'Guides/English Guides/English - Bridge.wav': tono(500, 0.4),
+    '__MACOSX/Guides/Spanish Guides/._Spanish - 3.wav': Buffer.from('basura')
+  })
+  // las pistas de una cancion no son un pack de voces
+  const noEsPack = await emitAck<{ ok: boolean; error?: string }>(compu, 'voces:importar', { filePath: crearZip('Cancion', { 'Click.wav': tono(1000, 0.1), 'Bajo.wav': tono(80, 0.5) }) })
+  assert.equal(noEsPack.ok, false)
+  assert.match(noEsPack.error!, /no parece un pack de voces/)
+  const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'voces:importar', { filePath: pack }, 60000)
+  assert.equal(r.ok, true, r.error)
+  let estado = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.deepEqual(estado.voces, { idioma: 'es', activo: true, cantidad: 4, numeros: true, ejemplos: ['coro', 'puente'] })
+
+  // la cancion: guia (300 Hz, a la izquierda), click y bajo mudos; 120 BPM 4/4 (compas de 2 s)
+  const sr = 44100
+  const seno = new Float32Array(16 * sr)
+  for (let i = 0; i < seno.length; i++) seno[i] = 0.3 * Math.sin((2 * Math.PI * 300 * i) / sr)
+  const mudo = new Float32Array(16 * sr)
+  await cargarZip(compu, crearZip('Saltos', { 'Guia.wav': wav16(seno, sr), 'Click.wav': wav16(mudo, sr), 'Bajo.wav': wav16(mudo, sr), 'marcas.txt': Buffer.from('0:04 Verso\n0:08 Coro\n0:12 Puente\n') }))
+  const tab = env.server.state.getActiveTab()!
+  const p = tab.proyecto
+  p.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 9 }, (_, k) => k * 2000), clickPistaId: p.pistas.find((x) => x.nombre === 'Click')!.id, acentoClaro: true }
+  p.cuenta = 0
+  const guia = p.pistas.find((x) => x.nombre === 'Guia')!
+
+  // sonando en el Inicio, se elige el Puente: salta al terminar el Inicio (4 s); la voz, en el ultimo compas (2 a 4 s)
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1000 })])
+  await esperar(50)
+  estado = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => !!e.saltoPendiente), compu.emit('seccion:saltar', { posicionMs: 12000 })]))[0]
+  const anuncio = estado.saltoPendiente!.anuncio!
+  assert.ok(anuncio, 'el salto trae la voz')
+  assert.deepEqual([anuncio.desdeMs, anuncio.hastaMs, anuncio.pistaId, anuncio.guiaPistaId], [2000, 4000, guia.id, guia.id])
+
+  // el pedazo 1 (2 a 4 s) de la mezcla de un celular, con y sin la voz
+  const canales = mezclaEfectiva(p.pistas)
+  const base = `http://localhost:${env.port}/mezcla/${p.id}/1.wav?v=${p.revision ?? 0}&m=${codificarMezcla(canales)}`
+  const leer = async (url: string): Promise<Float32Array[]> => {
+    const bytes = await (await fetch(url)).arrayBuffer()
+    const info = parseWavHeader(bytes)
+    return decodePcmSegment(info, bytes.slice(info.dataOffset))
+  }
+  const rms = (x: Float32Array, desde: number, hasta: number): number => {
+    let s = 0
+    for (let i = Math.round(desde * sr); i < Math.round(hasta * sr); i++) s += x[i] * x[i]
+    return Math.sqrt(s / (Math.round(hasta * sr) - Math.round(desde * sr)))
+  }
+  const primero = (x: Float32Array, desde: number): number => {
+    for (let i = Math.round(desde * sr); i < x.length; i++) if (Math.abs(x[i]) > 0.05) return i / sr
+    return -1
+  }
+  const [sinL] = await leer(base)
+  assert.ok(rms(sinL, 0.45, 0.95) > 0.1, 'sin la voz se oye la guia')
+  const [L, R] = await leer(`${base}&a=${anuncio.id}`)
+  // la guia calla todo el compas; el "Puente" arranca justo en el 1 (sin el silencio que tenia el archivo),
+  // el "3" y el "4" en sus pulsos; todo con el lado de la guia (izquierda)
+  assert.ok(rms(L, 0.45, 0.95) < 0.003, `la guía se calla (rms ${rms(L, 0.45, 0.95)})`)
+  assert.ok(primero(L, 0) < 0.002, `"Puente" en el 1 (${primero(L, 0)} s)`)
+  assert.ok(Math.abs(primero(L, 0.6) - 1.0) < 0.002, `"3" en el pulso 3 (${primero(L, 0.6)} s)`)
+  assert.ok(Math.abs(primero(L, 1.3) - 1.5) < 0.002, `"4" en el pulso 4 (${primero(L, 1.3)} s)`)
+  assert.ok(Math.max(...R.map(Math.abs)) < 0.01, 'la voz va del lado de la guía')
+  // la compu la baja entera (su audio suma la voz y calla la guia en ese compas)
+  const wav = await (await fetch(`http://localhost:${env.port}/anuncio/${anuncio.id}.wav`)).arrayBuffer()
+  assert.equal(parseWavHeader(wav).dataLength / 2, 2 * 48000)
+
+  // con la guia muteada en esa mezcla, la voz tampoco suena
+  const sinGuia = canales.filter((c) => c.pistaId !== guia.id)
+  const [mudoL] = await leer(`http://localhost:${env.port}/mezcla/${p.id}/1.wav?v=${p.revision ?? 0}&m=${codificarMezcla(sinGuia)}&a=${anuncio.id}`)
+  assert.ok(Math.max(...mudoL.map(Math.abs)) < 0.001)
+
+  // voces apagadas: el salto va sin voz; sin pack, igual
+  await emitAck(compu, 'voces:activar', { activo: false })
+  estado = (await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => e.saltoPendiente?.destinoMs === 8000), compu.emit('seccion:saltar', { posicionMs: 8000 })]))[0]
+  assert.equal(estado.saltoPendiente!.anuncio, null)
+  assert.equal(estado.voces!.activo, false)
+  await emitAck(compu, 'voces:borrar', {})
+  estado = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.equal(estado.voces, null)
+  compu.emit('transport:stop')
 })
 
 test('mezcla en hilos de trabajo (igual al hilo principal) y lo más urgente primero', async (t) => {

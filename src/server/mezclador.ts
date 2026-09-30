@@ -5,7 +5,7 @@ import { Worker } from 'node:worker_threads'
 import type { Proyecto } from '../shared/types'
 import { SEGMENTO_SEC, type CanalMezcla } from '../shared/mezcla'
 import { parseWavHeader, totalFrames, WAV_HEADER_FETCH_BYTES } from '../shared/wav'
-import { calcularMezcla, type InfoPista, type TrabajoMezcla } from './mezclaCalculo'
+import { calcularMezcla, type AnuncioEnMezcla, type InfoPista, type TrabajoMezcla } from './mezclaCalculo'
 import { archivoQueSuena } from './tono'
 
 /** El hilo de trabajo (mezclaWorker.ts) compilado como texto por scripts/build-main.mjs (si no esta: se mezcla aca). */
@@ -36,6 +36,16 @@ export interface SegmentoMezclado {
   /** es el ultimo segmento de la cancion */
   ultimo: boolean
   ms: number
+}
+
+/** La voz que avisa un salto, para meterla en la mezcla (ver voces.ts). */
+export interface AnuncioParaMezclar {
+  desdeMs: number
+  hastaMs: number
+  guiaPistaId: string | null
+  pistaId: string | null
+  /** el audio de la voz (mono) a la frecuencia de la cancion */
+  muestrasA(sr: number): Float32Array
 }
 
 export interface EstadisticasMezcla {
@@ -196,8 +206,17 @@ export class Mezclador {
     }
   }
 
-  /** null = el indice esta despues del final de la cancion. */
-  async segmento(proyecto: Proyecto, indice: number, canales: CanalMezcla[], textoMezcla: string): Promise<SegmentoMezclado | null> {
+  /**
+   * null = el indice esta despues del final de la cancion. `textoMezcla` es
+   * la clave de la cache: tiene que distinguir tambien el anuncio.
+   */
+  async segmento(
+    proyecto: Proyecto,
+    indice: number,
+    canales: CanalMezcla[],
+    textoMezcla: string,
+    anuncio?: AnuncioParaMezclar | null
+  ): Promise<SegmentoMezclado | null> {
     this.stats.pedidos++
     const clave = `${proyecto.id}:${proyecto.revision ?? 0}:${indice}:${textoMezcla}`
     const cacheado = this.cache.get(clave)
@@ -210,7 +229,7 @@ export class Mezclador {
     }
     let p = this.enCurso.get(clave)
     if (!p) {
-      p = this.mezclar(proyecto, indice, canales).finally(() => this.enCurso.delete(clave))
+      p = this.mezclar(proyecto, indice, canales, anuncio ?? null).finally(() => this.enCurso.delete(clave))
       this.enCurso.set(clave, p)
     } else {
       this.stats.aciertosCache++
@@ -270,7 +289,7 @@ export class Mezclador {
     return p
   }
 
-  private async mezclar(proyecto: Proyecto, indice: number, canales: CanalMezcla[]): Promise<SegmentoMezclado | null> {
+  private async mezclar(proyecto: Proyecto, indice: number, canales: CanalMezcla[], anuncio: AnuncioParaMezclar | null): Promise<SegmentoMezclado | null> {
     // todas las pistas (no solo las que suenan): la frecuencia y el largo de la mezcla no cambian al mutear
     const infos = new Map<string, InfoPista>()
     for (const p of proyecto.pistas) {
@@ -294,6 +313,20 @@ export class Mezclador {
       if (p && c.ganancia > 0) pistas[c.pistaId] = p
     }
     const trabajo: TrabajoMezcla = { pistas, canales, sr, desde, cantidad }
+    if (anuncio) {
+      const a: AnuncioEnMezcla = {
+        desde: Math.round((anuncio.desdeMs / 1000) * sr),
+        hasta: Math.round((anuncio.hastaMs / 1000) * sr),
+        muestras: new Float32Array(0),
+        guiaPistaId: anuncio.guiaPistaId,
+        // la voz suena con el volumen y el paneo de la guia en esta mezcla (sin guia ni click: al medio)
+        canal: anuncio.pistaId ? (canales.find((c) => c.pistaId === anuncio.pistaId) ?? null) : { pistaId: '', ganancia: 1, pan: 0 }
+      }
+      if (a.hasta > desde && a.desde < desde + cantidad) {
+        if (a.canal) a.muestras = anuncio.muestrasA(sr)
+        trabajo.anuncio = a
+      }
+    }
     const { wav, ms } = await new Promise<{ wav: Buffer; ms: number }>((resolve, reject) => {
       this.cola.push({ trabajo, urgencia: () => this.urgencia(proyecto.id, indice), resolve, reject })
       this.despachar()

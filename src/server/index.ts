@@ -145,8 +145,11 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     const texto = typeof req.query.m === 'string' ? req.query.m : ''
     const canales = decodificarMezcla(texto)
     if (!canales) return res.status(400).end()
+    // la voz que avisa un salto (&a=<id>): va en los pedazos del ultimo compas antes del salto
+    const a = anuncios.get(req.query.a)
+    const anuncio = a && a.proyectoId === proyecto.id ? { ...a, muestrasA: (sr: number) => anuncios.muestrasA(a, sr) } : null
     try {
-      const seg = await mezclador.segmento(proyecto, Number(m[1]), canales, texto)
+      const seg = await mezclador.segmento(proyecto, Number(m[1]), canales, anuncio ? `${texto}&a=${anuncio.id}` : texto, anuncio)
       if (!seg) return res.status(416).end() // despues del final de la cancion
       res.setHeader('Content-Type', 'audio/wav')
       res.setHeader('X-Ultimo', seg.ultimo ? '1' : '0')
@@ -154,6 +157,16 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     } catch {
       if (!res.headersSent) res.status(500).end()
     }
+  })
+
+  // la voz que avisa un salto, para el audio de la compu (los celulares la reciben dentro de su mezcla)
+  app.get('/anuncio/:id', (req, res) => {
+    const m = /^([0-9a-f]{8})\.wav$/.exec(req.params.id)
+    const a = m ? anuncios.get(m[1]) : null
+    if (!a) return res.status(404).end()
+    res.setHeader('Content-Type', 'audio/wav')
+    res.setHeader('Cache-Control', 'no-store')
+    res.end(anuncios.wav(a))
   })
 
   // sonidos de la cuenta ("1 2 3 4" antes de la cancion): recortados del click de la cancion
@@ -211,7 +224,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     res.sendFile(path.join(rendererDir, 'index.html'))
   })
 
-  const { transporte, analizador, biblioteca, tonos, cerrar: cerrarHandlers } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
+  const { transporte, analizador, biblioteca, tonos, anuncios, cerrar: cerrarHandlers } = registerSocketHandlers(io, state, devices, compuToken, modelos, opciones.analisisAutomatico ?? true, {
     ajustes,
     puerto: () => {
       const a = httpServer.address()

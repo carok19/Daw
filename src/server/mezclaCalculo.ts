@@ -23,19 +23,67 @@ export interface TrabajoMezcla {
   /** primer frame (a la frecuencia `sr`) y cuantos */
   desde: number
   cantidad: number
+  /** la voz que avisa un salto (ver voces.ts), si cae en este segmento */
+  anuncio?: AnuncioEnMezcla
 }
+
+/** La voz que avisa un salto dentro de la mezcla: suena en [desde, hasta) y mientras tanto la guia se calla. */
+export interface AnuncioEnMezcla {
+  /** frames (a la frecuencia `sr`) de la cancion */
+  desde: number
+  hasta: number
+  /** la voz, mono, desde `desde` */
+  muestras: Float32Array
+  /** la guia de la cancion (se calla) */
+  guiaPistaId: string | null
+  /** volumen y paneo de la voz (los de la guia en esta mezcla); null = no suena (la guia esta muteada aca) */
+  canal: CanalMezcla | null
+}
+
+/** Fundido de la guia al callarse y al volver (seg). */
+const FUNDIDO_GUIA_SEC = 0.01
 
 /** Mezcla el segmento y lo devuelve como WAV estereo de 16 bits. `ceder`: entre pista y pista (en el hilo principal). */
 export async function calcularMezcla(t: TrabajoMezcla, ceder?: () => Promise<void>): Promise<Buffer> {
   const L = new Float32Array(t.cantidad)
   const R = new Float32Array(t.cantidad)
+  const a = t.anuncio && t.anuncio.hasta > t.desde && t.anuncio.desde < t.desde + t.cantidad ? t.anuncio : null
   for (const canal of t.canales) {
     const pista = t.pistas[canal.pistaId]
     if (!pista || canal.ganancia <= 0) continue
-    await sumarPista(pista, canal, t.sr, t.desde, t.cantidad, L, R)
+    if (a && canal.pistaId === a.guiaPistaId) await sumarGuiaCallada(pista, canal, t, a, L, R)
+    else await sumarPista(pista, canal, t.sr, t.desde, t.cantidad, L, R)
     if (ceder) await ceder()
   }
+  if (a?.canal) sumarAnuncio(a, a.canal, t, L, R)
   return aWav16(L, R, t.sr)
+}
+
+/** La guia, callada mientras suena la voz del salto (con fundidos cortos al callarse y al volver). */
+async function sumarGuiaCallada(pista: InfoPista, canal: CanalMezcla, t: TrabajoMezcla, a: AnuncioEnMezcla, L: Float32Array, R: Float32Array): Promise<void> {
+  const gL = new Float32Array(t.cantidad)
+  const gR = new Float32Array(t.cantidad)
+  await sumarPista(pista, canal, t.sr, t.desde, t.cantidad, gL, gR)
+  const f = Math.max(1, Math.round(FUNDIDO_GUIA_SEC * t.sr))
+  for (let i = 0; i < t.cantidad; i++) {
+    const x = t.desde + i
+    const g = x < a.desde - f || x >= a.hasta + f ? 1 : x < a.desde ? (a.desde - x) / f : x >= a.hasta ? (x - a.hasta) / f : 0
+    L[i] += gL[i] * g
+    R[i] += gR[i] * g
+  }
+}
+
+function sumarAnuncio(a: AnuncioEnMezcla, canal: CanalMezcla, t: TrabajoMezcla, L: Float32Array, R: Float32Array): void {
+  const { aLL, aRR } = coeficientesPaneo(canal.pan, 1)
+  const gl = canal.ganancia * aLL
+  const gr = canal.ganancia * aRR
+  const ini = Math.max(t.desde, a.desde)
+  const fin = Math.min(t.desde + t.cantidad, a.hasta, a.desde + a.muestras.length)
+  for (let x = ini; x < fin; x++) {
+    const v = a.muestras[x - a.desde]
+    L[x - t.desde] += v * gl
+    R[x - t.desde] += v * gr
+  }
 }
 
 /** Lee `frames` frames desde `desdeFrame` (lo que exista: al final de la pista, menos). */

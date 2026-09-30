@@ -27,6 +27,7 @@ import type {
   TransportPlayPayload,
   TransportSeekPayload,
   AjustesConexion,
+  AnuncioSalto,
   DatosInvitacion,
   DiagnosticoServidor,
   EstadoLicencia,
@@ -34,7 +35,7 @@ import type {
   MotivoCodigo,
   SesionAnterior
 } from '../shared/types'
-import type { AppState } from './state'
+import type { AppState, Tab } from './state'
 import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ImportError, ZipSinPistasError } from './zip'
 import { primerVolumen } from './comprimidos'
@@ -62,6 +63,8 @@ import type { EstadisticasMezcla } from './mezclador'
 import type { Licencias } from './licencia'
 import { esTonoValido, Tonos } from './tono'
 import { MedidorEntrega } from './entrega'
+import { Anuncios, ErrorVoces, pistasDeAnuncio, Voces } from './voces'
+import { planearAnuncio } from '../shared/anuncio'
 import { normalizarTonalidad, textoSemitonos, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { direccionesLan, ipParaCliente } from './network'
 import { NOMBRE_FIJO } from './descubrimiento'
@@ -100,6 +103,8 @@ export interface Servicios {
   analizador: Analizador
   biblioteca: Biblioteca
   tonos: Tonos
+  /** las voces que avisan los saltos, ya armadas (las piden los celulares al mezclar y la compu) */
+  anuncios: Anuncios
   /** deja de medir la entrega a los celulares (al cerrar el servidor) */
   cerrar(): void
 }
@@ -232,7 +237,32 @@ export function registerSocketHandlers(
   }, conexion.intervaloPingMs ?? 2000)
   pings.unref()
 
-  const transporte = new Transporte(io, state, hayCelularesConectados, () => emitirEstadoPronto(), () => entrega.margen(idsCelulares()))
+  // voz que avisa los saltos ("Coro… 3, 4"): con el pack de voces que se importo en la compu
+  const voces = new Voces()
+  const anuncios = new Anuncios()
+  state.voces = voces.info()
+  const anunciar = (tab: Tab, nombre: string, limiteMs: number, minInicioMs: number): AnuncioSalto | null => {
+    const tempo = tab.proyecto.tempo
+    const plan = planearAnuncio({
+      nombre,
+      limiteMs,
+      minInicioMs,
+      compasesMs: tempo?.compasesMs ?? null,
+      pulsos: tempo?.compas ?? 4,
+      duracion: (c) => voces.duracion(c)
+    })
+    if (!plan) return null
+    const { id, desdeMs, hastaMs, pistaId, guiaPistaId } = anuncios.registrar({
+      proyectoId: tab.proyecto.id,
+      desdeMs: plan.desdeMs,
+      hastaMs: plan.hastaMs,
+      ...pistasDeAnuncio(tab.proyecto),
+      muestras: voces.renderizar(plan)
+    })
+    return { id, desdeMs, hastaMs, pistaId, guiaPistaId }
+  }
+
+  const transporte = new Transporte(io, state, hayCelularesConectados, () => emitirEstadoPronto(), () => entrega.margen(idsCelulares()), anunciar)
 
   function emitirEstado(): void {
     io.emit('estado:actualizado', buildEstadoCompleto(state))
@@ -788,6 +818,37 @@ export function registerSocketHandlers(
       ack?.({ ok: true })
     })
 
+    // ---- Voces que avisan los saltos ----
+
+    socket.on('voces:importar', (payload: { filePath?: unknown }, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede importar voces' })
+      if (typeof payload?.filePath !== 'string' || !payload.filePath) return ack?.({ ok: false, error: 'Falta el archivo' })
+      voces
+        .importar(payload.filePath)
+        .then((info) => {
+          state.voces = info
+          emitirEstado()
+          ack?.({ ok: true })
+        })
+        .catch((err: unknown) => ack?.({ ok: false, error: err instanceof ErrorVoces ? err.message : `No se pudieron importar las voces: ${(err as Error).message}` }))
+    })
+
+    socket.on('voces:activar', (payload: { activo?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket) || typeof payload?.activo !== 'boolean') return ack?.({ ok: false })
+      voces.activar(payload.activo)
+      state.voces = voces.info()
+      emitirEstado()
+      ack?.({ ok: true })
+    })
+
+    socket.on('voces:borrar', (_payload: unknown, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      voces.borrar()
+      state.voces = null
+      emitirEstado()
+      ack?.({ ok: true })
+    })
+
     socket.on('tono:preparando', (_payload: unknown, ack?: Ack<ReturnType<Tonos['preparando']>[]>) => {
       if (!soloCompu(socket)) return ack?.([])
       ack?.(state.listaProyectos().map((p) => tonos.preparando(p.id)).filter((x) => !!x))
@@ -1099,7 +1160,7 @@ export function registerSocketHandlers(
 
   })
 
-  return { transporte, analizador, biblioteca, tonos, cerrar: () => clearInterval(pings) }
+  return { transporte, analizador, biblioteca, tonos, anuncios, cerrar: () => clearInterval(pings) }
 }
 
 /** Si la app se cerro hace menos que esto (se corto a mitad de un culto), al abrirla vuelve todo como estaba. */

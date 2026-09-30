@@ -54,6 +54,11 @@ function correrFfmpeg(args: string[]): Promise<void> {
   })
 }
 
+/** Una voz (del pack de voces de las secciones) a WAV mono de 16 bits a `sr`. */
+export function convertirVoz(entrada: string, salida: string, sr: number): Promise<void> {
+  return correrFfmpeg(['-i', entrada, '-vn', '-map_metadata', '-1', '-fflags', '+bitexact', '-ac', '1', '-ar', String(sr), '-c:a', 'pcm_s16le', salida])
+}
+
 export function leerInfoWav(ruta: string): WavInfo {
   const fd = fs.openSync(ruta, 'r')
   try {

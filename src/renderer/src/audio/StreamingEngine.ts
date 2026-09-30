@@ -1,4 +1,4 @@
-import type { ComandoProgramado, CuentaProgramada, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import type { AnuncioSalto, ComandoProgramado, CuentaProgramada, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
 import { WAV_HEADER_FETCH_BYTES, WavHeaderError, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from '@shared/wav'
 import { posicionActualMs } from '@shared/playback'
 import { codificarMezcla, mezclaEfectiva } from '@shared/mezcla'
@@ -41,6 +41,8 @@ interface Canal {
   archivo: string | null
   gainNode: GainNode
   pannerNode: StereoPannerNode | null
+  /** modo pistas: calla la guia mientras suena la voz que avisa un salto */
+  callarNode: GainNode | null
   wavInfo: WavInfo | null
   wavInfoPromise: Promise<WavInfo> | null
   /** Ventana deslizante alrededor de lo que suena: nunca contiene la cancion entera. */
@@ -217,6 +219,12 @@ export class StreamingEngine implements PlaybackEngine {
   private sonidoCuenta: AudioBuffer | null = null
   private sonidoCuentaDe = ''
   private golpesCuenta: { source: AudioBufferSourceNode; t: number }[] = []
+  // voz que avisa un salto (ver shared/anuncio.ts). Celulares: viene dentro de su mezcla (los pedazos de
+  // ese compas se piden con &a=<id>). Compu (pistas sueltas): se baja el WAV y se suma aca, callando la guia.
+  private anuncio: AnuncioSalto | null = null
+  private anuncioGain: GainNode
+  private anuncioPanner: StereoPannerNode
+  private vozAnuncio: { id: string; buffer: AudioBuffer | null; fuente: AudioBufferSourceNode | null; callada: Canal | null } | null = null
 
   constructor(readonly modo: ModoMotor = 'pistas') {
     this.ctx = new AudioContext()
@@ -234,6 +242,10 @@ export class StreamingEngine implements PlaybackEngine {
     this.cuentaPanner = this.ctx.createStereoPanner()
     this.cuentaGain.connect(this.cuentaPanner)
     this.cuentaPanner.connect(this.masterGain)
+    this.anuncioGain = this.ctx.createGain()
+    this.anuncioPanner = this.ctx.createStereoPanner()
+    this.anuncioGain.connect(this.anuncioPanner)
+    this.anuncioPanner.connect(this.masterGain)
     this.intervalo = setInterval(() => this.tick(), INTERVALO_TICK_MS)
   }
 
@@ -274,9 +286,12 @@ export class StreamingEngine implements PlaybackEngine {
   private crearCanal(id: string, nombre: string, archivo: string | null): Canal {
     const gainNode = this.ctx.createGain()
     let pannerNode: StereoPannerNode | null = null
+    let callarNode: GainNode | null = null
     if (this.modo === 'pistas') {
       pannerNode = this.ctx.createStereoPanner()
-      gainNode.connect(pannerNode)
+      callarNode = this.ctx.createGain()
+      gainNode.connect(callarNode)
+      callarNode.connect(pannerNode)
       pannerNode.connect(this.masterGain)
     } else {
       gainNode.connect(this.masterGain)
@@ -287,6 +302,7 @@ export class StreamingEngine implements PlaybackEngine {
       archivo,
       gainNode,
       pannerNode,
+      callarNode,
       wavInfo: null,
       wavInfoPromise: null,
       segmentos: new Map(),
@@ -381,6 +397,7 @@ export class StreamingEngine implements PlaybackEngine {
     if (proyecto.id !== this.proyectoId) return
     this.ultimoProyecto = proyecto
     this.prepararCuenta(proyecto)
+    this.volumenDelAnuncio()
     if (this.modo === 'mezcla') {
       this.pedirCambioDeMezcla(this.claveDe(proyecto))
       return
@@ -426,7 +443,7 @@ export class StreamingEngine implements PlaybackEngine {
     // lo que se estaba bajando con la mezcla anterior ya no sirve (lo ya bajado si: suena hasta que llegue lo nuevo)
     for (const c of this.canales.values()) {
       for (const [i, v] of c.enVuelo) {
-        if (v.clave !== this.claveMezcla) {
+        if (v.clave !== this.claveDeSegmento(i)) {
           v.ctrl.abort()
           c.enVuelo.delete(i)
         }
@@ -528,6 +545,7 @@ export class StreamingEngine implements PlaybackEngine {
 
   detener(): void {
     this.cortarCuenta(0)
+    this.cortarVozAnuncio()
     this.cortarDesde(this.ctx.currentTime)
     this.reproduciendo = false
     this.esperando = false
@@ -762,6 +780,116 @@ export class StreamingEngine implements PlaybackEngine {
   // ---- cuenta antes de la cancion ----
 
   /**
+   * La voz que avisa el salto elegido (null = no hay, o se cancelo). En los
+   * celulares cambia la clave de los pedazos de ese compas: se vuelven a pedir
+   * (ya con la voz y sin la guia) como cualquier cambio de mezcla. En la compu
+   * se baja el WAV y se programa al llegar a ese punto de la cancion.
+   */
+  setAnuncio(anuncio: AnuncioSalto | null): void {
+    if ((anuncio?.id ?? null) === (this.anuncio?.id ?? null)) return
+    this.anuncio = anuncio
+    if (this.modo === 'mezcla') {
+      // lo que se estaba bajando con la clave de antes ya no sirve
+      for (const c of this.canales.values()) {
+        for (const [i, v] of c.enVuelo) {
+          if (v.clave !== this.claveDeSegmento(i)) {
+            v.ctrl.abort()
+            c.enVuelo.delete(i)
+          }
+        }
+      }
+      this.tick()
+      return
+    }
+    this.cortarVozAnuncio()
+    if (!anuncio || !this.proyectoId) return
+    const voz: NonNullable<StreamingEngine['vozAnuncio']> = { id: anuncio.id, buffer: null, fuente: null, callada: null }
+    this.vozAnuncio = voz
+    this.volumenDelAnuncio()
+    void fetch(`/anuncio/${anuncio.id}.wav`)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((bytes) => {
+        const info = parseWavHeader(bytes)
+        const canales = decodePcmSegment(info, bytes.slice(info.dataOffset))
+        const buffer = this.ctx.createBuffer(1, Math.max(1, canales[0]?.length ?? 0), info.sampleRate)
+        if (canales[0]) buffer.copyToChannel(canales[0] as Float32Array<ArrayBuffer>, 0)
+        voz.buffer = buffer
+        this.programarVozAnuncio()
+      })
+      .catch(() => {
+        // sin voz: el salto se hace igual
+      })
+  }
+
+  /** Clave con la que se pide el pedazo `indice` de la mezcla: los del compas del anuncio, con la voz. */
+  private claveDeSegmento(indice: number): string {
+    const a = this.anuncio
+    if (this.modo !== 'mezcla' || !a) return this.claveMezcla
+    const ini = indice * SEGMENT_DURATION_SEC * 1000
+    const fin = ini + SEGMENT_DURATION_SEC * 1000
+    // (la guia se calla con un fundido que empieza un poco antes)
+    return a.hastaMs > ini && a.desdeMs - 20 < fin ? `${this.claveMezcla}&a=${a.id}` : this.claveMezcla
+  }
+
+  /** Compu: la voz suena con el volumen y el lado de la guia en esta mezcla (sin guia ni click, al medio). */
+  private volumenDelAnuncio(): void {
+    const a = this.anuncio
+    const p = this.ultimoProyecto
+    if (this.modo !== 'pistas' || !a || !p) return
+    const c = a.pistaId ? this.mezclaDe(p).find((x) => x.pistaId === a.pistaId) : { ganancia: 1, pan: 0 }
+    const t = this.ctx.currentTime
+    this.anuncioGain.gain.setTargetAtTime(c?.ganancia ?? 0, t, 0.015)
+    this.anuncioPanner.pan.setTargetAtTime(c?.pan ?? 0, t, 0.015)
+  }
+
+  /** Compu: programa la voz (y calla la guia) apenas lo que suena llega a ese punto de la cancion. */
+  private programarVozAnuncio(): void {
+    const a = this.anuncio
+    const voz = this.vozAnuncio
+    if (this.modo !== 'pistas' || !a || !voz?.buffer || voz.fuente || !this.reproduciendo || this.esperando) return
+    const t0 = this.tiempoNodoParaPos(a.desdeMs / 1000)
+    if (t0 === null) return // todavia no esta programado ese punto
+    const ahora = this.ctx.currentTime
+    const t1 = t0 + (a.hastaMs - a.desdeMs) / 1000
+    if (t1 <= ahora + 0.02) return
+    const fuente = this.ctx.createBufferSource()
+    fuente.buffer = voz.buffer
+    fuente.connect(this.anuncioGain)
+    const inicio = Math.max(t0, ahora + 0.01)
+    fuente.start(inicio, inicio - t0)
+    fuente.stop(t1)
+    voz.fuente = fuente
+    const guia = a.guiaPistaId ? this.canales.get(a.guiaPistaId) : undefined
+    const g = guia?.callarNode?.gain
+    if (g) {
+      g.cancelScheduledValues(ahora)
+      g.setValueAtTime(1, Math.max(ahora, inicio - 0.01))
+      g.linearRampToValueAtTime(0, inicio)
+      g.setValueAtTime(0, t1)
+      g.linearRampToValueAtTime(1, t1 + 0.01)
+      voz.callada = guia!
+    }
+  }
+
+  private cortarVozAnuncio(): void {
+    const voz = this.vozAnuncio
+    this.vozAnuncio = null
+    if (!voz) return
+    try {
+      voz.fuente?.stop()
+    } catch {
+      // ya estaba detenida
+    }
+    const g = voz.callada?.callarNode?.gain
+    if (g) {
+      const t = this.ctx.currentTime
+      g.cancelScheduledValues(t)
+      g.setValueAtTime(g.value, t)
+      g.linearRampToValueAtTime(1, t + 0.01)
+    }
+  }
+
+  /**
    * Volumen y lado de la cuenta = los del click en esta mezcla; y su sonido,
    * recortado del click de la cancion (si no se puede, un click sintetizado).
    */
@@ -872,7 +1000,7 @@ export class StreamingEngine implements PlaybackEngine {
       for (let i = indiceBase; i <= hasta; i++) {
         const cue = canal.cueSegmentos.get(i)
         const actual = canal.segmentos.get(i)
-        if (cue && (!actual || (actual.clave !== this.claveMezcla && cue.clave === this.claveMezcla))) canal.segmentos.set(i, cue)
+        if (cue && (!actual || (actual.clave !== this.claveDeSegmento(i) && cue.clave === this.claveDeSegmento(i)))) canal.segmentos.set(i, cue)
       }
     }
   }
@@ -895,7 +1023,7 @@ export class StreamingEngine implements PlaybackEngine {
     const ahora = this.ctx.currentTime
     // (lo que termina antes de que pueda llegar la mezcla nueva no: queda con la vieja)
     const llega = ahora + 0.06 + this.descargaEstimadaSec()
-    const i = this.tramos.findIndex((t) => t.inicioCtx + t.duracionCtx > llega && t.clave !== this.claveMezcla)
+    const i = this.tramos.findIndex((t) => t.inicioCtx + t.duracionCtx > llega && t.clave !== this.claveDeSegmento(t.indice))
     if (i === -1) return s.indice
     let pos = this.tramos[i].posInicio
     for (let k = i; k < this.tramos.length; k++) {
@@ -921,6 +1049,7 @@ export class StreamingEngine implements PlaybackEngine {
       } else {
         if (this.modo === 'mezcla') this.pasarAMezclaNueva()
         this.encadenar()
+        this.programarVozAnuncio()
       }
     }
     this.lanzarFetchsPendientes()
@@ -1095,10 +1224,10 @@ export class StreamingEngine implements PlaybackEngine {
     const ahora = this.ctx.currentTime
     // con un salto/reingreso por empezar no se toca nada: se pasa a la mezcla nueva despues
     if (this.inicioCorridaCtx > ahora) return
-    const fresco = (indice: number): boolean => canal.segmentos.get(indice)?.clave === this.claveMezcla
+    const fresco = (indice: number): boolean => canal.segmentos.get(indice)?.clave === this.claveDeSegmento(indice)
 
     // 1) lo programado que todavia no empezo y ya tiene mezcla nueva: se rehace
-    const futuroViejo = this.tramos.find((tr) => tr.inicioCtx > ahora + 0.03 && tr.clave !== this.claveMezcla && fresco(tr.indice))
+    const futuroViejo = this.tramos.find((tr) => tr.inicioCtx > ahora + 0.03 && tr.clave !== this.claveDeSegmento(tr.indice) && fresco(tr.indice))
     if (futuroViejo) {
       this.diag.cambiosMezcla++
       this.reprogramarDesde(futuroViejo.inicioCtx)
@@ -1106,7 +1235,7 @@ export class StreamingEngine implements PlaybackEngine {
 
     // 2) lo que esta sonando: fundido a la mezcla nueva
     const sonando = this.tramos.find((tr) => tr.inicioCtx <= ahora && tr.inicioCtx + tr.duracionCtx > ahora)
-    if (!sonando || sonando.clave === this.claveMezcla) return
+    if (!sonando || sonando.clave === this.claveDeSegmento(sonando.indice)) return
     const tCambio = ahora + 0.06
     const fin = sonando.inicioCtx + sonando.duracionCtx
     if (tCambio >= fin - FUNDIDO_MEZCLA_SEC) return // el borde esta encima: lo resuelve el paso 1 en el proximo tick
@@ -1159,7 +1288,7 @@ export class StreamingEngine implements PlaybackEngine {
       const indice = desde + i
       for (const canal of canales) {
         if (canal.finEnIndice !== null && indice >= canal.finEnIndice) continue
-        if (canal.segmentos.get(indice)?.clave === this.claveMezcla) continue
+        if (canal.segmentos.get(indice)?.clave === this.claveDeSegmento(indice)) continue
         ventanaCompleta = false
         if (canal.enVuelo.has(indice)) continue
         // hasta tener el encabezado del WAV, un solo pedido por pista (los demas dependen de el)
@@ -1175,9 +1304,9 @@ export class StreamingEngine implements PlaybackEngine {
     for (const indice of [...this.cueIndices].sort((a, b) => a - b)) {
       for (const canal of canales) {
         if (canal.finEnIndice !== null && indice >= canal.finEnIndice) continue
-        if (canal.cueSegmentos.get(indice)?.clave === this.claveMezcla || canal.enVuelo.has(indice)) continue
+        if (canal.cueSegmentos.get(indice)?.clave === this.claveDeSegmento(indice) || canal.enVuelo.has(indice)) continue
         const enVentana = canal.segmentos.get(indice)
-        if (enVentana?.clave === this.claveMezcla) {
+        if (enVentana?.clave === this.claveDeSegmento(indice)) {
           canal.cueSegmentos.set(indice, enVentana)
           continue
         }
@@ -1227,8 +1356,8 @@ export class StreamingEngine implements PlaybackEngine {
     const limite = this.ctx.currentTime + margen
     const indices: number[] = []
     for (const tr of this.tramos) {
-      if (tr.clave === this.claveMezcla || tr.inicioCtx + tr.duracionCtx - FUNDIDO_MEZCLA_SEC <= limite) continue
-      if (indices.includes(tr.indice) || canal.segmentos.get(tr.indice)?.clave === this.claveMezcla) continue
+      if (tr.clave === this.claveDeSegmento(tr.indice) || tr.inicioCtx + tr.duracionCtx - FUNDIDO_MEZCLA_SEC <= limite) continue
+      if (indices.includes(tr.indice) || canal.segmentos.get(tr.indice)?.clave === this.claveDeSegmento(tr.indice)) continue
       if (canal.finEnIndice !== null && tr.indice >= canal.finEnIndice) continue
       indices.push(tr.indice)
     }
@@ -1303,7 +1432,7 @@ export class StreamingEngine implements PlaybackEngine {
 
   private pedirSegmento(canal: Canal, indice: number): void {
     const ctrl = new AbortController()
-    const clave = this.claveMezcla
+    const clave = this.claveDeSegmento(indice)
     canal.enVuelo.set(indice, { ctrl, clave })
     const proyectoId = this.proyectoId
     void this.fetchSegmento(canal, indice, clave, ctrl.signal)

@@ -1,5 +1,5 @@
 import type { Server } from 'socket.io'
-import type { AccionProgramada, ComandoProgramado, SeccionSaltarPayload, TramoReproduccion } from '../shared/types'
+import type { AccionProgramada, AnuncioSalto, ComandoProgramado, SeccionSaltarPayload, TramoReproduccion } from '../shared/types'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn, type Seccion } from '../shared/playback'
 import { compasesDeCuenta, programarCuenta } from '../shared/cuenta'
 import type { AppState, Tab } from './state'
@@ -28,6 +28,16 @@ const MIN_SECCION_LOOP_MS = 1000
  * margen posible, y en una WiFi local llega en milisegundos.
  */
 const ANTICIPO_MIN_SALTO_MS = 700
+
+/**
+ * La voz que avisa un salto empieza al menos esto despues de elegirlo, con
+ * celulares: tienen que alcanzar a bajar los pedazos de su mezcla que la
+ * traen (ver el "primero lo urgente" de StreamingEngine).
+ */
+const ANTICIPO_ANUNCIO_MS = 1000
+
+/** Arma la voz que avisa un salto (ver voces.ts); null = no hay voces o no entra. */
+export type Anunciador = (tab: Tab, nombre: string, limiteMs: number, minInicioMs: number) => AnuncioSalto | null
 
 /** Compas mas cercano a `ms` (a menos de medio compas); sin tempo detectado, `ms` tal cual. */
 function alCompas(tab: Tab, ms: number): number {
@@ -72,8 +82,21 @@ export class Transporte {
     /** cambio el salto pendiente (se eligio, se cambio, se cancelo o se hizo): avisar a todos */
     private readonly alCambiarSalto: () => void = () => {},
     /** margen con celulares: lo que tardan en llegarles las ordenes (ver entrega.ts) */
-    private readonly margenConCelulares: () => number = () => MARGIN_MS
+    private readonly margenConCelulares: () => number = () => MARGIN_MS,
+    private readonly anunciar: Anunciador = () => null
   ) {}
+
+  /** La voz que avisa el salto (la seccion a la que se va; sin nombre, solo la cuenta). */
+  private anunciarSalto(tab: Tab, nombre: string, destinoMs: number, limiteMs: number): AnuncioSalto | null {
+    // la seccion elegida es justo la que sigue: la guia de la cancion ya la anuncia
+    if (destinoMs === limiteMs) return null
+    const anticipo = this.hayCelulares() ? ANTICIPO_ANUNCIO_MS : 100
+    try {
+      return this.anunciar(tab, nombre, limiteMs, posicionActualMs(tab.playback, Date.now() + anticipo))
+    } catch {
+      return null // sin voz, el salto se hace igual
+    }
+  }
 
   margen(): number {
     return this.hayCelulares() ? this.margenConCelulares() : MARGIN_SIN_CELULARES_MS
@@ -192,7 +215,8 @@ export class Transporte {
       this.seek(destino.inicioMs)
       return
     }
-    this.state.saltoPendiente = { tabId: tab.tabId, destinoMs, nombre: destino.nombre, ...limite }
+    const anuncio = this.anunciarSalto(tab, destino.nombre, destinoMs, limite.limiteMs)
+    this.state.saltoPendiente = { tabId: tab.tabId, destinoMs, nombre: destino.nombre, ...limite, anuncio }
     this.reprogramarTimers()
     this.alCambiarSalto()
   }
@@ -222,7 +246,9 @@ export class Transporte {
     }
     const seccion = seccionEn(calcularSecciones(tab.proyecto.marcadores, dur), destinoMs)
     const nombre = `${seccion?.nombre ?? 'Posición'} · ${formatoTiempo(destinoMs)}`
-    this.state.saltoPendiente = { tabId: tab.tabId, destinoMs, nombre, ...limite }
+    // a un punto cualquiera (no al comienzo de una seccion): sin nombre, solo la cuenta
+    const anuncio = this.anunciarSalto(tab, seccion && Math.abs(seccion.inicioMs - destinoMs) < 50 ? seccion.nombre : '', destinoMs, limite.limiteMs)
+    this.state.saltoPendiente = { tabId: tab.tabId, destinoMs, nombre, ...limite, anuncio }
     this.reprogramarTimers()
     this.alCambiarSalto()
   }

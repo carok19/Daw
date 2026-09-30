@@ -35,8 +35,9 @@ function enviar(m: MensajeExtraccion): Promise<void> {
 function elegir(p: PedidoExtraccion, entradas: { nombre: string; tam: number; carpeta: boolean }[]): Candidato[] {
   const audio = new Set(p.extensionesAudio)
   const extra = new Set(p.extensionesExtra)
+  const filtro = p.filtro ? new RegExp(p.filtro, 'i') : null
   const elegidos = entradas
-    .filter((e) => !e.carpeta && !esArchivoBasura(e.nombre))
+    .filter((e) => !e.carpeta && !esArchivoBasura(e.nombre) && (!filtro || filtro.test(e.nombre)))
     .map((e) => {
       const ext = path.extname(e.nombre).toLowerCase()
       return { nombre: e.nombre, tam: e.tam, audio: audio.has(ext), extra: extra.has(ext) && e.tam <= MAX_BYTES_EXTRA }
