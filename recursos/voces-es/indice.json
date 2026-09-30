@@ -1,0 +1,519 @@
+{
+ "idioma": "es",
+ "activo": true,
+ "voces": [
+  {
+   "claves": [
+    "a capella"
+   ],
+   "archivo": "0.wav",
+   "inicioMs": 1.8,
+   "vozMs": 762.75
+  },
+  {
+   "claves": [
+    "all in",
+    "toda la banda"
+   ],
+   "archivo": "1.wav",
+   "inicioMs": 0,
+   "vozMs": 781.3333333333334
+  },
+  {
+   "claves": [
+    "bass",
+    "bajo"
+   ],
+   "archivo": "2.wav",
+   "inicioMs": 6.6,
+   "vozMs": 506.2708333333333
+  },
+  {
+   "claves": [
+    "big ending",
+    "final grande"
+   ],
+   "archivo": "3.wav",
+   "inicioMs": 3.1,
+   "vozMs": 1052.6666666666667
+  },
+  {
+   "claves": [
+    "break",
+    "pausa"
+   ],
+   "archivo": "4.wav",
+   "inicioMs": 8.6,
+   "vozMs": 466.5
+  },
+  {
+   "claves": [
+    "build",
+    "sube intensidad"
+   ],
+   "archivo": "5.wav",
+   "inicioMs": 8.2,
+   "vozMs": 1136.1666666666667
+  },
+  {
+   "claves": [
+    "drums",
+    "bateria"
+   ],
+   "archivo": "6.wav",
+   "inicioMs": 0,
+   "vozMs": 618.4375
+  },
+  {
+   "claves": [
+    "drums in",
+    "entra bateria"
+   ],
+   "archivo": "7.wav",
+   "inicioMs": 8.1,
+   "vozMs": 997.0416666666667
+  },
+  {
+   "claves": [
+    "guitar",
+    "guitara"
+   ],
+   "archivo": "8.wav",
+   "inicioMs": 1.8,
+   "vozMs": 604.4166666666667
+  },
+  {
+   "claves": [
+    "hits"
+   ],
+   "archivo": "9.wav",
+   "inicioMs": 18.3,
+   "vozMs": 564.8958333333334
+  },
+  {
+   "claves": [
+    "hold",
+    "sostener"
+   ],
+   "archivo": "10.wav",
+   "inicioMs": 7,
+   "vozMs": 648.2291666666666
+  },
+  {
+   "claves": [
+    "key change down",
+    "baja tono"
+   ],
+   "archivo": "11.wav",
+   "inicioMs": 0.9,
+   "vozMs": 723.2916666666666
+  },
+  {
+   "claves": [
+    "key change up",
+    "sube tono"
+   ],
+   "archivo": "12.wav",
+   "inicioMs": 4.6,
+   "vozMs": 762.5208333333333
+  },
+  {
+   "claves": [
+    "keys",
+    "teclado"
+   ],
+   "archivo": "13.wav",
+   "inicioMs": 2.6,
+   "vozMs": 699.9583333333334
+  },
+  {
+   "claves": [
+    "last time",
+    "ultima vez"
+   ],
+   "archivo": "14.wav",
+   "inicioMs": 3.2,
+   "vozMs": 764.375
+  },
+  {
+   "claves": [
+    "softly",
+    "suave"
+   ],
+   "archivo": "15.wav",
+   "inicioMs": 7,
+   "vozMs": 553.5833333333334
+  },
+  {
+   "claves": [
+    "swell"
+   ],
+   "archivo": "16.wav",
+   "inicioMs": 3.8,
+   "vozMs": 543.1666666666667
+  },
+  {
+   "claves": [
+    "1"
+   ],
+   "archivo": "17.wav",
+   "inicioMs": 4.8,
+   "vozMs": 407.7916666666667
+  },
+  {
+   "claves": [
+    "2"
+   ],
+   "archivo": "18.wav",
+   "inicioMs": 0,
+   "vozMs": 448.375
+  },
+  {
+   "claves": [
+    "3"
+   ],
+   "archivo": "19.wav",
+   "inicioMs": 0.9,
+   "vozMs": 443.6875
+  },
+  {
+   "claves": [
+    "4"
+   ],
+   "archivo": "20.wav",
+   "inicioMs": 1.8,
+   "vozMs": 449.9166666666667
+  },
+  {
+   "claves": [
+    "5"
+   ],
+   "archivo": "21.wav",
+   "inicioMs": 3,
+   "vozMs": 475.89583333333337
+  },
+  {
+   "claves": [
+    "6"
+   ],
+   "archivo": "22.wav",
+   "inicioMs": 4.4,
+   "vozMs": 525.7708333333333
+  },
+  {
+   "claves": [
+    "7"
+   ],
+   "archivo": "23.wav",
+   "inicioMs": 4.3,
+   "vozMs": 457.8541666666667
+  },
+  {
+   "claves": [
+    "baja intensidad",
+    "breakdown"
+   ],
+   "archivo": "24.wav",
+   "inicioMs": 0.6,
+   "vozMs": 919.9791666666666
+  },
+  {
+   "claves": [
+    "coro",
+    "chorus"
+   ],
+   "archivo": "25.wav",
+   "inicioMs": 9.5,
+   "vozMs": 413.625
+  },
+  {
+   "claves": [
+    "coro 1",
+    "chorus 1"
+   ],
+   "archivo": "26.wav",
+   "inicioMs": 12.8,
+   "vozMs": 724.0416666666667
+  },
+  {
+   "claves": [
+    "coro 2",
+    "chorus 2"
+   ],
+   "archivo": "27.wav",
+   "inicioMs": 7.8,
+   "vozMs": 740.9166666666666
+  },
+  {
+   "claves": [
+    "coro 3",
+    "chorus 3"
+   ],
+   "archivo": "28.wav",
+   "inicioMs": 0.2,
+   "vozMs": 762.0416666666666
+  },
+  {
+   "claves": [
+    "coro 4",
+    "chorus 4"
+   ],
+   "archivo": "29.wav",
+   "inicioMs": 19.8,
+   "vozMs": 837.0625
+  },
+  {
+   "claves": [
+    "ending",
+    "final"
+   ],
+   "archivo": "30.wav",
+   "inicioMs": 10.5,
+   "vozMs": 458.1875
+  },
+  {
+   "claves": [
+    "exhortation"
+   ],
+   "archivo": "31.wav",
+   "inicioMs": 4.9,
+   "vozMs": 999.9791666666666
+  },
+  {
+   "claves": [
+    "instrumental"
+   ],
+   "archivo": "32.wav",
+   "inicioMs": 16.5,
+   "vozMs": 869.9375
+  },
+  {
+   "claves": [
+    "interludio",
+    "interlude"
+   ],
+   "archivo": "33.wav",
+   "inicioMs": 2.1,
+   "vozMs": 819.6041666666667
+  },
+  {
+   "claves": [
+    "intro"
+   ],
+   "archivo": "34.wav",
+   "inicioMs": 40,
+   "vozMs": 483.20833333333337
+  },
+  {
+   "claves": [
+    "outro"
+   ],
+   "archivo": "35.wav",
+   "inicioMs": 9.2,
+   "vozMs": 490.35416666666663
+  },
+  {
+   "claves": [
+    "post coro",
+    "post chorus"
+   ],
+   "archivo": "36.wav",
+   "inicioMs": 1.2,
+   "vozMs": 744.1041666666666
+  },
+  {
+   "claves": [
+    "pre coro",
+    "pre chorus"
+   ],
+   "archivo": "37.wav",
+   "inicioMs": 5.7,
+   "vozMs": 678.8125
+  },
+  {
+   "claves": [
+    "pre coro 1",
+    "pre chorus 1"
+   ],
+   "archivo": "38.wav",
+   "inicioMs": 11.3,
+   "vozMs": 983.1666666666666
+  },
+  {
+   "claves": [
+    "pre coro 2",
+    "pre chorus 2"
+   ],
+   "archivo": "39.wav",
+   "inicioMs": 11.4,
+   "vozMs": 1009.1666666666667
+  },
+  {
+   "claves": [
+    "pre coro 3",
+    "pre chorus 3"
+   ],
+   "archivo": "40.wav",
+   "inicioMs": 8.6,
+   "vozMs": 984.6458333333334
+  },
+  {
+   "claves": [
+    "pre coro 4",
+    "pre chorus 4"
+   ],
+   "archivo": "41.wav",
+   "inicioMs": 11.4,
+   "vozMs": 1058.7291666666667
+  },
+  {
+   "claves": [
+    "puente",
+    "bridge"
+   ],
+   "archivo": "42.wav",
+   "inicioMs": 9.6,
+   "vozMs": 531.3333333333334
+  },
+  {
+   "claves": [
+    "puente 1",
+    "bridge 1"
+   ],
+   "archivo": "43.wav",
+   "inicioMs": 7.2,
+   "vozMs": 822.7708333333334
+  },
+  {
+   "claves": [
+    "puente 2",
+    "bridge 2"
+   ],
+   "archivo": "44.wav",
+   "inicioMs": 8.3,
+   "vozMs": 826.5208333333334
+  },
+  {
+   "claves": [
+    "puente 3",
+    "bridge 3"
+   ],
+   "archivo": "45.wav",
+   "inicioMs": 7.9,
+   "vozMs": 811.6875
+  },
+  {
+   "claves": [
+    "puente 4",
+    "bridge 4"
+   ],
+   "archivo": "46.wav",
+   "inicioMs": 9.4,
+   "vozMs": 843.5
+  },
+  {
+   "claves": [
+    "rap"
+   ],
+   "archivo": "47.wav",
+   "inicioMs": 10.7,
+   "vozMs": 421.5
+  },
+  {
+   "claves": [
+    "refrain"
+   ],
+   "archivo": "48.wav",
+   "inicioMs": 5.5,
+   "vozMs": 631.6458333333334
+  },
+  {
+   "claves": [
+    "repetir",
+    "tag"
+   ],
+   "archivo": "49.wav",
+   "inicioMs": 0.4,
+   "vozMs": 631.9791666666666
+  },
+  {
+   "claves": [
+    "solo"
+   ],
+   "archivo": "50.wav",
+   "inicioMs": 1.8,
+   "vozMs": 456.27083333333337
+  },
+  {
+   "claves": [
+    "vamp"
+   ],
+   "archivo": "51.wav",
+   "inicioMs": 7.1,
+   "vozMs": 470.10416666666663
+  },
+  {
+   "claves": [
+    "verso",
+    "verse"
+   ],
+   "archivo": "52.wav",
+   "inicioMs": 10.4,
+   "vozMs": 461.5625
+  },
+  {
+   "claves": [
+    "verso 1",
+    "verse 1"
+   ],
+   "archivo": "53.wav",
+   "inicioMs": 2.5,
+   "vozMs": 810.1458333333334
+  },
+  {
+   "claves": [
+    "verso 2",
+    "verse 2"
+   ],
+   "archivo": "54.wav",
+   "inicioMs": 13.7,
+   "vozMs": 851.3958333333334
+  },
+  {
+   "claves": [
+    "verso 3",
+    "verse 3"
+   ],
+   "archivo": "55.wav",
+   "inicioMs": 7.4,
+   "vozMs": 853.7916666666666
+  },
+  {
+   "claves": [
+    "verso 4",
+    "verse 4"
+   ],
+   "archivo": "56.wav",
+   "inicioMs": 25.4,
+   "vozMs": 846.9791666666666
+  },
+  {
+   "claves": [
+    "verso 5",
+    "verse 5"
+   ],
+   "archivo": "57.wav",
+   "inicioMs": 1.8,
+   "vozMs": 866.9375
+  },
+  {
+   "claves": [
+    "verso 6",
+    "verse 6"
+   ],
+   "archivo": "58.wav",
+   "inicioMs": 7,
+   "vozMs": 932.5416666666667
+  }
+ ]
+}

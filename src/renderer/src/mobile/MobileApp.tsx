@@ -398,6 +398,11 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
   const sonando = estado?.playbackActivo?.estado === 'playing'
   const salto = estado?.saltoPendiente ?? null
   const cantidadCanciones = estado?.tabs.length ?? 0
+  // colchon: la banda se va y siguen el click y el pad (hace falta el tempo de la cancion)
+  const colchon = estado?.colchon ?? null
+  const hayColchon = !!colchon && colchon.hasta === null
+  const enColchon = hayColchon && colchon!.desdeCancion && colchon!.tabId === estado?.activeTabId
+  const conTempo = (proyecto.tempo?.compasesMs.length ?? 0) > 1
 
   if (proyecto.colchon) {
     const c = estado?.colchon
@@ -483,6 +488,18 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
             <button className={`m-loop ${loop ? 'activo' : ''}`} onClick={() => controller.setLoop(!loop)} aria-pressed={loop} aria-label="Repetir sección">
               <Repeat size={19} />
             </button>
+            {conTempo && (
+              <button
+                className={`m-colchon-boton ${enColchon ? 'activo' : ''}`}
+                onClick={enColchon ? controller.terminarColchon : () => void controller.entrarEnColchon()}
+                disabled={!enColchon && (!sonando || hayColchon)}
+                aria-pressed={enColchon}
+                aria-label="Colchón"
+                title={enColchon ? 'Terminar el colchón' : 'Colchón: en el próximo compás se va la banda y siguen el click y un pad'}
+              >
+                <Waves size={19} />
+              </button>
+            )}
           </>
         )}
         {conInfo && (

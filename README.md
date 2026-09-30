@@ -224,15 +224,20 @@ cambian a propósito.
    escucha la sección elegida en el “1” y la cuenta en los dos últimos
    pulsos (“**Coro… 3, 4**”; en 3/4 “2, 3”), con el volumen y el lado de la
    guía de cada uno. En ese compás la guía de la canción se calla (diría la
-   sección que venía, no la elegida). Las voces no vienen con la app: se
-   importan una vez en el panel de secciones → **Importar voces…** (un .zip
-   o .rar con un audio por sección —*Coro*, *Verso 1*, *Puente*…— y los
-   números 1 a 7; si trae varios idiomas se usa el español). Los nombres se
+   sección que venía, no la elegida). **Las voces vienen con el programa, en
+   español** (las secciones —Intro, Verso 1 a 6, Pre Coro, Coro, Puente,
+   Interludio, Instrumental, Final, Repetir…— y los números 1 a 7, de los
+   recursos gratuitos “Click and Guide Samples” de
+   [Secuencias.com](https://secuencias.com)): no hay que importar nada. En
+   el panel de secciones se apaga o prende (**Avisar con voz**), y el botón
+   de al lado permite usar **otro pack** (un .zip o .rar con un audio por
+   sección y los números; si trae varios idiomas se usa el español); con
+   el tacho se quita ese pack y vuelven las del programa. Los nombres se
    reconocen aunque varíen (“Estribillo” → Coro, “Coro 5” → Coro,
    “Precoro” → Pre Coro) y se usa el momento exacto en que empieza a
    hablar cada archivo. Si el salto se elige tan encima que el “1” ya pasó,
    el nombre va en el primer pulso que llega; sin la voz de esa sección,
-   solo la cuenta. Se puede apagar sin borrar el pack.
+   solo la cuenta.
 10. **Cambiar el tono** (de −6 a +6 semitonos): en la compu, al lado del
     nombre de la canción, **− A +**. Cada toque sube o baja medio tono y se
     ve “A → B +2”. La compu prepara las pistas en el tono nuevo (unos
@@ -289,7 +294,7 @@ cambian a propósito.
     **Pad** (y **Click**) para subirlo, bajarlo o mutearlo solo para él. Dos
     formas:
     - **Dentro de una canción** (botón de las ondas al lado de “repetir”, o
-      **C**): en el próximo compás la banda se va (se apaga en ese compás) y
+      **C**; en el celular, el mismo botón en la barra de abajo): en el próximo compás la banda se va (se apaga en ese compás) y
       siguen el click, en el mismo pulso, y el pad en el tono de la canción.
       Para volver, **tocar una sección** (en la compu o en el celular): la
       canción entra ahí en el “1” del próximo compás, sin cuenta (el click
@@ -581,7 +586,7 @@ compás—, la nota y los volúmenes, y cuándo termina) que va a todos con el
 estado. **Nada de su audio viaja por la red mientras suena:**
 
 - **El click** lo programa cada dispositivo a la hora de la compu, como la
-  cuenta: los golpes de los próximos 2 s, con el sonido del click de la
+  cuenta: los golpes de los próximos 4 s, con el sonido del click de la
   canción (o uno sintetizado), por el canal del click de su mezcla. Así dura
   lo que haga falta y suena junto en todos (medido con audio real: la
   canción, el colchón y la canción otra vez caen en la misma grilla, a
@@ -823,7 +828,13 @@ habitual de los programas que se venden sin conexión.
    guía con un `GainNode` propio. Como la orden del salto llega antes de
    que suene, el aviso se sigue escuchando hasta el salto; si se cancela o
    se elige otra sección, se corta. Medido con audio real: la cuenta cae a
-   menos de 3 ms del pulso y la guía queda en silencio todo el compás.
+   menos de 3 ms del pulso y la guía queda en silencio todo el compás. Las
+   voces de fábrica están en `recursos/voces-es` (van al instalador como
+   `resources/voces-es`): el pack de Secuencias.com importado como cualquier
+   otro (solo el español) y cada voz recortada a lo hablado (5 MB); ver
+   `armarVocesDeFabrica` en `server/voces.ts`. Un pack importado va a
+   `~/MultitrackApp/voces` y se usa en su lugar; apagar las de fábrica queda
+   en `voces-fabrica.json`.
 8. **Cada dispositivo tiene un id estable** (localStorage): al reconectar
    vuelve a su misma fila con su nombre, sin "fantasmas". Los desconectados
    quedan visibles (para notar si alguien se cayó) hasta que se limpian. Al

@@ -80,16 +80,18 @@ function VozDelSalto(p: { voces: InfoVoces | null; onImportar: () => Promise<boo
         <input type="checkbox" checked={v.activo} onChange={(e) => p.onActivar(e.target.checked)} />
         <Megaphone size={14} /> Avisar con voz <em>“Coro… 3, 4”</em>
       </label>
-      <small className="num" title={v.numeros ? undefined : 'El pack no trae los números: se avisa solo el nombre'}>
-        {v.cantidad} voces {IDIOMA_VOCES[v.idioma]}
+      <small className="num" title={v.deFabrica ? 'Las voces que trae el programa (Secuencias.com)' : v.numeros ? undefined : 'El pack no trae los números: se avisa solo el nombre'}>
+        {v.deFabrica ? `voces del programa ${IDIOMA_VOCES[v.idioma]}` : `${v.cantidad} voces ${IDIOMA_VOCES[v.idioma]}`}
         {!v.numeros && ' · sin números'}
       </small>
-      <button className="btn-icono" onClick={() => void importar()} title="Cambiar el pack de voces">
+      <button className="btn-icono" onClick={() => void importar()} title={v.deFabrica ? 'Usar otro pack de voces (.zip o .rar)' : 'Cambiar el pack de voces'} aria-label="Usar otro pack de voces">
         <Download size={13} />
       </button>
-      <button className="btn-icono" onClick={p.onBorrar} title="Quitar las voces">
-        <Trash2 size={13} />
-      </button>
+      {!v.deFabrica && (
+        <button className="btn-icono" onClick={p.onBorrar} title="Quitar este pack (vuelven las voces del programa)" aria-label="Quitar este pack de voces">
+          <Trash2 size={13} />
+        </button>
+      )}
     </div>
   )
 }

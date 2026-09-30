@@ -404,6 +404,8 @@ export interface InfoVoces {
   idioma: 'es' | 'en' | 'otro'
   /** avisar los saltos con voz (se puede apagar sin borrar el pack) */
   activo: boolean
+  /** son las voces que trae la app (no se importo ningun pack) */
+  deFabrica?: boolean
   cantidad: number
   /** tiene los numeros para contar ("3, 4") */
   numeros: boolean

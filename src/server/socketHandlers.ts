@@ -144,6 +144,8 @@ export interface Conexion {
   dirPads?: string
   /** sintetizar los 12 pads un rato despues de abrir (la app si; las pruebas no) */
   precalentarPads?: boolean
+  /** las voces que trae la app para avisar los saltos (null = ninguna) */
+  dirVocesDeFabrica?: string | null
 }
 
 /** Version de prueba (o licencia con menos celulares): ya hay el maximo conectado. */
@@ -258,8 +260,8 @@ export function registerSocketHandlers(
   }, conexion.intervaloPingMs ?? 2000)
   pings.unref()
 
-  // voz que avisa los saltos ("Coro… 3, 4"): con el pack de voces que se importo en la compu
-  const voces = new Voces()
+  // voz que avisa los saltos ("Coro… 3, 4"): las que trae la app, o el pack que se importo en la compu
+  const voces = new Voces(undefined, conexion.dirVocesDeFabrica ?? null)
   const anuncios = new Anuncios()
   state.voces = voces.info()
   const anunciar = (tab: Tab, nombre: string, limiteMs: number, minInicioMs: number): AnuncioSalto | null => {
@@ -1003,8 +1005,9 @@ export function registerSocketHandlers(
 
     socket.on('voces:borrar', (_payload: unknown, ack?: Ack<{ ok: boolean }>) => {
       if (!soloCompu(socket)) return ack?.({ ok: false })
+      // (si la app trae voces, vuelven esas)
       voces.borrar()
-      state.voces = null
+      state.voces = voces.info()
       emitirEstado()
       ack?.({ ok: true })
     })

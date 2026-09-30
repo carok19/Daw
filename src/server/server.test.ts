@@ -25,6 +25,7 @@ import { demoraEntre, pistasQueCambianDeTono } from './tono'
 import { evaluarFirewall, type DatosFirewall } from './firewall'
 import { compasesDeCuenta, golpeActual, golpesDeCuenta, LARGO_SONIDO_CUENTA_SEC, programarCuenta, suenaSuCuenta } from '../shared/cuenta'
 import { detectarCuentaPropia } from './cuenta'
+import { Voces } from './voces'
 import { esAdaptadorVirtual } from './network'
 import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { generarClick, wav16 } from './__fixtures__/sintetico'
@@ -1370,6 +1371,47 @@ test('cuenta propia: se detecta cuando la canción ya cuenta (la guía o el clic
   assert.equal(await cancion({ Click: click, Guia: guia([0]) }), 0)
 })
 
+test('voces de fábrica: el programa trae las voces en español; un pack importado las reemplaza y al quitarlo vuelven', async () => {
+  const fabrica = path.resolve('recursos/voces-es')
+  const indiceAntes = fs.readFileSync(path.join(fabrica, 'indice.json'), 'utf-8')
+  const base = tmpDir('multitrack-voces-fabrica-')
+  const nueva = (): Voces => new Voces(path.join(base, 'voces'), fabrica, path.join(base, 'voces-fabrica.json'))
+  const v = nueva()
+  const info = v.info()!
+  assert.deepEqual([info.idioma, info.activo, info.deFabrica, info.numeros], ['es', true, true, true])
+  assert.ok(info.cantidad >= 50, `${info.cantidad} voces`)
+  // las secciones de siempre y los numeros, recortadas a lo hablado
+  for (const c of ['intro', 'verso', 'verso 1', 'verso 2', 'pre coro', 'coro', 'coro 2', 'puente', 'instrumental', 'interludio', 'final', 'repetir', '1', '2', '3', '4']) {
+    const d = v.duracion(c)
+    assert.ok(d !== null && d > 150 && d < 1500, `${c}: ${d} ms`)
+  }
+  // "Coro… 3, 4" en el ultimo compas antes del salto (120 BPM)
+  const plan = planearAnuncio({ nombre: 'Coro 2', limiteMs: 8000, minInicioMs: 0, compasesMs: [0, 2000, 4000, 6000, 8000], pulsos: 4, duracion: (c) => v.duracion(c) })!
+  assert.deepEqual(plan.partes.map((x) => x.clave), ['coro 2', '3', '4'])
+  const audio = v.renderizar(plan)
+  let pico = 0
+  for (const x of audio) pico = Math.max(pico, Math.abs(x))
+  assert.ok(pico > 0.1, `se escucha (${pico})`)
+  // apagarlas queda recordado (sin tocar las del programa)
+  v.activar(false)
+  assert.equal(nueva().info()!.activo, false)
+  assert.equal(nueva().duracion('coro'), null)
+  v.activar(true)
+  assert.equal(fs.readFileSync(path.join(fabrica, 'indice.json'), 'utf-8'), indiceAntes)
+  // otro pack: se usa ese; al quitarlo vuelven las del programa
+  const tono = (f: number): Buffer => {
+    const x = new Float32Array(Math.round(0.5 * 48000))
+    for (let i = 0; i < x.length; i++) x[i] = 0.5 * Math.sin((2 * Math.PI * f * i) / 48000)
+    return wav16(x, 48000)
+  }
+  const importado = await v.importar(crearZip('Mis voces', { 'Coro.wav': tono(500), 'Puente.wav': tono(600) }))
+  assert.deepEqual([importado.deFabrica, importado.cantidad, importado.numeros], [false, 2, false])
+  assert.equal(nueva().info()!.deFabrica, false)
+  v.borrar()
+  assert.equal(v.info()!.deFabrica, true)
+  assert.equal(nueva().info()!.cantidad, info.cantidad)
+})
+
 test('Mi mezcla: mute y solo de cada músico (el solo del celular manda sobre el de la compu; el mute de la compu vale igual)', () => {
   const pista = (nombre: string, extra: Partial<Pista> = {}): Pista => ({
     id: crypto.randomUUID(),
@@ -1477,7 +1519,7 @@ test('voz del salto: se importa el pack (el español) y los celulares la reciben
   const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'voces:importar', { filePath: pack }, 60000)
   assert.equal(r.ok, true, r.error)
   let estado = await emitAck<EstadoCompleto>(compu, 'state:request', {})
-  assert.deepEqual(estado.voces, { idioma: 'es', activo: true, cantidad: 4, numeros: true, ejemplos: ['coro', 'puente'] })
+  assert.deepEqual(estado.voces, { idioma: 'es', activo: true, deFabrica: false, cantidad: 4, numeros: true, ejemplos: ['coro', 'puente'] })
 
   // la cancion: guia (300 Hz, a la izquierda), click y bajo mudos; 120 BPM 4/4 (compas de 2 s)
   const sr = 44100

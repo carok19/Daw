@@ -83,6 +83,8 @@ export interface OpcionesServidor {
   intervaloPingMs?: number
   /** sintetizar los pads del colchon en segundo plano al abrir (la app si; las pruebas no) */
   precalentarPads?: boolean
+  /** las voces en espanol que trae la app para avisar los saltos (resources/voces-es; null = ninguna) */
+  dirVocesDeFabrica?: string | null
 }
 
 /**
@@ -270,7 +272,8 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     version,
     licencias,
     intervaloPingMs: opciones.intervaloPingMs,
-    precalentarPads: opciones.precalentarPads ?? false
+    precalentarPads: opciones.precalentarPads ?? false,
+    dirVocesDeFabrica: opciones.dirVocesDeFabrica ?? null
   })
 
   async function listenOn(port: number): Promise<number> {

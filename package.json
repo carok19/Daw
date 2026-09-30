@@ -102,6 +102,14 @@
         "filter": [
           "airtracks.apk"
         ]
+      },
+      {
+        "from": "recursos/voces-es",
+        "to": "voces-es",
+        "filter": [
+          "*.wav",
+          "indice.json"
+        ]
       }
     ]
   }

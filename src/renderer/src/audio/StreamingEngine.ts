@@ -117,8 +117,8 @@ const RAMPA_CORRECCION_SEC = 0.15
 const HISTORIA_SEC = 3
 const VENTANA_DIAG_MS = 20000
 const ID_MEZCLA = 'mezcla'
-/** Colchon: golpes del click programados por delante (ms) */
-const HORIZONTE_COLCHON_MS = 2000
+/** Colchon: golpes del click programados por delante (ms): aunque la pagina se trabe un momento, no se pierde ninguno */
+const HORIZONTE_COLCHON_MS = 4000
 /** Colchon: cambio de nota del pad (y el pad de un colchon que reemplaza a otro), en esto */
 const CRUCE_PAD_SEC = 1.5
 

@@ -13,11 +13,14 @@ import { ErrorComprimido, extraerComprimido, primerVolumen, type ArchivoExtraido
 /**
  * Voces que avisan a que seccion se salta ("Coro… 3, 4"), ver shared/anuncio.ts.
  *
- * No vienen con la app: se importa una vez un pack de voces (un .zip o .rar
- * con un archivo por seccion: "Coro.wav", "Spanish - Coro 2 (Chorus 2).wav",
- * "Spanish - 3.wav"...). Si trae varios idiomas se usa el espanol (si no hay,
- * el ingles). Quedan en ~/MultitrackApp/voces como WAV mono, con un indice de
- * que nombre es cada una y donde empieza y termina lo hablado.
+ * La app trae voces en espanol ("de fabrica": las secciones y los numeros de
+ * los recursos gratuitos "Click and Guide Samples" de Secuencias.com, en
+ * recursos/voces-es). Se puede importar otro pack (un .zip o .rar con un
+ * archivo por seccion: "Coro.wav", "Spanish - Coro 2 (Chorus 2).wav",
+ * "Spanish - 3.wav"...; si trae varios idiomas se usa el espanol, si no hay,
+ * el ingles): queda en ~/MultitrackApp/voces y se usa en lugar de las de
+ * fabrica; si se borra, vuelven las de fabrica. Cada voz es un WAV mono, con
+ * un indice de que nombre es cada una y donde empieza y termina lo hablado.
  */
 
 export const SR_VOCES = 48000
@@ -74,15 +77,45 @@ function medirVoz(m: Float32Array, sr: number): { inicioMs: number; vozMs: numbe
 
 export class Voces {
   private indice: Indice | null
+  /** las voces en uso son las de fabrica (no se importo ningun pack) */
+  private deFabrica = false
   private muestras = new Map<string, Float32Array>()
 
-  constructor(private readonly dir = path.join(appBaseDir(), 'voces')) {
-    this.indice = this.leerIndice()
+  constructor(
+    private readonly dir = path.join(appBaseDir(), 'voces'),
+    /** las voces que trae la app (null = ninguna) */
+    private readonly dirFabrica: string | null = null,
+    /** si se apagaron las de fabrica (no se pueden tocar: estan dentro del programa) */
+    private readonly archivoFabrica = path.join(appBaseDir(), 'voces-fabrica.json')
+  ) {
+    this.indice = this.cargar()
   }
 
-  private leerIndice(): Indice | null {
+  /** El pack importado; si no hay, las voces de fabrica. */
+  private cargar(): Indice | null {
+    this.muestras.clear()
+    const importado = this.leerIndice(this.dir)
+    this.deFabrica = !importado
+    if (importado) return importado
+    const fabrica = this.dirFabrica ? this.leerIndice(this.dirFabrica) : null
+    if (!fabrica) return null
+    let activo = true
     try {
-      const i = JSON.parse(fs.readFileSync(path.join(this.dir, 'indice.json'), 'utf-8')) as Indice
+      activo = (JSON.parse(fs.readFileSync(this.archivoFabrica, 'utf-8')) as { activo?: unknown }).activo !== false
+    } catch {
+      // sin eleccion: encendidas
+    }
+    return { ...fabrica, activo }
+  }
+
+  /** Donde estan los WAV de las voces en uso. */
+  private dirEnUso(): string {
+    return this.deFabrica && this.dirFabrica ? this.dirFabrica : this.dir
+  }
+
+  private leerIndice(dir: string): Indice | null {
+    try {
+      const i = JSON.parse(fs.readFileSync(path.join(dir, 'indice.json'), 'utf-8')) as Indice
       return Array.isArray(i.voces) && i.voces.length ? { idioma: i.idioma ?? 'otro', activo: i.activo !== false, voces: i.voces } : null
     } catch {
       return null
@@ -102,6 +135,7 @@ export class Voces {
     return {
       idioma: i.idioma,
       activo: i.activo,
+      deFabrica: this.deFabrica,
       cantidad: i.voces.length,
       numeros: todas.includes('3') && todas.includes('4'),
       // para mostrar: los nombres en español (si el pack no los tiene, los que tenga)
@@ -112,13 +146,15 @@ export class Voces {
   activar(activo: boolean): void {
     if (!this.indice) return
     this.indice = { ...this.indice, activo }
-    this.guardarIndice(this.dir, this.indice)
+    if (!this.deFabrica) return this.guardarIndice(this.dir, this.indice)
+    fs.mkdirSync(path.dirname(this.archivoFabrica), { recursive: true })
+    fs.writeFileSync(this.archivoFabrica, JSON.stringify({ activo }))
   }
 
+  /** Borra el pack importado (vuelven las voces de fabrica, si la app las trae). */
   borrar(): void {
-    this.indice = null
-    this.muestras.clear()
     fs.rmSync(this.dir, { recursive: true, force: true })
+    this.indice = this.cargar()
   }
 
   private voz(clave: string): Voz | null {
@@ -190,6 +226,7 @@ export class Voces {
       fs.rmSync(this.dir, { recursive: true, force: true })
       fs.renameSync(nuevo, this.dir)
       this.indice = indice
+      this.deFabrica = false
       this.muestras.clear()
       return this.info()!
     } finally {
@@ -201,7 +238,7 @@ export class Voces {
   private muestrasDe(v: Voz): Float32Array {
     let m = this.muestras.get(v.archivo)
     if (!m) {
-      m = leerMuestras(path.join(this.dir, v.archivo))
+      m = leerMuestras(path.join(this.dirEnUso(), v.archivo))
       this.muestras.set(v.archivo, m)
     }
     return m
@@ -227,6 +264,39 @@ export class Voces {
       }
     }
     return salida
+  }
+}
+
+/**
+ * Arma las voces de fabrica (recursos/voces-es) desde un pack: lo importa como
+ * cualquiera y deja cada voz recortada a lo hablado (con un respiro antes y
+ * despues), asi pesan poco dentro del instalador.
+ */
+export async function armarVocesDeFabrica(pack: string, destino: string): Promise<InfoVoces> {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-voces-fabrica-'))
+  try {
+    const voces = new Voces(path.join(tmp, 'voces'), null, path.join(tmp, 'x.json'))
+    await voces.importar(pack)
+    const indice = JSON.parse(fs.readFileSync(path.join(tmp, 'voces', 'indice.json'), 'utf-8')) as Indice
+    fs.rmSync(destino, { recursive: true, force: true })
+    fs.mkdirSync(destino, { recursive: true })
+    const antes = 40
+    const despues = 200
+    indice.voces = indice.voces.map((v) => {
+      const m = leerMuestras(path.join(tmp, 'voces', v.archivo))
+      const desde = Math.max(0, Math.round(((v.inicioMs - antes) / 1000) * SR_VOCES))
+      const hasta = Math.min(m.length, Math.round(((v.inicioMs + v.vozMs + despues) / 1000) * SR_VOCES))
+      const recorte = m.subarray(desde, hasta)
+      const datos = Buffer.alloc(recorte.length * 2)
+      for (let i = 0; i < recorte.length; i++) datos.writeInt16LE(Math.round(Math.max(-1, Math.min(1, recorte[i])) * 32767), i * 2)
+      fs.writeFileSync(path.join(destino, v.archivo), Buffer.concat([encabezadoWav16(1, SR_VOCES, datos.length), datos]))
+      return { ...v, inicioMs: Math.round(((v.inicioMs - (desde / SR_VOCES) * 1000) * 10)) / 10 }
+    })
+    indice.activo = true
+    fs.writeFileSync(path.join(destino, 'indice.json'), JSON.stringify(indice, null, 1))
+    return voces.info()!
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
   }
 }
 

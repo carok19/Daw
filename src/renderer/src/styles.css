@@ -4249,3 +4249,8 @@ input[type='date'] {
   color: var(--colchon);
   background: var(--colchon-soft);
 }
+.m-barra-botones .m-colchon-boton.activo {
+  background: var(--colchon-soft);
+  border-color: var(--colchon);
+  color: var(--colchon);
+}
