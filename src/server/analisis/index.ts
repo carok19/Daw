@@ -8,6 +8,7 @@ import { decodificarMono } from './decodificar'
 import { calcularTempo, detectarGolpes, pareceNombreDeClick, puntajeClick, PUNTAJE_MIN_CLICK, SR_ANALISIS } from './tempo'
 import { detectarFrases, guardarFrases, pareceNombreDeGuia, SR_VOZ } from './guia'
 import { anunciosDesdeFrases, faseDesdeAnuncios, seccionesDesdeFrases } from './secciones'
+import { velocidadAplicada } from '../../shared/velocidad'
 
 /** Acceso a un proyecto (abierto en el setlist o solo en disco) y como guardarlo/avisar. */
 export interface AccesoProyecto {
@@ -108,7 +109,9 @@ export class Analizador {
     // 1) click -> tempo y compases
     const tempo = await detectarTempo(p, dir)
     if (!this.hooks.obtener(proyectoId)) return // se borro mientras tanto
-    p.tempo = tempo
+    // se analizan las pistas originales: si la cancion suena a otra velocidad, el tempo pasa a ese tiempo
+    const v = velocidadAplicada(p)
+    p.tempo = tempo && v !== 1 ? { ...tempo, bpm: tempo.bpm * v, compasesMs: tempo.compasesMs.map((c) => c / v) } : tempo
     // el click pudo detectarse por como suena (no por el nombre): pasa a la izquierda
     aplicarPaneoAutomatico(p)
     acceso.guardar()
@@ -170,7 +173,9 @@ export class Analizador {
     const p = acceso?.proyecto
     const a = p?.analisis
     if (!acceso || !p || !a || !a.cues) return 0
-    const frases = a.cues.map((c) => ({ ...c, texto: textos.find((t) => t.n === c.n)?.texto ?? '' }))
+    // las frases salen de la guia original: a otra velocidad, pasan al tiempo en que suena la cancion
+    const v = velocidadAplicada(p)
+    const frases = a.cues.map((c) => ({ ...c, inicioMs: c.inicioMs / v, finMs: c.finMs / v, texto: textos.find((t) => t.n === c.n)?.texto ?? '' }))
     // click sin acento: el "1" de cada compas se deduce de donde terminan los anuncios de la guia
     if (p.tempo && !p.tempo.acentoClaro) {
       const corregidos = faseDesdeAnuncios(p.tempo.compasesMs, p.tempo.compas, anunciosDesdeFrases(frases))

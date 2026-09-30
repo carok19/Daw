@@ -1468,6 +1468,39 @@ test('tono: − / + en la compu prepara la canción en el tono nuevo; los celula
     assert.equal(server.state.getActiveTab()!.proyecto.tonoAplicado, 0)
   })
 
+  await t.test('velocidad: + en el BPM prepara todas las pistas; la canción pasa a ese tiempo y los celulares siguen en sync', async () => {
+    const tab = server.state.getActiveTab()!
+    const p = tab.proyecto
+    const durOriginal = p.duracionTotalMs
+    p.tempo = { bpm: 100, compas: 4, compasesMs: Array.from({ length: 9 }, (_, k) => k * 2400), clickPistaId: p.pistas.find((x) => x.nombre === 'Click')!.id, acentoClaro: true }
+    server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
+    const chip = compu.getByTestId('control-velocidad')
+    await chip.waitFor()
+    for (let i = 0; i < 4; i++) await chip.getByRole('button', { name: 'Más rápido' }).click()
+    await compu.waitForFunction(() => document.querySelector('[data-testid=control-velocidad] .velocidad-bpm')?.textContent === '104 BPM')
+    await compu.waitForSelector('[data-testid=control-velocidad] .tono-progreso', { timeout: 10000 })
+    await compu.waitForSelector('[data-testid=control-velocidad] .tono-progreso', { state: 'detached', timeout: 120000 })
+    assert.equal(p.velocidadAplicada, 1.04)
+    assert.equal(p.tonoPistas!.length, 3, 'a otra velocidad cambian todas (también el click)')
+    assert.ok(Math.abs(p.duracionTotalMs - durOriginal / 1.04) <= 1)
+    assert.ok(Math.abs(p.tempo!.bpm - 104) < 1e-6)
+    assert.match((await chip.textContent()) ?? '', /104 BPM\s*\+4 %/)
+    assert.equal(await chip.getByRole('button', { name: 'Volver a la velocidad original (100 BPM)' }).count(), 1)
+    await cel.waitForFunction(() => Array.from(document.querySelectorAll('.m-barra-tono')).some((e) => e.textContent === '104 BPM'))
+    // suena en sync a la velocidad nueva
+    await compu.getByRole('button', { name: 'Reproducir' }).click()
+    await enSync([cel], 'tras cambiar la velocidad')
+    assert.ok((await vivas(cel)) > 0, 'el celular suena')
+    assert.equal(await chip.getByRole('button', { name: 'Más rápido' }).isDisabled(), true, 'sonando no se cambia')
+    await compu.getByRole('button', { name: 'Stop' }).click()
+    // tocar "+4 %" vuelve a la original
+    await chip.locator('.tono-destino').click()
+    await compu.waitForFunction(() => document.querySelector('[data-testid=control-velocidad] .velocidad-bpm')?.textContent === '100 BPM')
+    await compu.waitForFunction(() => !document.querySelector('[data-testid=control-velocidad] .tono-progreso'), null, { timeout: 15000 })
+    assert.equal(p.velocidadAplicada, undefined)
+    assert.ok(Math.abs(p.duracionTotalMs - durOriginal) <= 1)
+  })
+
   await t.test('la tonalidad original se puede corregir a mano', async () => {
     await compu.getByLabel('Tonalidad original').selectOption('G')
     await cel.waitForFunction(() => document.querySelector('.m-barra-tono')?.textContent === 'G')

@@ -209,7 +209,7 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
   app.use('/media', (req, _res, next) => {
     const m = /^\/([^/]+)\/(.+)$/.exec(req.path)
     const proyecto = m && esIdValido(m[1]) ? state.tabDeProyecto(m[1])?.proyecto : null
-    if (m && proyecto?.tonoAplicado) {
+    if (m && proyecto && (proyecto.tonoAplicado || proyecto.velocidadAplicada)) {
       let rel: string | null = null
       try {
         rel = decodeURIComponent(m[2])

@@ -65,6 +65,7 @@ import { esTonoValido, Tonos } from './tono'
 import { MedidorEntrega } from './entrega'
 import { Anuncios, ErrorVoces, pistasDeAnuncio, Voces } from './voces'
 import { planearAnuncio } from '../shared/anuncio'
+import { esVelocidadValida, redondearVelocidad, textoPorcentaje, velocidadAplicada } from '../shared/velocidad'
 import { normalizarTonalidad, textoSemitonos, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { direccionesLan, ipParaCliente } from './network'
 import { NOMBRE_FIJO } from './descubrimiento'
@@ -323,10 +324,28 @@ export function registerSocketHandlers(
       return !!activa && activa.proyecto.id === id && activa.playback.estado === 'playing'
     },
     algoSuena,
-    aplicado(p) {
+    aplicado(p, factorTiempo) {
+      // otra velocidad: donde quedo parada la cancion pasa al tiempo nuevo (el mismo punto de la musica)
+      const tab = state.tabDeProyecto(p.id)
+      if (tab && factorTiempo !== 1 && tab.playback.estado !== 'playing') {
+        state.setPlayback(tab.tabId, { estado: tab.playback.estado, positionMs: Math.round(tab.playback.positionMs * factorTiempo), referenceServerTime: Date.now() })
+      }
       if (proyectoExiste(p.id)) saveProyecto(p)
-      if (state.tabDeProyecto(p.id)) emitirEstadoPronto()
-      aCompus('tono:progreso', { proyectoId: p.id, semitonos: p.tonoAplicado ?? 0, hechos: 0, total: 0 })
+      if (tab) {
+        emitirEstadoPronto()
+        transporte.reprogramarTimers()
+      }
+      aCompus('tono:progreso', { proyectoId: p.id, semitonos: p.tonoAplicado ?? 0, velocidad: velocidadAplicada(p), hechos: 0, total: 0 })
+      if (factorTiempo !== 1) {
+        const v = velocidadAplicada(p)
+        const bpm = p.tempo ? `${Math.round(p.tempo.bpm)} BPM` : null
+        aCompus('aviso', {
+          tipo: 'info',
+          grupo: 'tono',
+          texto: v === 1 ? `“${p.nombre}” volvió a su velocidad original${bpm ? ` (${bpm})` : ''}` : `“${p.nombre}” ya suena a ${bpm ?? `${Math.round(v * 100)} %`} (${textoPorcentaje(v)})`
+        })
+        return
+      }
       const original = tonalidadOriginal(p)
       const n = p.tonoAplicado ?? 0
       const tono = original ? transponerTonalidad(original, n) : null
@@ -342,8 +361,8 @@ export function registerSocketHandlers(
     fallo(p, mensaje) {
       if (proyectoExiste(p.id)) saveProyecto(p)
       if (state.tabDeProyecto(p.id)) emitirEstadoPronto()
-      aCompus('tono:progreso', { proyectoId: p.id, semitonos: p.tonoAplicado ?? 0, hechos: 0, total: 0 })
-      aCompus('aviso', { tipo: 'error', texto: `No se pudo cambiar el tono de “${p.nombre}”: ${mensaje}` })
+      aCompus('tono:progreso', { proyectoId: p.id, semitonos: p.tonoAplicado ?? 0, velocidad: velocidadAplicada(p), hechos: 0, total: 0 })
+      aCompus('aviso', { tipo: 'error', texto: `No se pudo preparar “${p.nombre}” en ese tono / velocidad: ${mensaje}` })
     }
   })
 
@@ -784,6 +803,21 @@ export function registerSocketHandlers(
       // el tono se prepara antes de tocar: con la cancion sonando no se cambia
       if (activa?.proyecto.id === proyecto.id && activa.playback.estado === 'playing') return ack?.({ ok: false, error: 'Pará la música para cambiar el tono' })
       tonos.pedir(proyecto, payload.semitonos)
+      saveProyecto(proyecto)
+      emitirEstado()
+      ack?.({ ok: true })
+    })
+
+    socket.on('velocidad:cambiar', (payload: { proyectoId?: unknown; velocidad?: unknown }, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede cambiar la velocidad' })
+      const id = payload?.proyectoId
+      const proyecto = typeof id === 'string' ? state.tabDeProyecto(id)?.proyecto : null
+      if (!proyecto) return ack?.({ ok: false, error: 'La canción no está abierta' })
+      if (!esVelocidadValida(payload?.velocidad)) return ack?.({ ok: false, error: 'La velocidad va de −20 % a +20 %' })
+      const activa = state.getActiveTab()
+      // se prepara antes de tocar: con la cancion sonando no se cambia
+      if (activa?.proyecto.id === proyecto.id && activa.playback.estado === 'playing') return ack?.({ ok: false, error: 'Pará la música para cambiar la velocidad' })
+      tonos.pedirVelocidad(proyecto, redondearVelocidad(payload.velocidad))
       saveProyecto(proyecto)
       emitirEstado()
       ack?.({ ok: true })

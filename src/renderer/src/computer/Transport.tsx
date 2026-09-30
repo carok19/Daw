@@ -9,7 +9,7 @@ import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
 import { Timeline } from './Timeline'
 import { SyncBadge } from './SyncBadge'
-import { ControlTono } from './ControlTono'
+import { ControlTono, ControlVelocidad } from './ControlTono'
 
 interface Props {
   proyecto: Proyecto
@@ -33,6 +33,7 @@ interface Props {
   onCancelarSalto: () => void
   progresoTono: ProgresoTono | null
   onCambiarTono: (semitonos: number) => void
+  onCambiarVelocidad: (velocidad: number) => void
   onTonalidad: (tonalidad: string | null) => void
   onCuenta: (cuenta: 0 | 1 | 2 | null) => void
   /** forma de onda de la cancion para la linea de tiempo */
@@ -170,7 +171,9 @@ export function Transport(p: Props) {
                       ? 'Detectado del click; el "1" de cada compás, de la voz guía (el click no tiene acento)'
                       : 'Detectado del click (no se distinguió el acento del 1: se contó desde el primer golpe)'
                 }>
-                {Math.round(p.proyecto.tempo.bpm)} BPM · {textoCompas(p.proyecto.tempo.compas)}
+                <ControlVelocidad proyecto={p.proyecto} sonando={sonando} progreso={p.progresoTono} onCambiar={p.onCambiarVelocidad} />
+                {' · '}
+                {textoCompas(p.proyecto.tempo.compas)}
                 <button
                   className={`boton-iman ${p.ajustarCompas ? 'activo' : ''}`}
                   onClick={() => p.onAjustarCompas(!p.ajustarCompas)}

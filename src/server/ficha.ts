@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { Marcador, Pista, Proyecto, TempoProyecto } from '../shared/types'
 import { baseDeComprimido } from './comprimidos'
 import { normalizarTonalidad, TONO_MAX, TONO_MIN } from '../shared/tonalidad'
+import { esVelocidadValida, redondearVelocidad, velocidadAplicada } from '../shared/velocidad'
 
 /**
  * "Ficha" de una cancion: un archivito JSON al lado de su .zip/.rar en la
@@ -33,6 +34,8 @@ export interface FichaCancion {
   tonalidad?: string
   /** compases de cuenta al dar play (sin: automatica) */
   cuenta?: 0 | 1 | 2
+  /** velocidad elegida (1 = la original). Todos los tiempos de la ficha son los originales */
+  velocidad?: number
 }
 
 export function rutaFicha(rutaComprimido: string): string {
@@ -45,12 +48,14 @@ export function esNombreDeFicha(nombre: string): boolean {
 }
 
 export function fichaDesdeProyecto(p: Proyecto): FichaCancion {
+  // a otra velocidad, los tiempos se guardan en los de la cancion original
+  const v = velocidadAplicada(p)
   return {
     formato: FORMATO,
     id: p.id,
     nombre: p.nombre,
-    duracionTotalMs: p.duracionTotalMs,
-    marcadores: p.marcadores.map(({ nombre, tiempoMs, origen, color }) => ({ nombre, tiempoMs, origen, ...(color ? { color } : {}) })),
+    duracionTotalMs: Math.round(p.duracionTotalMs * v),
+    marcadores: p.marcadores.map(({ nombre, tiempoMs, origen, color }) => ({ nombre, tiempoMs: Math.round(tiempoMs * v), origen, ...(color ? { color } : {}) })),
     seccionesEditadas: !!p.seccionesEditadas,
     pistas: p.pistas.map(({ nombre, volumen, pan, mute, solo, color, rol, panAutomatico }) => ({
       nombre,
@@ -62,11 +67,12 @@ export function fichaDesdeProyecto(p: Proyecto): FichaCancion {
       ...(rol ? { rol } : {}),
       ...(typeof panAutomatico === 'boolean' ? { panAutomatico } : {})
     })),
-    tempo: p.tempo ?? null,
+    tempo: p.tempo ? { ...p.tempo, bpm: p.tempo.bpm / v, compasesMs: p.tempo.compasesMs.map((c) => c * v) } : null,
     fuenteSecciones: p.analisis?.fuente ?? null,
     ...(p.tono ? { tono: p.tono } : {}),
     ...(p.tonalidad ? { tonalidad: p.tonalidad } : {}),
-    ...(p.cuenta !== undefined ? { cuenta: p.cuenta } : {})
+    ...(p.cuenta !== undefined ? { cuenta: p.cuenta } : {}),
+    ...(esVelocidadValida(p.velocidad) && p.velocidad !== 1 ? { velocidad: p.velocidad } : {})
   }
 }
 
@@ -109,7 +115,8 @@ export function interpretarFicha(texto: string): FichaCancion | null {
       fuenteSecciones: f.fuenteSecciones === 'guia' || f.fuenteSecciones === 'archivo' ? f.fuenteSecciones : null,
       ...(typeof f.tono === 'number' && Number.isInteger(f.tono) && f.tono >= TONO_MIN && f.tono <= TONO_MAX && f.tono !== 0 ? { tono: f.tono } : {}),
       ...(normalizarTonalidad(f.tonalidad) ? { tonalidad: normalizarTonalidad(f.tonalidad)! } : {}),
-      ...(f.cuenta === 0 || f.cuenta === 1 || f.cuenta === 2 ? { cuenta: f.cuenta } : {})
+      ...(f.cuenta === 0 || f.cuenta === 1 || f.cuenta === 2 ? { cuenta: f.cuenta } : {}),
+      ...(esVelocidadValida(f.velocidad) && f.velocidad !== 1 ? { velocidad: redondearVelocidad(f.velocidad) } : {})
     }
   } catch {
     return null

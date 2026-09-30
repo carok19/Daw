@@ -3932,3 +3932,20 @@ input[type='date'] {
   justify-content: center;
   gap: 6px;
 }
+
+/* velocidad de la cancion, dentro del chip del tempo: "− 76 BPM +" */
+.chip-tempo:has(.chip-velocidad) {
+  padding-left: 3px;
+}
+.chip-velocidad {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+.velocidad-bpm {
+  padding: 0 3px;
+}
+.chip-velocidad.cambiado .velocidad-bpm {
+  color: var(--warn);
+  font-weight: 700;
+}

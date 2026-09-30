@@ -249,6 +249,18 @@ cambian a propósito.
       vuelve al original al instante.
     - La tonalidad original se lee del nombre (“Digno - A”, “Oceans (Bb)”,
       “… - Key of F#m”); si no está o está mal, se elige en el mismo botón.
+    - **Afinado:** las pistas quedan en la nota exacta (medido: menos de
+      1 cent de error, del bajo a los agudos).
+10b. **Cambiar la velocidad** (hasta 20 % más lenta o más rápida, **sin
+    cambiar el tono**): en el chip del tempo, **− 72 BPM +** (de a 1 BPM). Se
+    ve “76 BPM +6 %” (pasando el mouse: “era 72 BPM”); como el tono, la compu prepara las pistas antes
+    (todas: también el click y la guía, que se estiran sin cambiar su tono) y
+    la canción pasa a esa velocidad cuando están (“Preparando 3/12”). No se
+    cambia con la canción sonando. Todo se acomoda solo a la velocidad
+    nueva: las secciones, los compases, la cuenta, los saltos, la voz que los
+    avisa y el recorrido; si estaba pausada, sigue en el mismo punto de la
+    música. En el celular se ve “76 BPM”. Se combina con el tono, la canción
+    recuerda su velocidad y tocar “+6 %” vuelve a la original.
 11. **Cuenta antes de la canción:** al dar play (desde parado, en pausa o
     desde una sección) el click cuenta **“1 2 3 4, 1 2 3 4”** y recién entra
     la canción, en todos a la vez. Usa el tempo y el compás que la app
@@ -481,15 +493,17 @@ la carpeta de la canción (`onda.json`). La compu y los celulares la dibujan
 en un `<canvas>` encima de los colores de las secciones; lo que ya sonó se
 oscurece.
 
-### Cambio de tono
+### Cambio de tono y de velocidad
 
-`server/tono.ts`. El tono se prepara **antes** de tocar, en la compu: por
-cada pista que cambia (todas menos click, guía y batería, detectados por el
-análisis o por el nombre) se corre ffmpeg con **rubberband**
-(`pitchq=quality`; `formant=preserved` en las voces) en procesos aparte con
-prioridad baja (hasta 3 a la vez; 1 si hay algo sonando). Las pistas nuevas
-van a `proyectos/<id>/tono/<semitonos>/` y recién cuando están todas la
-canción pasa al tono nuevo: sube la `revision` (los dispositivos vuelven a
+`server/tono.ts`. El tono y la velocidad se preparan **antes** de tocar, en
+la compu: por cada pista que cambia (con otro tono, todas menos click, guía
+y batería, detectados por el análisis o por el nombre; con otra velocidad,
+todas) se corre ffmpeg con **rubberband** (`pitchq=quality`,
+`transients=smooth`; `formant=preserved` en las voces; ventana corta en el
+click, la guía y la batería) en procesos aparte con prioridad baja (hasta 3
+a la vez; 1 si hay algo sonando). Las pistas nuevas van a
+`proyectos/<id>/tono/<semitonos>[v<velocidad>]/` y recién cuando están todas
+la canción pasa a sonar así: sube la `revision` (los dispositivos vuelven a
 cargarla) y `/media` y la mezcla de los celulares sirven las transpuestas en
 lugar de las originales. Así, mientras se toca, no hay ningún trabajo extra
 y el audio es el mismo WAV de siempre.
@@ -505,6 +519,23 @@ y el audio es el mismo WAV de siempre.
   a mitad, se retoma al abrir la canción; si se reemplaza el audio (zip
   actualizado), se vuelve a preparar solo.
 - ~10 s por pista estéreo de 5 minutos en una compu común (en paralelo).
+- **Afinación:** con la detección de ataques de fábrica (`crisp`), el
+  rubberband que trae ffmpeg desafina: medido con un seno puro, −19 cents
+  al bajar un semitono a 220 Hz, en los graves (82-110 Hz) deja sonando la
+  nota original, y +10 % de velocidad baja 46 cents. Con
+  `transients=smooth` da la nota exacta (0 cents) en todos los casos; la
+  prueba del tono verifica la afinación de cada pista (< 5 cents).
+- **Velocidad** (`shared/velocidad.ts`): mientras suena a otra velocidad,
+  todos los tiempos de la canción (secciones, compases, BPM, duración)
+  están en el tiempo que suena, así el resto de la app (saltos, cuenta, voz
+  del salto, celulares) no se entera; al aplicar se reescalan (y la posición
+  en pausa). La ficha los guarda en el tiempo original, y el análisis (que
+  lee las pistas originales) pasa lo que detecta al tiempo que suena. Las
+  pistas quedan con la cantidad exacta de muestras (`original / velocidad`)
+  y la demora de rubberband se mide con los golpes de prueba donde deben
+  caer a esa velocidad. Medido: el click cae a ±2 ms de donde corresponde,
+  el bajo ~5 ms antes (el vocoder de fase adelanta los graves), y la nota
+  exacta (< 5 cents).
 
 ### Sincronización
 

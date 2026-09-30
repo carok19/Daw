@@ -789,6 +789,15 @@ export function useAppController() {
           avisar({ tipo: 'error', texto: 'No se pudo cambiar el tono (sin conexión con la compu)' })
         }
       },
+      /** Pasa la cancion a otra velocidad (1 = la original), sin cambiar el tono: la compu prepara las pistas antes. */
+      async cambiarVelocidad(proyectoId: string, velocidad: number): Promise<void> {
+        try {
+          const r = await socket.emitAck<{ ok: boolean; error?: string }>('velocidad:cambiar', { proyectoId, velocidad }, 5000)
+          if (!r.ok && r.error) avisar({ tipo: 'error', texto: r.error })
+        } catch {
+          avisar({ tipo: 'error', texto: 'No se pudo cambiar la velocidad (sin conexión con la compu)' })
+        }
+      },
       /** Compases de cuenta antes de la cancion (null = automatica: 2, o 1 en las lentas). */
       setCuenta(proyectoId: string, cuenta: 0 | 1 | 2 | null): void {
         emit('cuenta:set', { proyectoId, cuenta })

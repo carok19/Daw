@@ -5,6 +5,7 @@ import os from 'node:os'
 import type { ImportProgreso, Marcador, Proyecto, Pista } from '../shared/types'
 import { FORMATO_PROYECTO_ACTUAL } from '../shared/types'
 import { DIR_TONO } from './tono'
+import { velocidadAplicada } from '../shared/velocidad'
 import { colorPorIndice, deleteProyecto, esIdValido, loadProyecto, projectAudioDir, projectDir, proyectoExiste, saveProyecto } from './projects'
 import { EXTENSIONES_AUDIO, enParalelo, normalizarAWav } from './audio'
 import { EXTENSIONES_MARCADORES, marcadoresDelZip } from './analisis/archivos'
@@ -176,7 +177,9 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
       // si el usuario ya las acomodo, quedan todas como estan; si no, se conservan
       // las puestas a mano y las automaticas se recalculan con el audio nuevo
       const manuales = anterior.seccionesEditadas ? anterior.marcadores : anterior.marcadores.filter((m) => !m.origen || m.origen === 'manual')
-      marcadores = manuales.length ? manuales : desdeArchivo
+      // el audio nuevo suena a la velocidad original: las secciones, en ese tiempo
+      const v = velocidadAplicada(anterior)
+      marcadores = manuales.length ? manuales.map((m) => ({ ...m, tiempoMs: Math.round(m.tiempoMs * v) })) : desdeArchivo
     } else if (ficha) {
       const usables = fichaVigente ? ficha.marcadores : ficha.marcadores.filter((m) => m.origen === 'manual')
       marcadores = usables.length ? usables.map((m) => ({ id: crypto.randomUUID(), ...m })) : desdeArchivo
@@ -196,8 +199,9 @@ export async function crearProyectoDesdeZip(rutaArchivo: string, opciones: Opcio
       tempo: fichaVigente ? ficha!.tempo : null,
       seccionesEditadas: anterior?.seccionesEditadas ?? (fichaVigente ? ficha!.seccionesEditadas : false),
       // audio nuevo: el tono elegido se vuelve a preparar con el (ver tono.ts); de la ficha, el tono y la tonalidad
-      ...(anterior ? { tonoAplicado: 0, tonoPistas: [] } : {}),
+      ...(anterior ? { tonoAplicado: 0, tonoPistas: [], velocidadAplicada: undefined } : {}),
       ...(!anterior && ficha?.tono ? { tono: ficha.tono } : {}),
+      ...(!anterior && ficha?.velocidad ? { velocidad: ficha.velocidad } : {}),
       ...(!anterior && ficha?.tonalidad ? { tonalidad: ficha.tonalidad } : {}),
       ...(!anterior && ficha?.cuenta !== undefined ? { cuenta: ficha.cuenta } : {}),
       // con la ficha vigente ya esta todo: no hace falta volver a analizar

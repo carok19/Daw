@@ -37,6 +37,7 @@ import { FaderTactil } from '../ui/FaderTactil'
 import { useConfirmar } from '../ui/Confirmar'
 import { useWakeLock } from './useWakeLock'
 import { OndaDibujo, useOnda } from '../ui/Onda'
+import { textoPorcentaje, velocidadAplicada } from '@shared/velocidad'
 import { guardarPref } from '../app/preferencias'
 import { Hoja, HojaAjustes } from './Hojas'
 import { AbrirEnApp, AccesoFijo, HojaInvitar, PantallaCodigo, PantallaLicencia } from './Conectar'
@@ -483,6 +484,11 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
           <ChevronDown size={16} />
         </button>
         <TonoQueSuena proyecto={proyecto} />
+        {velocidadAplicada(proyecto) !== 1 && proyecto.tempo && (
+          <span className="m-barra-tono cambiado num" title={`Velocidad cambiada (${textoPorcentaje(velocidadAplicada(proyecto))})`}>
+            {Math.round(proyecto.tempo.bpm)} BPM
+          </span>
+        )}
         <span className="m-cancion-tiempo num">
           {formatMmSs(pos)} / {formatMmSs(proyecto.duracionTotalMs)}
         </span>

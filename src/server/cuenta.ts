@@ -4,6 +4,7 @@ import type { Proyecto } from '../shared/types'
 import { bytesPorFrame, decodePcmSegment, totalFrames, type WavInfo } from '../shared/wav'
 import { encabezadoWav16, leerInfoWav } from './audio'
 import { LARGO_SONIDO_CUENTA_SEC } from '../shared/cuenta'
+import { archivoQueSuena } from './tono'
 
 /**
  * Sonidos de la cuenta: el golpe del "1" y un golpe comun, recortados de la
@@ -47,7 +48,8 @@ export function sonidosDeCuenta(dirProyecto: string, p: Proyecto): Buffer | null
   const click = tempo?.clickPistaId ? p.pistas.find((x) => x.id === tempo.clickPistaId) : null
   const compases = tempo?.compasesMs
   if (!tempo || !click || !compases || compases.length < 3) return null
-  const ruta = path.join(dirProyecto, click.archivo)
+  // el click que suena (a otra velocidad, el preparado: los compases estan en ese tiempo)
+  const ruta = path.join(dirProyecto, archivoQueSuena(p, click))
   let fd: number
   try {
     fd = fs.openSync(ruta, 'r')

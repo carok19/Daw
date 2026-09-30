@@ -775,6 +775,43 @@ test('paneo por defecto: click y guía a la izquierda y la banda a la derecha (p
 })
 
 /** Energia de `x` en la frecuencia `f` (Goertzel). */
+/**
+ * Cuan lejos (en cents) de `f` suena una pista hecha de notas separadas: el
+ * pico del espectro en ±7 %, sumando cada nota por separado (sin fase: si se
+ * mira la pista entera, las notas se anulan entre si y la medida engaña).
+ */
+function desafinacion(x: Float32Array, f: number, sr: number): number {
+  const inicios: number[] = []
+  let quieto = sr
+  for (let i = 0; i < x.length; i++) {
+    if (Math.abs(x[i]) > 0.15) {
+      if (quieto > 0.05 * sr) inicios.push(i)
+      quieto = 0
+    } else quieto++
+  }
+  const w = Math.round(0.2 * sr)
+  let mejor = 0
+  let fm = f
+  for (let g = f * 0.93; g <= f * 1.07; g += f * 0.0005) {
+    let total = 0
+    for (const i0 of inicios) {
+      const a = i0 + Math.round(0.01 * sr)
+      let re = 0
+      let im = 0
+      for (let i = 0; i < w && a + i < x.length; i++) {
+        re += x[a + i] * Math.cos((2 * Math.PI * g * i) / sr)
+        im -= x[a + i] * Math.sin((2 * Math.PI * g * i) / sr)
+      }
+      total += re * re + im * im
+    }
+    if (total > mejor) {
+      mejor = total
+      fm = g
+    }
+  }
+  return Math.abs(1200 * Math.log2(fm / f))
+}
+
 function energiaEn(x: Float32Array, f: number, sr: number): number {
   const w = (2 * Math.PI * f) / sr
   const c = 2 * Math.cos(w)
@@ -890,6 +927,8 @@ test('tono: la compu prepara las pistas en el tono nuevo (mismo largo, a tiempo 
   const rms = (x: Float32Array): number => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length)
   assert.ok(Math.abs(20 * Math.log10(rms(bajo.x) / rms(bajoOriginal))) < 1, 'con el mismo volumen')
   assert.ok(energiaEn(bajo.x, 123.47, sr) > 5 * energiaEn(bajo.x, 110, sr), 'suena un tono mas arriba')
+  // y afinado (la deteccion de ataques de fabrica de rubberband desafinaba hasta ~20 cents)
+  assert.ok(desafinacion(bajo.x, 110 * 2 ** (2 / 12), sr) < 5, `afinado (${desafinacion(bajo.x, 110 * 2 ** (2 / 12), sr).toFixed(1)} cents)`)
   const corrimiento = demoraEntre(bajoOriginal, bajo.x, sr) * 1000
   assert.ok(Math.abs(corrimiento) < 1.5, `las notas siguen cayendo a tiempo (corrida ${corrimiento.toFixed(2)} ms)`)
   const coros = await media('Coros', e2.revision!)
@@ -932,6 +971,7 @@ test('tono: la compu prepara las pistas en el tono nuevo (mismo largo, a tiempo 
   assert.deepEqual(fs.readdirSync(path.join(env.appDir, 'proyectos', p.id, 'tono')), ['-3'], 'queda solo el ultimo tono')
   const bajoMenos3 = (await media('Bajo', ahora.revision!)).x
   assert.ok(energiaEn(bajoMenos3, 92.5, sr) > 5 * energiaEn(bajoMenos3, 110, sr), 'un tono y medio mas abajo')
+  assert.ok(desafinacion(bajoMenos3, 110 * 2 ** (-3 / 12), sr) < 5, `afinado (${desafinacion(bajoMenos3, 110 * 2 ** (-3 / 12), sr).toFixed(1)} cents)`)
 
   // volver al original: enseguida, y se borran las pistas transpuestas
   const cero = esperarTono(0, 5000)
@@ -952,6 +992,138 @@ test('tono: la compu prepara las pistas en el tono nuevo (mismo largo, a tiempo 
   const ficha = interpretarFicha(JSON.stringify(fichaDesdeProyecto({ ...ahora, tono: -2, tonalidad: 'G' })))!
   assert.equal(ficha.tono, -2)
   assert.equal(ficha.tonalidad, 'G')
+  await env.cerrar()
+})
+
+test('velocidad: la compu prepara TODAS las pistas más rápido o más lento (mismo tono, a tiempo) y la canción pasa a ese tiempo', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const sr = 44100
+  const seg = 8
+  const golpes = Array.from({ length: 14 }, (_, n) => 0.3 + n * 0.5 + (n % 3) * 0.07)
+  const notas = (f: number, armonicos: number): Float32Array => {
+    const x = new Float32Array(seg * sr)
+    for (const t0 of golpes) {
+      const i0 = Math.round(t0 * sr)
+      for (let i = 0; i < sr * 0.45 && i0 + i < x.length; i++) {
+        const tt = i / sr
+        let v = 0
+        for (let k = 1; k <= armonicos; k++) v += Math.sin(2 * Math.PI * f * k * tt) / k
+        x[i0 + i] += 0.3 * Math.min(1, tt / 0.004) * Math.exp(-tt / 0.15) * v
+      }
+    }
+    return x
+  }
+  const originales = { Click: wav16(notas(1000, 1), sr), Guia: wav16(notas(300, 2), sr), Bajo: wav16(notas(110, 3), sr) }
+  const estado = await cargarZip(
+    compu,
+    crearZip('Rapida - A', { ...Object.fromEntries(Object.entries(originales).map(([n, b]) => [`${n}.wav`, b])), 'marcas.txt': Buffer.from('0:02 Verso\n0:05 Coro\n') })
+  )
+  const p = estado.proyectoActivo!
+  const tab = env.server.state.getActiveTab()!
+  const pista = (nombre: string): Pista => p.pistas.find((x) => x.nombre === nombre)!
+  tab.proyecto.tempo = { bpm: 120, compas: 4, compasesMs: [0, 2000, 4000, 6000], clickPistaId: pista('Click').id, acentoClaro: true }
+  const media = async (nombre: string, revision: number): Promise<Float32Array> => {
+    const r = await fetch(`http://localhost:${env.port}/media/${p.id}/${pista(nombre).archivo.split('/').map(encodeURIComponent).join('/')}?v=${revision}`).catch((e) => {
+      throw new Error(`media ${nombre} r${revision}: ${e.cause?.code ?? e}`)
+    })
+    assert.equal(r.status, 200)
+    const b = await r.arrayBuffer()
+    const info = parseWavHeader(b)
+    return decodePcmSegment(info, b.slice(info.dataOffset, info.dataOffset + info.dataLength))[0]
+  }
+  /** Donde arranca cada nota (lo que pasa de 0,15 despues de 50 ms por debajo). */
+  const inicios = (x: Float32Array): number[] => {
+    const res: number[] = []
+    let quieto = sr
+    for (let i = 0; i < x.length; i++) {
+      if (Math.abs(x[i]) > 0.15) {
+        if (quieto > 0.05 * sr) res.push(i / sr)
+        quieto = 0
+      } else quieto++
+    }
+    return res
+  }
+  const originalDe = (nombre: keyof typeof originales): Float32Array => {
+    const b = originales[nombre]
+    const ab = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
+    const info = parseWavHeader(ab)
+    return decodePcmSegment(info, ab.slice(info.dataOffset))[0]
+  }
+  /**
+   * Cada nota arranca donde arrancaba en la original, pasado al tiempo nuevo.
+   * (Se mide por donde la onda pasa un umbral: en una nota grave eso puede
+   * saltar medio ciclo, 4,5 ms a 110 Hz; lo fino se mide en el click, 1 kHz.)
+   */
+  const aTiempo = (x: Float32Array, nombre: keyof typeof originales, v: number, que: string, tolMs = 1.5): void => {
+    const antes = inicios(originalDe(nombre))
+    const ahora = inicios(x)
+    assert.equal(antes.length, golpes.length, `${que}: ${antes.length} notas en la original`)
+    assert.equal(ahora.length, golpes.length, `${que}: ${ahora.length} notas`)
+    const peor = Math.max(...ahora.map((t0, i) => Math.abs(t0 - antes[i] / v))) * 1000
+    assert.ok(peor < tolMs, `${que}: las notas caen a tiempo a la velocidad nueva (peor: ${peor.toFixed(2)} ms; ${ahora.map((t0, i) => ((t0 - antes[i] / v) * 1000).toFixed(1)).join(" ")})`)
+  }
+  const tonoDe = (x: Float32Array, f: number): number => desafinacion(x, f, sr)
+  const esperarVelocidad = (v: number, ms = 120000): Promise<EstadoCompleto> =>
+    esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => (e.proyectoActivo?.velocidadAplicada ?? 1) === v, ms)
+
+  // parada en el Coro, a los 5 s
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:seek', { positionMs: 5000 })])
+  for (const velocidad of [1.3, 0.7, '1.1', null]) {
+    const r = await emitAck<{ ok: boolean }>(compu, 'velocidad:cambiar', { proyectoId: p.id, velocidad })
+    assert.equal(r.ok, false, `velocidad ${String(velocidad)}`)
+  }
+
+  // +10 %: se preparan todas (tambien el click y la guia) y la cancion pasa a ese tiempo
+  const listo = esperarVelocidad(1.1)
+  const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'velocidad:cambiar', { proyectoId: p.id, velocidad: 1.1 })
+  assert.equal(r.ok, true, r.error)
+  const e = await listo
+  const pa = e.proyectoActivo!
+  assert.deepEqual([...pa.tonoPistas!].sort(), p.pistas.map((x) => x.id).sort(), 'a otra velocidad cambian todas')
+  assert.ok(Math.abs(pa.duracionTotalMs - 8000 / 1.1) <= 1, `duración ${pa.duracionTotalMs}`)
+  assert.deepEqual(pa.marcadores.map((m) => m.tiempoMs), [Math.round(2000 / 1.1), Math.round(5000 / 1.1)], 'las secciones, en el tiempo nuevo')
+  assert.ok(Math.abs(pa.tempo!.bpm - 132) < 1e-6)
+  pa.tempo!.compasesMs.forEach((c, i) => assert.ok(Math.abs(c - (i * 2000) / 1.1) < 0.01))
+  assert.ok(Math.abs(e.playbackActivo!.positionMs - 5000 / 1.1) <= 1, 'sigue parada en el mismo punto de la música')
+  // (se baja todo antes de analizar: el analisis tarda y la conexion que queda abierta se cierra sola)
+  const [bajo, click] = [await media('Bajo', pa.revision!), await media('Click', pa.revision!)]
+  assert.equal(bajo.length, Math.round((seg * sr) / 1.1), 'el largo exacto a la velocidad nueva')
+  assert.ok(tonoDe(bajo, 110) < 5, `en el mismo tono (${tonoDe(bajo, 110).toFixed(1)} cents)`)
+  aTiempo(bajo, 'Bajo', 1.1, 'bajo', 6.5)
+  aTiempo(click, 'Click', 1.1, 'click', 2.5)
+  assert.ok(tonoDe(click, 1000) < 5, `el click no cambia de tono (${tonoDe(click, 1000).toFixed(1)} cents)`)
+  // la ficha guarda los tiempos originales (y la velocidad elegida)
+  const ficha = interpretarFicha(JSON.stringify(fichaDesdeProyecto(pa)))!
+  assert.deepEqual(ficha.marcadores.map((m) => m.tiempoMs), [2000, 5000])
+  assert.ok(Math.abs(ficha.tempo!.bpm - 120) < 1e-6)
+  assert.ok(Math.abs(ficha.duracionTotalMs - 8000) <= 1)
+  assert.equal(ficha.velocidad, 1.1)
+
+  // con otro tono ademas: el bajo sube un tono, el click y la guia solo se estiran
+  const conTono = esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => x.proyectoActivo?.tonoAplicado === 2, 120000)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'tono:cambiar', { proyectoId: p.id, semitonos: 2 })).ok, true)
+  const pt = (await conTono).proyectoActivo!
+  assert.equal(pt.velocidadAplicada, 1.1)
+  assert.deepEqual(pt.marcadores.map((m) => m.tiempoMs), [Math.round(2000 / 1.1), Math.round(5000 / 1.1)], 'el tono no mueve los tiempos')
+  assert.deepEqual(fs.readdirSync(path.join(env.appDir, 'proyectos', p.id, 'tono')), ['2v11000'])
+  const [bajo2, guia] = [await media('Bajo', pt.revision!), await media('Guia', pt.revision!)]
+  assert.ok(tonoDe(bajo2, 110 * 2 ** (2 / 12)) < 5, `el bajo un tono más arriba (${tonoDe(bajo2, 110 * 2 ** (2 / 12)).toFixed(1)} cents)`)
+  aTiempo(bajo2, 'Bajo', 1.1, 'bajo con tono', 6.5)
+  assert.ok(tonoDe(guia, 300) < 5, `la guía no cambia de tono (${tonoDe(guia, 300).toFixed(1)} cents)`)
+
+  // de vuelta a la original (tono y velocidad): los tiempos vuelven y quedan las pistas de siempre
+  const original = esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.proyectoActivo?.velocidadAplicada && (x.proyectoActivo?.tonoAplicado ?? 0) === 0, 10000)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'tono:cambiar', { proyectoId: p.id, semitonos: 0 })).ok, true)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'velocidad:cambiar', { proyectoId: p.id, velocidad: 1 })).ok, true)
+  const e0 = await original
+  const p0 = e0.proyectoActivo!
+  assert.deepEqual(p0.marcadores.map((m) => m.tiempoMs), [2000, 5000])
+  assert.ok(Math.abs(p0.tempo!.bpm - 120) < 1e-6)
+  assert.ok(Math.abs(p0.duracionTotalMs - 8000) <= 1)
+  assert.ok(Math.abs(e0.playbackActivo!.positionMs - 5000) <= 1)
+  assert.equal(fs.existsSync(path.join(env.appDir, 'proyectos', p.id, 'tono')), false)
+  assert.equal((await media('Bajo', p0.revision!)).length, seg * sr)
   await env.cerrar()
 })
 

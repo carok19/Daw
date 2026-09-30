@@ -265,6 +265,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             onCancelarSalto={controller.cancelarSalto}
             progresoTono={controller.progresoTono[proyecto.id] ?? null}
             onCambiarTono={(n) => void controller.cambiarTono(proyecto.id, n)}
+            onCambiarVelocidad={(v) => void controller.cambiarVelocidad(proyecto.id, v)}
             onTonalidad={(t) => controller.ponerTonalidad(proyecto.id, t)}
             onCuenta={(c) => controller.setCuenta(proyecto.id, c)}
             onda={onda}
