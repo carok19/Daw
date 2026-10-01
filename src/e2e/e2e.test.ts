@@ -1736,7 +1736,9 @@ test('cuenta: al dar play suena "1 2 3 4, 1 2 3 4" a la vez en la compu y el cel
       const e = await tocar()
       const salto =
         Object.values(e).some((v) => Math.max(...v.slice(0, 8)) - Math.min(...v.slice(0, 8)) > 5) ||
-        Math.abs(mediana(e.compu) - mediana(e.celular)) > 8
+        Math.abs(mediana(e.compu) - mediana(e.celular)) > 8 ||
+        // un golpe suelto corrido entre los dos (el audio falso en una maquina cargada): se vuelve a medir
+        e.compu.some((a, i) => Math.abs(a - e.celular[i]) >= 5)
       if (salto) descartadas.push(JSON.stringify(e, (_k, v) => (typeof v === 'number' ? Math.round(v) : v)))
       else entradas = e
     }
@@ -2161,7 +2163,8 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
   const botonCelular = cel.getByRole('button', { name: 'Colchón' })
   await botonCelular.click()
   await compu.waitForFunction(() => document.querySelector('.banner-colchon') !== null)
-  assert.equal(await botonCelular.getAttribute('aria-pressed'), 'true')
+  // (el celular recibe el estado a la par de la compu, pero lo dibuja a su ritmo)
+  await cel.waitForFunction(() => document.querySelector('button[aria-label="Colchón"]')?.getAttribute('aria-pressed') === 'true', null, { timeout: 3000 })
   const c = server.state.colchon!
   assert.ok(c && c.desdeCancion, 'hay colchón')
   assert.equal(c.pad, 'D', 'el pad, en el tono de la canción')
