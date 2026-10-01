@@ -1,4 +1,4 @@
-import type { Seccion } from '@shared/playback'
+import type { Seccion } from './playback'
 
 /** Colores de las secciones en la linea de tiempo (se alternan; un marcador puede tener el suyo). */
 const COLORES_SECCION = ['#3b5bdb', '#0c8599', '#2b8a3e', '#e67700', '#c2255c', '#6741d9', '#1971c2', '#5c940d']
