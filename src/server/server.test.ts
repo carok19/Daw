@@ -1433,8 +1433,15 @@ test('AirTracks Video: entra como pantalla (no como celular), una sola, avisa qu
   const conVideo = await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => !!e.pantallaVideo?.conectada)
   assert.deepEqual(conVideo.pantallaVideo, { conectada: true, nombre: 'PC-DATA', canciones: [id] })
 
-  // la huella de la cancion (sin el click), una vez; con la musica sonando, espera
-  const r = await emitAck<{ estado: string; huella?: Uint8Array | Buffer; duracionMs?: number }>(video, 'video:huella', { proyectoId: id }, 60000)
+  // la huella de la cancion (sin el click): contesta enseguida cuanto va, y despues la da (queda guardada)
+  type R = { estado: string; huella?: Uint8Array | Buffer; duracionMs?: number; hechas?: number; total?: number }
+  const primera = await emitAck<R>(video, 'video:huella', { proyectoId: id })
+  assert.deepEqual(primera, { estado: 'calculando', hechas: 0, total: 2 }, 'una pista de la banda (el click no) y la huella')
+  let r: R = primera
+  for (let i = 0; i < 200 && r.estado === 'calculando'; i++) {
+    await esperar(100)
+    r = await emitAck<R>(video, 'video:huella', { proyectoId: id })
+  }
   assert.equal(r.estado, 'lista')
   assert.ok(r.huella && r.huella.byteLength >= 150 * 12, `huella de ${r.huella?.byteLength} bytes`)
   const otra = (await cargarZip(compu, crearZip('Otra', { 'Pad.wav': a.wavEstereo }))).proyectoActivo!.id

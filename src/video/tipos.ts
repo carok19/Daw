@@ -27,6 +27,8 @@ export interface InfoConexion {
   nombreServidor: string | null
   /** el codigo que se puso no es / se bloqueo por intentos */
   motivoCodigo?: 'codigo-requerido' | 'codigo-incorrecto' | 'codigo-bloqueado'
+  /** la compu tiene una version de AirTracks de antes de los videos (hay que actualizarla) */
+  desactualizado?: boolean
 }
 
 export type EstadoVideo =
@@ -39,6 +41,8 @@ export type EstadoVideo =
   | 'listo'
   /** no se pudo alinear solo (otra version, o editado): ajustar a mano */
   | 'revisar'
+  /** la compu de AirTracks tiene una version de antes de los videos */
+  | 'desactualizado'
   | 'error'
 
 export interface VideoGuardado {
@@ -90,8 +94,12 @@ export interface Reproduccion {
 
 export type RespuestaHuellaCancion =
   | { estado: 'lista'; huella: Uint8Array; duracionMs: number }
+  /** la compu la esta calculando: `hechas` de `total` pasos */
+  | { estado: 'calculando'; hechas: number; total: number }
   | { estado: 'esperando' }
   | { estado: 'sin-conexion' }
+  /** la compu tiene una version de AirTracks de antes de los videos */
+  | { estado: 'desactualizado' }
   | { estado: 'error'; mensaje: string }
 
 /** Lo que el preload le da a las ventanas (window.airtracksVideo). */

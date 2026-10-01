@@ -122,6 +122,7 @@ test('AirTracks Video: se alinea solo, sigue la canción (play, salto, pausa, st
   for (const p of [control, pantalla]) p.on('pageerror', (e) => errores.push(e.message))
   const estadoApp = (): Promise<EstadoApp> => control.evaluate(() => (window as unknown as { airtracksVideo: ApiVideo }).airtracksVideo.estado())
   await esperarQue(async () => (await estadoApp()).conexion.estado === 'conectado', 30000, 'que se conecte')
+  assert.ok(!(await estadoApp()).conexion.desactualizado, 'esta version de AirTracks sabe de videos')
 
   // no cuenta como celular: el margen de arranque es el mismo y en la lista figura como pantalla de video
   const diag = await ack<DiagnosticoServidor>('diagnostico:obtener', {})

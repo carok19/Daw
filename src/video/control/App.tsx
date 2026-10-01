@@ -51,13 +51,18 @@ function textoEstado(v: VideoGuardado): { texto: string; tipo: 'ok' | 'aviso' | 
       return { texto: 'Se alinea al conectar con AirTracks', tipo: 'info' }
     case 'listo':
       return v.alineacion?.manual
-        ? { texto: 'Listo (ajustado a mano)', tipo: 'ok' }
-        : { texto: `Listo · coincide en el ${Math.round((v.alineacion?.coincide ?? 1) * 100)} % de la canción`, tipo: 'ok' }
+        ? { texto: 'Listo (ajustado a mano) · al darle ▶ a esta canción en AirTracks, el video aparece solo', tipo: 'ok' }
+        : {
+            texto: `Listo · coincide en el ${Math.round((v.alineacion?.coincide ?? 1) * 100)} % de la canción · al darle ▶ a esta canción en AirTracks, el video aparece solo`,
+            tipo: 'ok'
+          }
     case 'revisar':
       return {
         texto: 'No coincide del todo: ¿es la misma grabación? Probalo con la canción y ajustá el inicio a mano',
         tipo: 'aviso'
       }
+    case 'desactualizado':
+      return { texto: 'Para alinear hay que actualizar AirTracks en la compu principal (ver arriba)', tipo: 'error' }
     default:
       return { texto: v.mensaje ?? 'No se pudo alinear', tipo: 'error' }
   }
@@ -68,6 +73,13 @@ function Conexion({ e }: { e: EstadoApp }) {
   const [codigo, setCodigo] = useState('')
   const [direccion, setDireccion] = useState('')
   const [escribir, setEscribir] = useState(false)
+  if (c.estado === 'conectado' && c.desactualizado)
+    return (
+      <div className="conexion aviso" role="alert">
+        <span className="punto amarillo" /> Conectado a <b>{c.nombreServidor ?? c.servidor}</b>, pero tiene una versión de AirTracks de antes de los
+        videos: actualizala con el instalador de siempre (Descargas) para alinear y mostrar los videos.
+      </div>
+    )
   if (c.estado === 'conectado')
     return (
       <div className="conexion ok">
@@ -150,6 +162,12 @@ function Proyector({ e }: { e: EstadoApp }) {
         </label>
         <button onClick={() => api.probarPantalla()}>Probar</button>
       </div>
+      {e.pantallas.find((p) => p.id === e.pantallaId)?.principal && (
+        <p className="aviso-texto">
+          Elegiste la pantalla principal (sirve para probar sin proyector): mientras suene una canción con video, el video tapa esta pantalla.
+          Para sacarlo, pará la canción en AirTracks.
+        </p>
+      )}
       <label className="check">
         <input type="checkbox" checked={e.inicioConWindows} onChange={(ev) => api.inicioConWindows(ev.target.checked)} />
         Abrir AirTracks Video al prender la compu
@@ -162,8 +180,8 @@ function Proyector({ e }: { e: EstadoApp }) {
   )
 }
 
-function FilaVideo({ v, suena }: { v: VideoGuardado; suena: boolean }) {
-  const est = textoEstado(v)
+function FilaVideo({ v, suena, progreso }: { v: VideoGuardado; suena: boolean; progreso: { texto: string; fraccion: number | null } | null }) {
+  const est = v.estado === 'alineando' && progreso ? { texto: progreso.texto, tipo: 'info' as const } : textoEstado(v)
   const mover = (ms: number): void => {
     void api.actualizarVideo(v.proyectoId, {
       desfaseMs: (v.desfaseMs ?? 0) + ms,
@@ -192,6 +210,11 @@ function FilaVideo({ v, suena }: { v: VideoGuardado; suena: boolean }) {
         </button>
       </div>
       <div className={`video-estado ${est.tipo}`}>{est.texto}</div>
+      {v.estado === 'alineando' && (
+        <div className={`barra-progreso ${progreso?.fraccion == null ? 'indefinida' : ''}`} role="progressbar" aria-label="Alineando">
+          <i style={progreso?.fraccion != null ? { width: `${Math.round(progreso.fraccion * 100)}%` } : undefined} />
+        </div>
+      )}
       {v.desfaseMs !== null && (
         <div className="video-desfase">
           <span>{textoDesfase(v.desfaseMs)}</span>
@@ -270,6 +293,7 @@ export function App() {
   const [elegido, setElegido] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copiando, setCopiando] = useState(false)
+  const [progreso, setProgreso] = useState<Record<string, { texto: string; fraccion: number | null }>>({})
   const trabajando = useRef(false)
 
   useEffect(() => {
@@ -281,19 +305,26 @@ export function App() {
   const ultimoIntento = useRef(new Map<string, number>())
   useEffect(() => {
     if (!e || trabajando.current) return
-    const conectado = e.conexion.estado === 'conectado'
+    const conectado = e.conexion.estado === 'conectado' && !e.conexion.desactualizado
     const ahora = Date.now()
     const pendiente = e.videos.find(
       (v) =>
         v.estado === 'alineando' ||
-        (conectado && (v.estado === 'esperando-musica' || v.estado === 'sin-conexion') && ahora - (ultimoIntento.current.get(v.proyectoId) ?? 0) > 20_000)
+        (conectado &&
+          (v.estado === 'esperando-musica' || v.estado === 'sin-conexion' || v.estado === 'desactualizado') &&
+          ahora - (ultimoIntento.current.get(v.proyectoId) ?? 0) > 20_000)
     )
     if (!pendiente) return
     trabajando.current = true
     ultimoIntento.current.set(pendiente.proyectoId, ahora)
     void (async () => {
       if (pendiente.estado !== 'alineando') await api.actualizarVideo(pendiente.proyectoId, { estado: 'alineando' })
-      const r = await alinearVideo(api, pendiente)
+      const id = pendiente.proyectoId
+      const r = await alinearVideo(api, pendiente, (texto, fraccion) => setProgreso((x) => ({ ...x, [id]: { texto, fraccion } })))
+      setProgreso((x) => {
+        const { [id]: _, ...resto } = x
+        return resto
+      })
       await api.actualizarVideo(pendiente.proyectoId, {
         estado: r.estado,
         duracionSeg: r.duracionSeg,
@@ -351,7 +382,7 @@ export function App() {
           ) : (
             <ul className="videos">
               {e.videos.map((v) => (
-                <FilaVideo key={v.proyectoId} v={v} suena={e.cancionActiva?.id === v.proyectoId} />
+                <FilaVideo key={v.proyectoId} v={v} suena={e.cancionActiva?.id === v.proyectoId} progreso={progreso[v.proyectoId] ?? null} />
               ))}
             </ul>
           )}

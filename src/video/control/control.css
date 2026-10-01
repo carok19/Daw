@@ -330,3 +330,32 @@ main {
   display: flex;
   justify-content: flex-end;
 }
+
+.barra-progreso {
+  margin-top: 6px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--linea);
+  overflow: hidden;
+  position: relative;
+}
+.barra-progreso i {
+  display: block;
+  height: 100%;
+  background: var(--acento);
+  transition: width 0.3s;
+}
+/* sin saber cuanto falta: una franja que va y viene (se ve que no se colgo) */
+.barra-progreso.indefinida i {
+  position: absolute;
+  width: 30%;
+  animation: va-y-viene 1.2s ease-in-out infinite alternate;
+}
+@keyframes va-y-viene {
+  from {
+    left: 0;
+  }
+  to {
+    left: 70%;
+  }
+}

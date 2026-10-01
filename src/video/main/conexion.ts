@@ -150,6 +150,7 @@ export class ConexionAirTracks {
     })
     socket.on('estado:actualizado', (e: EstadoCompleto) => {
       this.estado = e
+      this.revisarVersion(e)
       this.op.alReproduccion()
     })
     socket.on('playback:scheduled', (cmd: ComandoProgramado) => {
@@ -163,8 +164,15 @@ export class ConexionAirTracks {
     const e = await this.pedir<EstadoCompleto>('state:request', {})
     if (e) {
       this.estado = e
+      this.revisarVersion(e)
       this.op.alReproduccion()
     }
+  }
+
+  /** Las versiones de AirTracks que saben de videos siempre mandan `pantallaVideo` (aunque sea null). */
+  private revisarVersion(e: EstadoCompleto): void {
+    const desactualizado = !('pantallaVideo' in e)
+    if (desactualizado !== !!this.info.desactualizado) this.cambiar({ desactualizado })
   }
 
   /** Como los celulares: varias idas y vueltas, y se queda con la mas rapida. */
@@ -194,15 +202,17 @@ export class ConexionAirTracks {
     return (await this.pedir<ProyectoResumen[]>('projects:list', {})) ?? []
   }
 
+  /** La huella de la cancion: lista, o cuanto le falta a la compu para tenerla (se vuelve a preguntar). */
   async huella(proyectoId: string): Promise<RespuestaHuellaCancion> {
+    if (this.info.desactualizado) return { estado: 'desactualizado' }
     if (!this.socket?.connected) return { estado: 'sin-conexion' }
-    // la primera vez la compu la calcula (unos segundos por cancion)
-    const r = await this.pedir<{ estado: 'lista'; huella: ArrayBuffer | Uint8Array; duracionMs: number } | { estado: 'esperando' } | { estado: 'error'; mensaje: string }>(
-      'video:huella',
-      { proyectoId },
-      180_000
-    )
-    if (!r) return { estado: 'sin-conexion' }
+    type R =
+      | { estado: 'lista'; huella: ArrayBuffer | Uint8Array; duracionMs: number }
+      | { estado: 'calculando'; hechas: number; total: number }
+      | { estado: 'esperando' }
+      | { estado: 'error'; mensaje: string }
+    const r = await this.pedir<R>('video:huella', { proyectoId }, 30_000)
+    if (!r) return this.info.desactualizado ? { estado: 'desactualizado' } : { estado: 'sin-conexion' }
     if (r.estado === 'lista') return { ...r, huella: r.huella instanceof Uint8Array ? r.huella : new Uint8Array(r.huella) }
     return r
   }

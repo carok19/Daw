@@ -5,7 +5,7 @@
  * es donde empieza cada uno (el video puede tener una placa con el titulo, la
  * multitrack un silencio o una cuenta). Para encontrar ese corrimiento sin
  * mandar audio por la red, cada lado resume su audio en una "huella": cada
- * 10 ms, cuanto sube la energia en 4 bandas (los ataques de la bateria, las
+ * 10 ms, cuanto sube la energia en 12 bandas (los ataques de la bateria, las
  * silabas, los acordes). Dos huellas de la misma grabacion se parecen aunque
  * a la multitrack le falte la voz o este mas fuerte; se comparan corriendo una
  * sobre la otra (correlacion, con FFT) y el corrimiento donde mas coinciden es
@@ -49,43 +49,56 @@ function pasabanda(x: Float32Array, f0: number, sr: number): Float32Array {
   return y
 }
 
+/** Una banda de la huella (ver calcularHuella), escrita en `h`. */
+function bandaDeHuella(x: Float32Array, b: number, h: Float32Array): void {
+  const cuadros = Math.floor(x.length / HOP_HUELLA)
+  const y = pasabanda(x, CENTROS[b], SR_HUELLA)
+  // energia en ventanas de 30 ms cada 10 ms (se solapan: un ataque que cae entre dos
+  // cuadros no se parte en dos, y dos audios corridos medio cuadro se siguen pareciendo)
+  const cuadro = new Float64Array(cuadros)
+  for (let c = 0; c < cuadros; c++) {
+    let s = 0
+    for (let i = c * HOP_HUELLA; i < (c + 1) * HOP_HUELLA; i++) s += y[i] * y[i]
+    cuadro[c] = s
+  }
+  const energia = new Float64Array(cuadros)
+  let total = 0
+  for (let c = 0; c < cuadros; c++) {
+    energia[c] = ((c > 0 ? cuadro[c - 1] : cuadro[c]) + cuadro[c] + (c + 1 < cuadros ? cuadro[c + 1] : cuadro[c])) / (3 * HOP_HUELLA)
+    total += energia[c]
+  }
+  // piso: el silencio (o el ruido de fondo) no cuenta como ataques
+  const piso = (total / Math.max(1, cuadros)) * 1e-3 + 1e-12
+  const subida = new Float64Array(cuadros)
+  let anterior = Math.log(energia[0] + piso)
+  for (let c = 0; c < cuadros; c++) {
+    const actual = Math.log(energia[c] + piso)
+    subida[c] = Math.max(0, actual - anterior)
+    anterior = actual
+  }
+  for (let c = 0; c < cuadros; c++) {
+    h[c * BANDAS_HUELLA + b] = 0.25 * (subida[c - 1] ?? 0) + 0.5 * subida[c] + 0.25 * (subida[c + 1] ?? 0)
+  }
+}
+
 /**
  * Huella de una señal mono a SR_HUELLA: por cuadro de 10 ms y por banda,
  * cuanto subio la energia (en escala logaritmica) respecto del cuadro
  * anterior, suavizado. Intercalada: [c0b0, c0b1, ..., c0b11, c1b0, ...].
  */
 export function calcularHuella(x: Float32Array): Float32Array {
-  const cuadros = Math.floor(x.length / HOP_HUELLA)
-  const h = new Float32Array(cuadros * BANDAS_HUELLA)
-  CENTROS.forEach((f0, b) => {
-    const y = pasabanda(x, f0, SR_HUELLA)
-    // energia en ventanas de 30 ms cada 10 ms (se solapan: un ataque que cae entre dos
-    // cuadros no se parte en dos, y dos audios corridos medio cuadro se siguen pareciendo)
-    const cuadro = new Float64Array(cuadros)
-    for (let c = 0; c < cuadros; c++) {
-      let s = 0
-      for (let i = c * HOP_HUELLA; i < (c + 1) * HOP_HUELLA; i++) s += y[i] * y[i]
-      cuadro[c] = s
-    }
-    const energia = new Float64Array(cuadros)
-    let total = 0
-    for (let c = 0; c < cuadros; c++) {
-      energia[c] = ((c > 0 ? cuadro[c - 1] : cuadro[c]) + cuadro[c] + (c + 1 < cuadros ? cuadro[c + 1] : cuadro[c])) / (3 * HOP_HUELLA)
-      total += energia[c]
-    }
-    // piso: el silencio (o el ruido de fondo) no cuenta como ataques
-    const piso = (total / Math.max(1, cuadros)) * 1e-3 + 1e-12
-    const subida = new Float64Array(cuadros)
-    let anterior = Math.log(energia[0] + piso)
-    for (let c = 0; c < cuadros; c++) {
-      const actual = Math.log(energia[c] + piso)
-      subida[c] = Math.max(0, actual - anterior)
-      anterior = actual
-    }
-    for (let c = 0; c < cuadros; c++) {
-      h[c * BANDAS_HUELLA + b] = 0.25 * (subida[c - 1] ?? 0) + 0.5 * subida[c] + 0.25 * (subida[c + 1] ?? 0)
-    }
-  })
+  const h = new Float32Array(Math.floor(x.length / HOP_HUELLA) * BANDAS_HUELLA)
+  for (let b = 0; b < BANDAS_HUELLA; b++) bandaDeHuella(x, b, h)
+  return h
+}
+
+/** La misma huella, de a una banda, cediendo entre una y otra (el servidor no se traba). */
+export async function calcularHuellaDeAPoco(x: Float32Array, ceder: () => Promise<void>): Promise<Float32Array> {
+  const h = new Float32Array(Math.floor(x.length / HOP_HUELLA) * BANDAS_HUELLA)
+  for (let b = 0; b < BANDAS_HUELLA; b++) {
+    bandaDeHuella(x, b, h)
+    await ceder()
+  }
   return h
 }
 

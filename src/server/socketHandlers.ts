@@ -657,7 +657,8 @@ export function registerSocketHandlers(
       const id = payload.proyectoId
       if (!proyectoExiste(id)) return ack?.({ estado: 'error', mensaje: 'La canción no existe' })
       const p = state.tabDeProyecto(id)?.proyecto ?? loadProyecto(id)
-      void huellas.pedir(p).then((r) => ack?.(r))
+      // contesta enseguida: lista, o cuanto va (AirTracks Video vuelve a preguntar)
+      ack?.(huellas.pedir(p))
     })
 
     // ---- conexion de celulares: invitar, codigo de la banda, WiFi ----

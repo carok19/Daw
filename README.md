@@ -345,7 +345,14 @@ cambian a propósito.
       pistas: tiene que ser **la misma grabación** que la multitrack (que el
       video tenga voz y la multitrack no, o una placa con el título al
       principio, da igual). Si es otra versión (en vivo, otro tempo, un video
-      editado), avisa y se ajusta a mano con **+0,1 s / −0,1 s**.
+      editado), avisa y se ajusta a mano con **+0,1 s / −0,1 s**. Mientras
+      alinea muestra en qué paso va (leer el video, sacar el sonido, *AirTracks
+      prepara la canción: pista 5 de 18*, comparar) con una barra. La primera vez
+      por canción la compu principal tarda unos segundos por pista; si está
+      sonando música, espera a que pare.
+    - **Hay que actualizar AirTracks** en la compu principal (el instalador de
+      siempre): si tiene una versión de antes de los videos, AirTracks Video lo
+      avisa arriba en vez de quedarse alineando.
     - **En el culto no se toca nada:** al darle ▶ a una canción con video, el
       video aparece **encima de Holyrics** en el proyector (quieto durante la
       cuenta) y sigue a la banda: saltos de sección, repetir, pausa, cambio
@@ -660,7 +667,8 @@ que corre en Windows 7; se arma con `npm run build:video` y el instalador con
   (80 Hz a 3,4 kHz), las subidas de energía (ataques), suavizadas y en un
   byte (~1 KB por segundo). La compu de AirTracks hace la de la canción
   (sus pistas sin click ni guía, a 8 kHz, una vez y guardada; solo con la
-  música parada: `video:huella` contesta `esperando` mientras suena); la del
+  música parada y de a poco: `video:huella` contesta enseguida `calculando`
+  con cuántas pistas lleva, `esperando` mientras suena, o `lista`); la del
   video la hace la compu del data (Chromium decodifica el audio del video).
   La correlación (FFT) da el desfase; es *segura* si el pico sobresale
   (confianza ≥ 9 desvíos) y coincide en ≥ 60 % de la canción por tramos de
