@@ -359,3 +359,45 @@ main {
     left: 70%;
   }
 }
+
+.tarjeta.destacada {
+  border-color: var(--acento);
+}
+.texto {
+  margin: 0;
+}
+.ruta {
+  font: 13px/1.4 Consolas, 'Courier New', monospace;
+  background: var(--panel-2);
+  border: 1px solid var(--linea);
+  border-radius: 6px;
+  padding: 3px 8px;
+  word-break: break-all;
+}
+.fila.arriba {
+  margin-top: 12px;
+}
+.ayuda.arriba {
+  margin: -4px 0 10px;
+}
+.info-texto {
+  color: var(--texto-2);
+}
+.video.suelto {
+  border-style: dashed;
+}
+
+/* arrastrando videos a la ventana */
+.soltar {
+  position: fixed;
+  inset: 10px;
+  border: 3px dashed var(--acento);
+  border-radius: 16px;
+  background: rgba(79, 124, 255, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 600;
+  pointer-events: none;
+}

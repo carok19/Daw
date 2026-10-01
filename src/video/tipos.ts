@@ -49,7 +49,7 @@ export interface VideoGuardado {
   proyectoId: string
   /** nombre de la cancion en AirTracks (al vincularlo) */
   cancion: string
-  /** archivo copiado en la carpeta de videos del programa */
+  /** el archivo, en la carpeta de videos ("Santo.mp4") */
   archivo: string
   /** nombre original del archivo (para mostrar) */
   nombreArchivo: string
@@ -78,6 +78,16 @@ export interface EstadoApp {
   /** la cancion que esta arriba en AirTracks */
   cancionActiva: { id: string; nombre: string } | null
   version: string
+  /** carpeta de los videos (cada uno con su alineacion al lado: se copia a otra compu tal cual) */
+  carpeta: string
+  /** false = todavia no se confirmo donde guardarlos (la primera vez) */
+  carpetaConfirmada: boolean
+  /** videos de la carpeta que no son de ninguna cancion (todavia) */
+  sueltos: string[]
+  /** videos que se estan copiando a la carpeta (se miran cuando terminen) */
+  copiandose: number
+  /** canciones de los videos que no estan en este AirTracks (proyectoId) */
+  sinCancion: string[]
 }
 
 /** Lo que la ventana del proyector necesita para seguir la cancion. */
@@ -107,9 +117,16 @@ export interface ApiVideo {
   estado(): Promise<EstadoApp>
   onEstado(cb: (e: EstadoApp) => void): void
   canciones(): Promise<ProyectoResumen[]>
-  elegirArchivo(): Promise<string | null>
+  elegirArchivos(): Promise<string[]>
+  /** `ruta`: el archivo (o solo el nombre, si ya esta en la carpeta de videos) */
   agregarVideo(ruta: string, proyectoId: string, cancion: string): Promise<VideoGuardado | { error: string }>
+  /** lo copia a la carpeta sin cancion (sin conexion: se vincula solo al conectar) */
+  copiarSuelto(ruta: string): Promise<{ archivo: string } | { error: string }>
+  borrarSuelto(archivo: string): Promise<void>
   quitarVideo(proyectoId: string): Promise<void>
+  elegirCarpeta(): Promise<{ ok: boolean; error?: string }>
+  confirmarCarpeta(): void
+  abrirCarpeta(): void
   actualizarVideo(proyectoId: string, cambio: Partial<Pick<VideoGuardado, 'desfaseMs' | 'alineacion' | 'estado' | 'mensaje' | 'duracionSeg'>>): Promise<void>
   huellaCancion(proyectoId: string): Promise<RespuestaHuellaCancion>
   /** huella del video ya calculada (para no decodificarlo de nuevo) */

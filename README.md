@@ -231,9 +231,11 @@ cambian a propósito.
    compás a compás. Así, aunque se salte muy lejos, el pulso no se corta.
    **Voz que avisa el salto:** en el último compás antes de saltar se
    escucha la sección elegida en el “1” y la cuenta en los dos últimos
-   pulsos (“**Coro… 3, 4**”; en 3/4 “2, 3”), con el volumen y el lado de la
-   guía de cada uno. En ese compás la guía de la canción se calla (diría la
-   sección que venía, no la elegida). **Las voces vienen con el programa, en
+   pulsos (“**Coro… 3, 4**”; en 3/4 “2, 3”), del lado de la guía de cada uno
+   y **tan fuerte como la guía de esa canción** (la compu mide una vez cuánto
+   suena la voz de la guía y lleva la del aviso a ese nivel: ni se pierde ni
+   tapa). La guía de la canción se calla desde **2 compases antes** del salto
+   (diría la sección que venía, no la elegida), así el aviso se oye solo. **Las voces vienen con el programa, en
    español** (las secciones —Intro, Verso 1 a 6, Pre Coro, Coro, Puente,
    Interludio, Instrumental, Final, Repetir…— y los números 1 a 7, de los
    recursos gratuitos “Click and Guide Samples” de
@@ -311,12 +313,20 @@ cambian a propósito.
     **Pad** (y **Click**) para subirlo, bajarlo o mutearlo solo para él. Dos
     formas:
     - **Dentro de una canción** (botón de las ondas al lado de “repetir”, o
-      **C**; en el celular, el mismo botón en la barra de abajo): en el próximo compás la banda se va (se apaga en ese compás) y
-      siguen el click, en el mismo pulso, y el pad en el tono de la canción (el de la sección, si cambia de tono).
+      **C**; en el celular, el mismo botón en la barra de abajo): como los
+      saltos, con **Al terminar** la banda sigue hasta que **termina la
+      sección** (con *En el compás*, hasta el próximo compás) y ahí se va (se
+      apaga en ese compás); siguen el click, en el mismo pulso, y el pad en el
+      tono de la canción (el de la sección, si cambia de tono). El pad **entra
+      bajito por debajo de la banda 2 compases antes**, así cuando la banda se
+      va ya está sonando entero (no se oye que “arranca”). En la última
+      sección, el colchón sigue cuando termina la canción, en el pulso de su
+      click.
       Para volver, **tocar una sección** (en la compu o en el celular): la
       canción entra ahí en el “1” del próximo compás, sin cuenta (el click
       nunca paró). **▶** vuelve donde quedó; **Terminar** (o **C**) para el
-      click y apaga el pad despacio. Mientras dura se ve arriba “Colchón · D
+      click y apaga el pad despacio; **■** (stop) corta todo y el pad se va en
+      menos de un segundo, sin quedar sonando. Mientras dura se ve arriba “Colchón · D
       · 72 BPM” con el pulso, y se puede cambiar el tono y el volumen del
       pad. Hace falta el tempo detectado.
     - **Como una canción de la lista** (para la oración, la ministración o
@@ -339,8 +349,22 @@ cambian a propósito.
       de AirTracks en la red del router (sin internet y sin escribir IP; si
       la banda tiene código, lo pide una vez). Elegir en qué pantalla está el
       proyector y tocar **Probar**.
-    - **+ Agregar video** → elegir el archivo → **¿de qué canción es?** (sugiere
-      la del mismo nombre). El programa encuentra solo **dónde empieza la
+    - **La carpeta de los videos:** al abrirlo la primera vez pregunta dónde
+      guardarlos (por defecto *Documentos\AirTracks Video*). Cada video queda
+      ahí **con el nombre de su canción** y, al lado, un archivito
+      (`Santo.airtracks-video.json`) con la canción y su alineación. **Para
+      pasar todo a otra compu, se copia esa carpeta** y se elige allá (abajo,
+      *Carpeta de los videos → Cambiar…*): los videos aparecen ya alineados,
+      sin volver a procesar nada (si en esa AirTracks la canción se importó de
+      nuevo, se encuentra por el nombre).
+    - **Agregar videos:** **arrastrarlos a la ventana** (uno o varios), o
+      **+ Agregar videos**, o **dejarlos directamente en la carpeta**. El que
+      tiene el nombre de una canción (“Santo (Lyric Video).mp4” → *Santo*) se
+      vincula solo; si no se sabe de cuál es (o esa canción ya tiene video),
+      pregunta **¿de qué canción es?** con la lista (sugiere la más
+      parecida). Sin conexión con AirTracks, quedan en la carpeta y se
+      vinculan al conectar. **Cambiar canción** corrige un video vinculado a
+      la que no era. El programa encuentra solo **dónde empieza la
       canción en el video** comparando el sonido del video con el de las
       pistas: tiene que ser **la misma grabación** que la multitrack (que el
       video tenga voz y la multitrack no, o una placa con el título al
@@ -400,7 +424,7 @@ mismo en ⚙ → Estado.
 | Click en la línea de tiempo | Sonando: salta en el próximo compás, al “1” más cercano (Shift: ya; Alt: sin imán) |
 | M | Marcar una sección en la posición actual |
 | L | Repetir la sección actual |
-| C | Colchón: la banda se va en el próximo compás y siguen el click y el pad (otra vez: terminar) |
+| C | Colchón: al terminar la sección (o en el próximo compás, según el modo de salto) se va la banda y siguen el click y el pad (otra vez: terminar) |
 | Alt + arrastrar | Mover una sección sin ajustarla al compás |
 | Re Pág / Av Pág | Canción anterior / siguiente |
 | ? | Ayuda de atajos |
@@ -680,6 +704,19 @@ que corre en Windows 7; se arma con `npm run build:video` y el instalador con
   30 ms lo deja. Un salto ya programado deja el otro `<video>` quieto en el
   punto nuevo y corta justo a su hora. Contando o en pausa: quieto en el
   cuadro justo. Sin video, parado o desconectado: la ventana se esconde.
+- **La carpeta** (`video/main/biblioteca.ts`): cada video con su ficha
+  `<nombre>.airtracks-video.json` (la canción —id y nombre—, el desfase y la
+  alineación). La carpeta es lo único que importa: se lee al abrir y se
+  vigila (`fs.watch`); un video sin ficha es *suelto* y, cuando terminó de
+  copiarse (tamaño quieto y, en Windows, que se pueda abrir), se vincula a la
+  canción del mismo nombre si no hay dudas (`video/nombres.ts`: mismas
+  palabras sin tonalidad, BPM ni “lyric video”, y ninguna otra parecida). Al
+  conectar, un video cuya canción no está en esta AirTracks (los ids cambian
+  al importar de nuevo) pasa a la del mismo nombre. Lo que se agrega desde
+  afuera se copia con el nombre de la canción. La huella de cada video queda
+  en los datos del programa (no hace falta copiarla: la alineación ya está
+  en la ficha). Los videos de la versión anterior (adentro del programa) se
+  mudan solos a la carpeta.
 - **La ventana del proyector:** sin marco, encima de todo (`screen-saver`),
   sin foco ni mouse (`focusable: false`, `setIgnoreMouseEvents`), solo en la
   pantalla elegida (sin segunda pantalla no se muestra, salvo que se elija la
@@ -688,10 +725,14 @@ que corre en Windows 7; se arma con `npm run build:video` y el instalador con
 - `npm run test:video` (en Linux dentro de `xvfb-run`): servidor real +
   AirTracks Video real (Electron 22) + un celular; arma una canción y su
   "lyric video" (otra grabación no, la misma con 3 s de placa y una voz de
-  más), y comprueba la alineación (3000 ms ± 40), el video sonando, después
-  de un salto y en pausa (< 0,12 s; medido < 30 ms), que se esconda al parar,
-  que el margen de arranque no cambie y que si el programa se cae la
-  reproducción siga.
+  más). El video se deja en la carpeta (con su nombre de archivo) y se
+  comprueba que se vincule solo y la alineación (3000 ms ± 40), el video
+  sonando, después de un salto y en pausa (< 0,12 s; medido < 30 ms), que se
+  esconda al parar, que el margen de arranque no cambie y que si el programa
+  se cae la reproducción siga. Después, “otra compu”: un AirTracks Video nuevo
+  con una copia de la carpeta (y la canción con otro id) muestra el video ya
+  alineado sin calcular nada, y agregar uno desde afuera lo copia con el
+  nombre de la canción y reemplaza al anterior.
 
 ### Colchón (pad y click)
 
@@ -715,11 +756,15 @@ estado. **Nada de su audio viaja por la red mientras suena:**
   sin corte. La app instalada los prepara de a uno un rato después de abrir;
   si se pide uno que no está, tarda ~1 s. Cada dispositivo lo baja una vez
   (`/pad/<0-11>.wav`) y lo toca en loop, todos en el mismo punto del loop.
-- **Dentro de una canción:** el colchón empieza en el próximo compás
-  (`limiteDeSalto` en modo compás). Todo el audio de la canción pasa por un
-  bus (`cancionGain`) que baja a 0 en ese compás mientras el click del
-  colchón sube (el mismo pulso: se funden) y el pad entra en 2 compases; al
-  terminar ese compás el servidor pausa la canción (ya en silencio). Una
+- **Dentro de una canción:** el colchón empieza donde caería un salto
+  (`limiteDeSalto` con el modo de salto: al terminar la sección o en el
+  próximo compás; en la última sección, en el “1” que seguiría al final de
+  la canción). Todo el audio de la canción pasa por un bus (`cancionGain`)
+  que baja a 0 en ese compás mientras el click del colchón sube (el mismo
+  pulso: se funden). El pad entra antes, desde `padDesde` (2 compases antes,
+  si hay tiempo), subiendo por debajo de la banda hasta estar entero cuando
+  se va; al terminar ese compás el servidor pausa la canción (ya en
+  silencio). Una
   sección (o ▶) programa la canción en el “1” del próximo compás del
   colchón, sin cuenta: el bus vuelve de golpe en ese instante, el click del
   colchón para justo ahí y el pad se va en 1,5 s. Si se elige antes de que
@@ -727,7 +772,8 @@ estado. **Nada de su audio viaja por la red mientras suena:**
 - **De la lista:** un proyecto sin pistas con `colchon` (ajustes). El
   motor no baja nada; play/pausa del transporte lo empiezan y terminan. Un
   cambio de BPM sonando mueve el “1” al próximo golpe (el pad sigue).
-- Al terminar, el click para en el próximo golpe y el pad se apaga en 4 s;
+- Al terminar, el click para en el próximo golpe y el pad se apaga en 4 s
+  (con stop, en 0,8 s);
   un colchón que sigue al cambiar de canción termina donde arranca la
   próxima (con cuenta, el pad la acompaña). El servidor lo borra cuando el
   pad terminó de irse.

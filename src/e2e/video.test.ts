@@ -51,7 +51,7 @@ function a44k(x: Float32Array): Float32Array {
   return y
 }
 
-test('AirTracks Video: se alinea solo, sigue la canción (play, salto, pausa, stop) y no toca a los celulares', { timeout: 240000, skip: !fs.existsSync(ELECTRON_22) && 'falta Electron 22 (cd video && npm install)' }, async (t) => {
+test('AirTracks Video: un video dejado en la carpeta se vincula y se alinea solo, sigue la canción (play, salto, pausa, stop), no toca a los celulares y la carpeta pasa a otra compu ya alineada', { timeout: 240000, skip: !fs.existsSync(ELECTRON_22) && 'falta Electron 22 (cd video && npm install)' }, async (t) => {
   const ffmpeg = rutaFfmpeg()!
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'airtracks-video-'))
   process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
@@ -130,21 +130,28 @@ test('AirTracks Video: se alinea solo, sigue la canción (play, salto, pausa, st
   assert.ok(diag.dispositivos.some((d) => d.origen === 'video' && d.conectado))
   assert.equal(diag.dispositivos.filter((d) => d.origen === 'celular' && d.conectado).length, 1)
 
-  // ---- agregar el video: se alinea solo ----
+  // ---- el video se deja en la carpeta de videos: se vincula solo con la cancion del mismo nombre y se alinea ----
   const canciones = await control.evaluate(() => (window as unknown as { airtracksVideo: ApiVideo }).airtracksVideo.canciones())
   assert.ok(canciones.some((c: ProyectoResumen) => c.id === proyecto.id), 've las canciones de AirTracks')
-  const agregado = await control.evaluate(
-    ([ruta, id, nombre]) => (window as unknown as { airtracksVideo: ApiVideo }).airtracksVideo.agregarVideo(ruta, id, nombre),
-    [video, proyecto.id, proyecto.nombre] as const
-  )
-  assert.ok(!('error' in agregado), JSON.stringify(agregado))
+  const carpeta = path.join(tmp, 'video-datos', 'AirTracks Video')
+  const alAbrir = await estadoApp()
+  assert.equal(alAbrir.carpeta, carpeta)
+  assert.equal(alAbrir.carpetaConfirmada, false, 'la primera vez pregunta dónde guardar los videos')
+  await control.getByRole('button', { name: 'Usar esta carpeta' }).click()
+  await esperarQue(async () => (await estadoApp()).carpetaConfirmada, 5000, 'que se confirme la carpeta')
+  fs.copyFileSync(video, path.join(carpeta, path.basename(video)))
   const alineado = await esperarQue(
     async () => (await estadoApp()).videos.find((v) => v.proyectoId === proyecto.id && (v.estado === 'listo' || v.estado === 'revisar' || v.estado === 'error')),
     90000,
-    'la alineación'
+    'que se vincule y se alinee'
   )
   assert.equal(alineado.estado, 'listo', `${alineado.estado}: ${alineado.mensaje ?? ''} ${JSON.stringify(alineado.alineacion)}`)
   assert.ok(Math.abs(alineado.desfaseMs! - PLACA_SEG * 1000) <= 40, `desfase ${alineado.desfaseMs}`)
+  assert.equal(alineado.archivo, path.basename(video))
+  assert.deepEqual((await estadoApp()).sueltos, [])
+  // al lado del video, su ficha con la cancion y la alineacion
+  const ficha = path.join(carpeta, 'Gracia Sublime (Lyric Video).airtracks-video.json')
+  assert.equal(JSON.parse(fs.readFileSync(ficha, 'utf-8')).desfaseMs, alineado.desfaseMs)
   // la compu de AirTracks sabe que esta cancion tiene video
   await esperarQue(async () => (await ack<EstadoCompleto>('state:request', {})).pantallaVideo?.canciones.includes(proyecto.id), 10000, 'el aviso a la compu')
 
@@ -217,4 +224,47 @@ test('AirTracks Video: se alinea solo, sigue la canción (play, salto, pausa, st
   assert.equal((await ack<DiagnosticoServidor>('diagnostico:obtener', {})).arranque?.margenMs, margenAntes)
   assert.ok(celular.connected, 'el celular sigue conectado')
   assert.deepEqual(errores, [])
+  compu.emit('transport:stop')
+
+  // ---- otra compu del data: se copia la carpeta de videos y aparece todo ya alineado ----
+  // (en esta AirTracks la cancion tiene otro id, como si se hubiera importado de nuevo: se encuentra por el nombre)
+  const otra = path.join(tmp, 'otra-compu', 'Videos de la iglesia')
+  fs.cpSync(carpeta, otra, { recursive: true })
+  const fichaOtra = path.join(otra, path.basename(ficha))
+  fs.writeFileSync(fichaOtra, JSON.stringify({ ...JSON.parse(fs.readFileSync(fichaOtra, 'utf-8')), proyectoId: 'id-de-la-otra-compu' }))
+  const datosOtra = path.join(tmp, 'otra-compu', 'datos')
+  app = await electron.launch({
+    executablePath: ELECTRON_22,
+    args: ['--no-sandbox', path.join(RAIZ, 'video')],
+    env: { ...process.env, AIRTRACKS_VIDEO_DIR: datosOtra, AIRTRACKS_VIDEO_CARPETA: otra, AIRTRACKS_SERVIDOR: url }
+  })
+  const control2 = await esperarQue<Page>(async () => app!.windows().find((w) => w.url().includes('control.html')) ?? null, 30000, 'la ventana en la otra compu')
+  const errores2: string[] = []
+  control2.on('pageerror', (e) => errores2.push(e.message))
+  const estado2 = (): Promise<EstadoApp> => control2.evaluate(() => (window as unknown as { airtracksVideo: ApiVideo }).airtracksVideo.estado())
+  const copiado = await esperarQue(async () => (await estado2()).videos.find((v) => v.proyectoId === proyecto.id) ?? null, 30000, 'el video de la carpeta copiada')
+  assert.equal(copiado.estado, 'listo')
+  assert.equal(copiado.desfaseMs, alineado.desfaseMs, 'con la misma alineación')
+  assert.equal(fs.readdirSync(path.join(datosOtra, 'huellas')).length, 0, 'sin volver a procesar el video')
+  assert.equal(JSON.parse(fs.readFileSync(fichaOtra, 'utf-8')).proyectoId, proyecto.id, 'la ficha queda con la canción de esta AirTracks')
+  await esperarQue(async () => (await ack<EstadoCompleto>('state:request', {})).pantallaVideo?.canciones.includes(proyecto.id), 10000, 'el aviso a la compu')
+
+  // ---- agregar un video desde afuera: se copia a la carpeta con el nombre de la cancion (reemplaza al que habia) ----
+  const agregado = await control2.evaluate(
+    ([ruta, id, nombre]) => (window as unknown as { airtracksVideo: ApiVideo }).airtracksVideo.agregarVideo(ruta, id, nombre),
+    [video, proyecto.id, proyecto.nombre] as const
+  )
+  assert.ok(!('error' in agregado), JSON.stringify(agregado))
+  assert.equal(agregado.archivo, 'Gracia Sublime.webm')
+  assert.ok(fs.existsSync(path.join(otra, 'Gracia Sublime.webm')) && fs.existsSync(path.join(otra, 'Gracia Sublime.airtracks-video.json')))
+  assert.ok(!fs.existsSync(path.join(otra, path.basename(video))) && !fs.existsSync(fichaOtra), 'el anterior se fue')
+  const realineado = await esperarQue(
+    async () => (await estado2()).videos.find((v) => v.proyectoId === proyecto.id && v.archivo === 'Gracia Sublime.webm' && v.estado !== 'alineando') ?? null,
+    90000,
+    'que se alinee el nuevo'
+  )
+  assert.equal(realineado.estado, 'listo')
+  assert.ok(Math.abs(realineado.desfaseMs! - PLACA_SEG * 1000) <= 40, `desfase ${realineado.desfaseMs}`)
+  assert.deepEqual((await estado2()).sueltos, [])
+  assert.deepEqual(errores2, [])
 })
