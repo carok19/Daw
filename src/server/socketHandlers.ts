@@ -77,8 +77,9 @@ import { esTonoValido, Tonos } from './tono'
 import { MedidorEntrega } from './entrega'
 import { Anuncios, ErrorVoces, pistasDeAnuncio, Voces } from './voces'
 import { planearAnuncio } from '../shared/anuncio'
-import { nombreDeColchon, normalizarAjustesColchon, NOTAS_PAD } from '../shared/colchon'
+import { nombreDeColchon, normalizarAjustesColchon, NOTAS_PAD, type NotaPad } from '../shared/colchon'
 import { Pads } from './pads'
+import { ErrorPads, PadsPropios } from './padsPropios'
 import { Huellas, type RespuestaHuella } from './huellas'
 import { NivelesGuia } from './nivelGuia'
 import { esVelocidadValida, redondearVelocidad, textoPorcentaje, velocidadAplicada } from '../shared/velocidad'
@@ -146,6 +147,8 @@ export interface Conexion {
   licencias?: Licencias
   /** carpeta de los pads del colchon (por defecto ~/MultitrackApp/pads) */
   dirPads?: string
+  /** pads propios del colchon (los tests usan otra carpeta) */
+  dirPadsPropios?: string
   /** sintetizar los 12 pads un rato despues de abrir (la app si; las pruebas no) */
   precalentarPads?: boolean
   /** las voces que trae la app para avisar los saltos (null = ninguna) */
@@ -305,7 +308,12 @@ export function registerSocketHandlers(
   transporte.alCambiarColchon = () => emitirEstado()
 
   // pads del colchon: se sintetizan una vez por nota; de a uno, un rato despues de abrir (la primera vez)
-  const pads = new Pads(conexion.dirPads)
+  // los pads propios (importados) van antes que los de la app
+  const padsPropios = new PadsPropios(conexion.dirPadsPropios)
+  state.pads = padsPropios.info()
+  transporte.revisionPads = () => padsPropios.revision()
+  let importandoPads = false
+  const pads = new Pads(conexion.dirPads, padsPropios)
   let precalentarPads: NodeJS.Timeout | null = null
   if (conexion.precalentarPads) {
     precalentarPads = setTimeout(() => {
@@ -1048,6 +1056,41 @@ export function registerSocketHandlers(
       if (!soloCompu(socket) || typeof payload?.activo !== 'boolean') return ack?.({ ok: false })
       voces.activar(payload.activo)
       state.voces = voces.info()
+      emitirEstado()
+      ack?.({ ok: true })
+    })
+
+    // ---- pads propios del colchon ----
+    socket.on('pads:importar', (payload: { filePath?: unknown; nota?: unknown }, ack?: Ack<{ ok: boolean; error?: string; pedirNota?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false, error: 'Solo la computadora puede importar pads' })
+      if (typeof payload?.filePath !== 'string' || !payload.filePath) return ack?.({ ok: false, error: 'Falta el archivo' })
+      const nota = typeof payload.nota === 'string' && (NOTAS_PAD as readonly string[]).includes(payload.nota) ? (payload.nota as NotaPad) : null
+      if (importandoPads) return ack?.({ ok: false, error: 'Ya se están importando pads' })
+      importandoPads = true
+      padsPropios
+        .importar(payload.filePath, nota)
+        .then((r) => {
+          if ('pedirNota' in r) return ack?.({ ok: false, pedirNota: r.pedirNota })
+          state.pads = r
+          emitirEstado()
+          ack?.({ ok: true })
+        })
+        .catch((err: unknown) => ack?.({ ok: false, error: err instanceof ErrorPads ? err.message : `No se pudieron importar los pads: ${(err as Error).message}` }))
+        .finally(() => (importandoPads = false))
+    })
+
+    socket.on('pads:activar', (payload: { activo?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket) || typeof payload?.activo !== 'boolean') return ack?.({ ok: false })
+      padsPropios.activar(payload.activo)
+      state.pads = padsPropios.info()
+      emitirEstado()
+      ack?.({ ok: true })
+    })
+
+    socket.on('pads:borrar', (_payload: unknown, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      padsPropios.borrar()
+      state.pads = null
       emitirEstado()
       ack?.({ ok: true })
     })

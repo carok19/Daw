@@ -1295,7 +1295,7 @@ export class StreamingEngine implements PlaybackEngine {
     cruce.connect(v.padEnv)
     const pad: NonNullable<VozColchon['pad']> = { nota: nota!, fuente: null, cruce }
     v.pad = pad
-    void this.bufferDePad(i).then((buffer) => {
+    void this.bufferDePad(i, v.c.padsRevision ?? 'app').then((buffer) => {
       if (!buffer || v.pad !== pad || v.fin) return
       const off = v.offset()
       const tInicio = this.ctxDeServidor(v.c.padDesde ?? v.c.empezo, off)
@@ -1316,11 +1316,14 @@ export class StreamingEngine implements PlaybackEngine {
     })
   }
 
-  private bufferDePad(indice: number): Promise<AudioBuffer | null> {
-    const clave = String(indice)
+  /** El pad de esa nota (`revision`: los de la app o el pack propio que suena; cada uno se baja una vez). */
+  private bufferDePad(indice: number, revision: string): Promise<AudioBuffer | null> {
+    const clave = `${indice}:${revision}`
     let p = this.buffersPad.get(clave)
     if (!p) {
-      p = fetch(`/pad/${indice}.wav`)
+      // los de otro pack ya no se van a usar (lo que suena tiene su propia referencia)
+      for (const k of [...this.buffersPad.keys()]) if (!k.endsWith(`:${revision}`)) this.buffersPad.delete(k)
+      p = fetch(`/pad/${indice}.wav?r=${encodeURIComponent(revision)}`)
         .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((bytes) => this.ctx.decodeAudioData(bytes))
         .catch(() => {

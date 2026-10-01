@@ -26,6 +26,7 @@ import { evaluarFirewall, type DatosFirewall } from './firewall'
 import { compasesDeCuenta, golpeActual, golpesDeCuenta, LARGO_SONIDO_CUENTA_SEC, programarCuenta, suenaSuCuenta } from '../shared/cuenta'
 import { detectarCuentaPropia } from './cuenta'
 import { nivelDeHabla, Voces } from './voces'
+import { fuenteDe, notaDeNombreDePad } from './padsPropios'
 import { esAdaptadorVirtual } from './network'
 import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadEn, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { generarClick, wav16 } from './__fixtures__/sintetico'
@@ -2676,5 +2677,112 @@ test('pads del colchón: uno por nota, en el tono (sin tercera) y sin corte en e
   assert.ok(cerca(a, 110) > 30 * cerca(a, 116.54))
   assert.equal((await bajar(12)).status, 404)
   assert.equal((await bajar('x')).status, 404)
+  await env.cerrar()
+})
+
+test('pads propios: el tono sale del nombre, los que faltan se hacen desde el más cercano, loop sin corte; se apagan y se quitan', async (t) => {
+  for (const [nombre, nota] of [
+    ['Warm Pad - C#.wav', 'C#'],
+    ['Pads/Pad_Bb.mp3', 'A#'],
+    ['Fondo Re.wav', 'D'],
+    ['C Sharp Pad.wav', 'C#'],
+    ['Pad Sol#.wav', 'G#'],
+    ['01 - Ab Major.wav', 'G#'],
+    ['Ambient Pad F#m.aiff', 'F#'],
+    ['pad - eb.wav', 'D#'],
+    ['Pad de la noche.wav', null],
+    ['Mi pad.wav', null],
+    ['Pad Mi.wav', 'E'],
+    ['Re#.wav', 'D#'],
+    ['pad.wav', null]
+  ] as const)
+    assert.equal(notaDeNombreDePad(nombre), nota, nombre)
+  assert.deepEqual(fuenteDe('D', ['C', 'G']), { desde: 'C', semitonos: 2 })
+  assert.deepEqual(fuenteDe('E', ['C', 'G']), { desde: 'G', semitonos: -3 })
+  assert.deepEqual(fuenteDe('F#', ['C']), { desde: 'C', semitonos: -6 })
+  assert.deepEqual(fuenteDe('G', ['C', 'G']), { desde: 'G', semitonos: 0 })
+
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const sr = 22050
+  // un "pad": raiz y quinta con un vaiven lento, 20 s
+  const pad = (f: number, seg = 20, srA = 44100): Buffer => {
+    const x = new Float32Array(seg * srA)
+    for (let i = 0; i < x.length; i++) {
+      const tt = i / srA
+      x[i] = 0.3 * (Math.sin(2 * Math.PI * f * tt) + 0.5 * Math.sin(2 * Math.PI * 1.5 * f * tt)) * (0.8 + 0.2 * Math.sin(2 * Math.PI * 0.1 * tt))
+    }
+    return wav16(x, srA)
+  }
+  const bajar = async (i: number, r = ''): Promise<Float32Array> => {
+    const resp = await fetch(`http://localhost:${env.port}/pad/${i}.wav${r ? `?r=${r}` : ''}`)
+    assert.equal(resp.status, 200)
+    const bytes = await resp.arrayBuffer()
+    const info = parseWavHeader(bytes)
+    assert.deepEqual([info.sampleRate, info.numChannels], [sr, 1])
+    return decodePcmSegment(info, bytes.slice(info.dataOffset))[0]
+  }
+  const energia = (x: Float32Array, f: number): number => energiaEn(x.subarray(0, 4 * sr), f, sr)
+  const empalma = (x: Float32Array): void => {
+    let tipico = 0
+    for (let i = 1; i < x.length; i++) tipico += Math.abs(x[i] - x[i - 1])
+    tipico /= x.length - 1
+    assert.ok(Math.abs(x[0] - x[x.length - 1]) < 4 * tipico, `salto ${Math.abs(x[0] - x[x.length - 1])} vs ${tipico}`)
+  }
+
+  // un pack con dos tonos (y algo que no es un pad)
+  const zip = crearZip('Mis Pads', { 'Pads/Pad C.wav': pad(130.81), 'Pads/Pad G.wav': pad(196.0), 'Pads/leeme.txt': Buffer.from('hola') })
+  const r = await emitAck<{ ok: boolean; error?: string }>(compu, 'pads:importar', { filePath: zip }, 180000)
+  assert.equal(r.ok, true, r.error)
+  const e = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.deepEqual(e.pads?.originales, ['C', 'G'])
+  assert.equal(e.pads?.activo, true)
+  assert.equal(e.pads?.nombre, 'Mis Pads')
+  // C: el suyo (no el de la app: 32 s); D: el de C dos semitonos arriba; F#: el de G uno abajo
+  const c = await bajar(0, e.pads!.revision)
+  assert.notEqual(c.length, 32 * sr)
+  assert.ok(c.length >= 10 * sr, `largo ${c.length / sr} s`)
+  assert.ok(energia(c, 130.81) > 20 * energia(c, 146.83))
+  const d = await bajar(2)
+  assert.ok(energia(d, 146.83) > 20 * energia(d, 130.81), `D: ${energia(d, 146.83) / energia(d, 130.81)}`)
+  const fs_ = await bajar(6)
+  assert.ok(energia(fs_, 185.0) > 20 * energia(fs_, 196.0), `F#: ${energia(fs_, 185.0) / energia(fs_, 196.0)}`)
+  for (const x of [c, d, fs_]) {
+    empalma(x)
+    let pico = 0
+    for (const v of x) pico = Math.max(pico, Math.abs(v))
+    assert.ok(pico > 0.6 && pico < 0.75, `pico ${pico}`)
+  }
+
+  // apagados: suena el de la app; el colchon lleva la revision (nadie usa los de antes guardados)
+  await emitAck(compu, 'pads:activar', { activo: false })
+  assert.equal((await bajar(0)).length, 32 * sr)
+  await emitAck(compu, 'pads:activar', { activo: true })
+  assert.notEqual((await bajar(0)).length, 32 * sr)
+
+  // un solo audio que no dice el tono: lo pregunta, y con el tono hace los 12
+  const solo = path.join(tmpDir('multitrack-pad-'), 'Mi pad.wav')
+  fs.writeFileSync(solo, pad(110, 12))
+  const pide = await emitAck<{ ok: boolean; pedirNota?: string }>(compu, 'pads:importar', { filePath: solo })
+  assert.deepEqual(pide, { ok: false, pedirNota: 'Mi pad.wav' })
+  const conNota = await emitAck<{ ok: boolean; error?: string }>(compu, 'pads:importar', { filePath: solo, nota: 'A' }, 180000)
+  assert.equal(conNota.ok, true, conNota.error)
+  const e2 = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.deepEqual(e2.pads?.originales, ['A'])
+  assert.notEqual(e2.pads?.revision, e.pads?.revision)
+  const b = await bajar(11)
+  assert.ok(energia(b, 123.47) > 20 * energia(b, 110), 'B: el de A, dos semitonos arriba')
+  // muy corto o algo que no es audio: error claro, quedan los de antes
+  const corto = path.join(path.dirname(solo), 'Pad E.wav')
+  fs.writeFileSync(corto, pad(164.81, 2))
+  const err = await emitAck<{ ok: boolean; error?: string }>(compu, 'pads:importar', { filePath: corto }, 60000)
+  assert.equal(err.ok, false)
+  assert.match(err.error ?? '', /muy corto/)
+  assert.deepEqual((await emitAck<EstadoCompleto>(compu, 'state:request', {})).pads?.originales, ['A'])
+
+  // quitarlos: vuelve el de la app
+  await emitAck(compu, 'pads:borrar', {})
+  assert.equal((await emitAck<EstadoCompleto>(compu, 'state:request', {})).pads, null)
+  assert.equal((await bajar(9)).length, 32 * sr)
   await env.cerrar()
 })

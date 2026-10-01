@@ -12,6 +12,7 @@ const electronAPI = {
   isElectron: true as const,
   compuToken: ipcRenderer.sendSync('app:compu-token') as string,
   pickZipFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-zip'),
+  pickPadsFile: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-pads'),
   getConnectionInfo: (): Promise<{ url: string; ip: string | null; port: number }> =>
     ipcRenderer.invoke('app:connection-info'),
   /** dialogo nativo para elegir la carpeta de la biblioteca */

@@ -10,6 +10,7 @@ import { TopBar } from './TopBar'
 import { Transport } from './Transport'
 import { Mixer } from './Mixer'
 import { MarkersPanel } from './MarkersPanel'
+import { PadsDelColchon } from './PadsDelColchon'
 import { ConnectionPanel } from './ConnectionPanel'
 import { LicenciaPanel } from './LicenciaPanel'
 import { ProjectsScreen } from './ProjectsScreen'
@@ -345,6 +346,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
               onImportarVoces={controller.importarVoces}
               onActivarVoces={controller.activarVoces}
               onBorrarVoces={controller.borrarVoces}
+              padsDelColchon={<PadsDelColchon controller={controller} />}
             />
             )}
           </main>

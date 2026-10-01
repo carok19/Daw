@@ -2103,6 +2103,9 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
   await vistaCompu(compu, 'Secciones')
   await compu.locator('.voz-salto', { hasText: 'voces del programa en español' }).waitFor()
   assert.equal(await compu.getByRole('button', { name: 'Quitar este pack de voces' }).count(), 0)
+  // al lado, el pad del colchon: el de la app, y se pueden importar los propios
+  await compu.locator('.voz-salto', { hasText: 'Pad del colchón: el de AirTracks' }).getByRole('button', { name: 'Importar mis pads…' }).waitFor()
+  await captura(compu, 'secciones-voz-y-pads')
 
   const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
   ctxCel.setDefaultTimeout(15000)

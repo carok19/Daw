@@ -23,6 +23,7 @@ export function buildEstadoCompleto(state: AppState): EstadoCompleto {
           }
         : null,
     voces: state.voces,
+    pads: state.pads,
     colchon: state.colchon,
     lista: state.listaActiva,
     pantallaVideo: state.pantallaVideo,

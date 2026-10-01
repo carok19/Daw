@@ -3,6 +3,7 @@ import path from 'node:path'
 import { NOTAS_PAD, type NotaPad } from '../shared/colchon'
 import { encabezadoWav16 } from './audio'
 import { appBaseDir } from './projects'
+import type { PadsPropios } from './padsPropios'
 
 /**
  * Pads de ambiente para el colchón (ver shared/colchon.ts), sintetizados por
@@ -139,10 +140,16 @@ export function wavDePad(muestras: Float32Array): Buffer {
 export class Pads {
   private enCurso = new Map<NotaPad, Promise<string>>()
 
-  constructor(private readonly dir = path.join(appBaseDir(), 'pads')) {}
+  constructor(
+    private readonly dir = path.join(appBaseDir(), 'pads'),
+    /** los de la banda (si se importaron y estan activos, suenan esos) */
+    private readonly propios: PadsPropios | null = null
+  ) {}
 
-  /** Ruta del WAV del pad de esa nota (lo sintetiza la primera vez). */
+  /** Ruta del WAV del pad de esa nota (el propio, o el de la app: lo sintetiza la primera vez). */
   ruta(nota: NotaPad): Promise<string> {
+    const propio = this.propios?.ruta(nota)
+    if (propio) return Promise.resolve(propio)
     const archivo = path.join(this.dir, `v${VERSION}-${NOTAS_PAD.indexOf(nota)}.wav`)
     if (fs.existsSync(archivo)) return Promise.resolve(archivo)
     let p = this.enCurso.get(nota)

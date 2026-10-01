@@ -137,6 +137,10 @@ test('AirTracks Video: un video dejado en la carpeta se vincula y se alinea solo
   const alAbrir = await estadoApp()
   assert.equal(alAbrir.carpeta, carpeta)
   assert.equal(alAbrir.carpetaConfirmada, false, 'la primera vez pregunta dónde guardar los videos')
+  const captura = async (p: Page, nombre: string): Promise<void> => {
+    if (process.env.E2E_CAPTURAS) await p.screenshot({ path: path.join(process.env.E2E_CAPTURAS, `${nombre}.png`) })
+  }
+  await captura(control, 'video-primera-vez')
   await control.getByRole('button', { name: 'Usar esta carpeta' }).click()
   await esperarQue(async () => (await estadoApp()).carpetaConfirmada, 5000, 'que se confirme la carpeta')
   fs.copyFileSync(video, path.join(carpeta, path.basename(video)))
@@ -149,6 +153,7 @@ test('AirTracks Video: un video dejado en la carpeta se vincula y se alinea solo
   assert.ok(Math.abs(alineado.desfaseMs! - PLACA_SEG * 1000) <= 40, `desfase ${alineado.desfaseMs}`)
   assert.equal(alineado.archivo, path.basename(video))
   assert.deepEqual((await estadoApp()).sueltos, [])
+  await captura(control, 'video-alineado')
   // al lado del video, su ficha con la cancion y la alineacion
   const ficha = path.join(carpeta, 'Gracia Sublime (Lyric Video).airtracks-video.json')
   assert.equal(JSON.parse(fs.readFileSync(ficha, 'utf-8')).desfaseMs, alineado.desfaseMs)

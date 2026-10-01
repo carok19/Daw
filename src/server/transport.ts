@@ -84,6 +84,8 @@ export class Transporte {
   private pausaDeColchon: { tabId: string; tPausa: number } | null = null
   /** cambio el colchon: avisar a todos YA (antes de la orden que lo termina, asi el click para justo) */
   alCambiarColchon: () => void = () => {}
+  /** que pads suenan ('app' o el pack propio; ver PadsPropios.revision) */
+  revisionPads: () => string = () => 'app'
 
   constructor(
     private readonly io: Server,
@@ -394,6 +396,7 @@ export class Transporte {
       compasMs,
       pulsos: Math.max(1, tempo.compas),
       desdeCancion: true,
+      padsRevision: this.revisionPads(),
       // el tono de la seccion que termina (si la cancion cambia de tono)
       pad: padDeCancion(tab.proyecto, Math.min(limite.limiteMs, dur) - 1),
       click: true,
@@ -451,6 +454,7 @@ export class Transporte {
       compasMs: (60000 / a.bpm) * a.compas,
       pulsos: a.compas,
       desdeCancion: false,
+      padsRevision: this.revisionPads(),
       pad: notaDelPad(a.tonalidad),
       click: a.click,
       volumenPad: a.volumenPad,

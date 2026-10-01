@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Music, Pencil, Repeat, Trash2, WandSparkles, X } from 'lucide-react'
 import type { AnalisisProyecto, InfoModeloVoz, InfoVoces, Marcador, ModoSalto, Proyecto, SaltoPendiente } from '@shared/types'
 import { TONALIDADES, tonalidadEn, transponerTonalidad } from '@shared/tonalidad'
@@ -36,6 +36,8 @@ interface Props {
   onImportarVoces: () => Promise<boolean>
   onActivarVoces: (activo: boolean) => void
   onBorrarVoces: () => void
+  /** que pad suena en el colchon (al lado de la voz del salto) */
+  padsDelColchon?: ReactNode
 }
 
 const EN_CURSO = ['analizando', 'esperando-voz', 'reconociendo']
@@ -151,6 +153,7 @@ export function MarkersPanel(p: Props) {
           </div>
         </div>
         <VozDelSalto voces={p.voces} onImportar={p.onImportarVoces} onActivar={p.onActivarVoces} onBorrar={p.onBorrarVoces} />
+        {p.padsDelColchon}
         <div className="secciones-nueva">
           <input
             placeholder="Nombre (Intro, Coro…)"

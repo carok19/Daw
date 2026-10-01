@@ -136,6 +136,15 @@ app.whenReady().then(async () => {
     return result.filePaths[0]
   })
 
+  ipcMain.handle('dialog:pick-pads', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Pads del colchón: un .zip o .rar con un audio por tono, o un solo audio',
+      properties: ['openFile'],
+      filters: [{ name: 'Pads (.zip, .rar, WAV, MP3, M4A, AIFF, FLAC)', extensions: [...EXTENSIONES_COMPRIMIDO, 'wav', 'mp3', 'm4a', 'aac', 'aif', 'aiff', 'flac', 'ogg'] }]
+    })
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+  })
+
   ipcMain.handle('biblioteca:elegir', async () => {
     const r = await dialog.showOpenDialog(mainWindow!, {
       title: 'Carpeta de la biblioteca de canciones',

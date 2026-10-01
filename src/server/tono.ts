@@ -73,7 +73,7 @@ export function archivoQueSuena(p: Proyecto, pista: Pista): string {
 
 // ---- ffmpeg ----
 
-function prioridadBaja(proc: ChildProcess): void {
+export function prioridadBaja(proc: ChildProcess): void {
   try {
     if (proc.pid) os.setPriority(proc.pid, os.constants.priority.PRIORITY_BELOW_NORMAL)
   } catch {

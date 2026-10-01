@@ -388,6 +388,8 @@ export interface ColchonActivo {
    * entero); de la lista, `empezo`
    */
   padDesde?: number
+  /** de que pads se trata ('app' o el pack propio): va en la direccion del pad (nadie usa los de antes guardados) */
+  padsRevision?: string
   compasMs: number
   pulsos: number
   /** dentro de una canción: la banda se apaga en el primer compás (de `empezo` a `empezo + compasMs`) */
@@ -427,6 +429,17 @@ export interface InfoVoces {
   ejemplos: string[]
 }
 
+/** Pads propios del colchón (importados en la compu, en vez de los de la app). */
+export interface InfoPads {
+  /** nombre del archivo que se importó */
+  nombre: string
+  /** usarlos (si no, suenan los de la app) */
+  activo: boolean
+  /** los tonos que trae el pack; los demás se hicieron con rubberband desde el más cercano */
+  originales: string[]
+  revision: string
+}
+
 /** Snapshot completo enviado a un cliente que se conecta o ante cambios estructurales. */
 export interface EstadoCompleto {
   tabs: TabResumen[]
@@ -442,6 +455,8 @@ export interface EstadoCompleto {
   saltoPendiente: SaltoPendiente | null
   /** voces para avisar los saltos (null = no se importo ningun pack) */
   voces?: InfoVoces | null
+  /** pads propios del colchón (null = no se importaron: suenan los de la app) */
+  pads?: InfoPads | null
   /** colchón sonando en la canción de arriba (null = no) */
   colchon?: ColchonActivo | null
   /** la lista del dia cargada arriba (null = canciones sueltas) */

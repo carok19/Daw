@@ -6,6 +6,7 @@ import type { AppController } from '../app/useAppController'
 import { Modal } from '../ui/Modal'
 import { PulsoColchon, textoColchon, textoCompasColchon } from '../ui/Colchon'
 import { useGolpeColchon } from '../app/playheadStore'
+import { PadsDelColchon } from './PadsDelColchon'
 
 /** Compases que se pueden elegir (6 = 6/8, contado en 6). */
 const COMPASES = [4, 3, 6, 2]
@@ -198,6 +199,7 @@ export function PantallaColchon({ controller, proyecto }: { controller: AppContr
             <Volumen valor={a.volumenClick} etiqueta="Volumen del click" onCambio={(volumenClick) => ajustar({ volumenClick })} />
           </label>
         </div>
+        <PadsDelColchon controller={controller} />
         <p className="colchon-ayuda">
           Suena en todos los celulares a la vez: el pad del lado de la banda y el click del lado del click (cada uno lo ajusta en “Mi
           mezcla”). Si pasás a otra canción, el colchón sigue sonando; cuando le das ▶, acompaña la cuenta y se va.

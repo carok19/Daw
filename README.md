@@ -308,7 +308,16 @@ cambian a propósito.
 12. **Colchón: pad y click, sin la banda.** Un **pad** de ambiente (un
     colchón sostenido en el tono) y el **click**, sonando en todos a la vez.
     El pad lo hace la app (no hay que bajar nada): raíz, quinta y octava, sin
-    tercera, así sirve igual en mayor y en menor. Va del lado de la banda y
+    tercera, así sirve igual en mayor y en menor. **Pads propios:** en
+    *Secciones* (al lado de la voz del salto) o en la pantalla de un colchón,
+    **Importar mis pads…** → un .zip o .rar con un audio por tono (el nombre
+    dice el tono: “Pad C.wav”, “Warm Pad - F#.mp3”, “Pad Bb.wav”, “Fondo
+    Re.wav”) **o un solo audio** (si el nombre no dice el tono, lo pregunta).
+    Los tonos que faltan se hacen solos desde el más cercano (rubberband, a lo
+    sumo 6 semitonos) y de cada uno se arma un loop que empalma sin corte (un
+    tramo del medio, lejos del fade in y del final, con un cruce de 4 s). Con
+    **De AirTracks / Mis pads** se elige cuál suena sin borrar nada; el tacho
+    los quita. Va del lado de la banda y
     el click del lado del click; en **Mi mezcla** cada músico tiene una fila
     **Pad** (y **Click**) para subirlo, bajarlo o mutearlo solo para él. Dos
     formas:
@@ -769,6 +778,16 @@ estado. **Nada de su audio viaja por la red mientras suena:**
   colchón, sin cuenta: el bus vuelve de golpe en ese instante, el click del
   colchón para justo ahí y el pad se va en 1,5 s. Si se elige antes de que
   empiece, el colchón se cancela y es un salto común.
+- **Pads propios** (`server/padsPropios.ts`): se importan en
+  `~/MultitrackApp/pads-propios` (`<0-11>.wav` + `indice.json` con los tonos
+  originales y una `revision`). `Pads.ruta` da el propio si están activos.
+  El colchón lleva `padsRevision` y cada dispositivo baja
+  `/pad/<n>.wav?r=<revision>`: al cambiar de pack (o volver a los de la app)
+  nadie usa uno guardado de antes. El tono sale del nombre del archivo
+  (letras en inglés —también “C Sharp”, “Db”— o en español con mayúscula:
+  “Re#”, “Sib”); los que faltan, con rubberband desde el más cercano (a igual
+  distancia, bajando). Del archivo se leen 75 s; el loop es de hasta 40 s,
+  mono a 22 kHz y con el pico en −3 dB, como los de la app.
 - **De la lista:** un proyecto sin pistas con `colchon` (ajustes). El
   motor no baja nada; play/pausa del transporte lo empiezan y terminan. Un
   cambio de BPM sonando mueve el “1” al próximo golpe (el pad sigue).

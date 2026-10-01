@@ -870,6 +870,31 @@ export function useAppController() {
           return false
         }
       },
+      // ---- pads propios del colchon ----
+      /**
+       * Importa pads (de `filePath`, o elegir el archivo). Un audio cuyo nombre no dice el tono:
+       * devuelve `pedirNota` y se vuelve a llamar con la nota elegida.
+       */
+      async importarPads(filePath?: string, nota?: string): Promise<{ ok: boolean; pedirNota?: string; filePath?: string }> {
+        const ruta = filePath ?? (await window.electronAPI?.pickPadsFile?.())
+        if (!ruta) return { ok: false }
+        try {
+          const r = await socket.emitAck<{ ok: boolean; error?: string; pedirNota?: string }>('pads:importar', { filePath: ruta, nota }, 10 * 60 * 1000)
+          if (r.pedirNota) return { ok: false, pedirNota: r.pedirNota, filePath: ruta }
+          if (!r.ok) avisar({ tipo: 'error', texto: r.error ?? 'No se pudieron importar los pads' })
+          else avisar({ tipo: 'info', texto: 'Pads importados: el colchón usa tus pads en los 12 tonos' }, 6000)
+          return { ok: r.ok }
+        } catch {
+          avisar({ tipo: 'error', texto: 'La importación de los pads tardó demasiado' })
+          return { ok: false }
+        }
+      },
+      activarPads(activo: boolean): void {
+        emit('pads:activar', { activo })
+      },
+      borrarPads(): void {
+        emit('pads:borrar', {})
+      },
       activarVoces(activo: boolean): void {
         emit('voces:activar', { activo })
       },
