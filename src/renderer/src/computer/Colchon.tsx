@@ -105,7 +105,7 @@ export function BannerColchon({ controller, colchon }: { controller: AppControll
       ? 'Vuelve la banda…'
       : 'Se está apagando…'
     : deEstaCancion
-      ? `${empezo ? 'La banda paró.' : 'La banda se va en el próximo compás.'} Tocá una sección para volver (entra en el próximo compás) o ▶ para seguir donde quedó.`
+      ? `${empezo ? 'La banda paró.' : e?.modoSalto === 'seccion' ? 'La banda se va al terminar la sección (el pad ya está entrando).' : 'La banda se va en el próximo compás.'} Tocá una sección para volver (entra en el próximo compás) o ▶ para seguir donde quedó.`
       : 'Sigue sonando: al darle ▶ a una canción, acompaña la cuenta y se va.'
   return (
     <div className={`banner-colchon ${terminando ? 'terminando' : ''}`} role="region" aria-label="Colchón">

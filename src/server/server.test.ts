@@ -25,7 +25,7 @@ import { demoraEntre, pistasQueCambianDeTono } from './tono'
 import { evaluarFirewall, type DatosFirewall } from './firewall'
 import { compasesDeCuenta, golpeActual, golpesDeCuenta, LARGO_SONIDO_CUENTA_SEC, programarCuenta, suenaSuCuenta } from '../shared/cuenta'
 import { detectarCuentaPropia } from './cuenta'
-import { Voces } from './voces'
+import { nivelDeHabla, Voces } from './voces'
 import { esAdaptadorVirtual } from './network'
 import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, tonalidadEn, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { generarClick, wav16 } from './__fixtures__/sintetico'
@@ -1616,6 +1616,13 @@ test('voces de fábrica: el programa trae las voces en español; un pack importa
   let pico = 0
   for (const x of audio) pico = Math.max(pico, Math.abs(x))
   assert.ok(pico > 0.1, `se escucha (${pico})`)
+  // al nivel de la guia de la cancion: cada voz habla tan fuerte como la guia (ni mas ni menos)
+  for (const nivelGuia of [0.05, 0.2]) {
+    const igualada = v.renderizar(plan, nivelGuia)
+    const voz = igualada.subarray(Math.round(((plan.partes[0].enMs - plan.desdeMs) / 1000) * 48000))
+    const nivel = nivelDeHabla(voz.subarray(0, Math.round((v.duracion('coro 2')! / 1000) * 48000)), 48000)!
+    assert.ok(Math.abs(nivel / nivelGuia - 1) < 0.1, `guía ${nivelGuia} → voz ${nivel.toFixed(3)}`)
+  }
   // apagarlas queda recordado (sin tocar las del programa)
   v.activar(false)
   assert.equal(nueva().info()!.activo, false)
@@ -1694,7 +1701,8 @@ test('voz del salto: nombres del pack, sinónimos y en qué pulso va cada voz', 
   const plan = (nombre: string, limiteMs: number, minInicioMs = 0, extra: Partial<Parameters<typeof planearAnuncio>[0]> = {}) =>
     planearAnuncio({ nombre, limiteMs, minInicioMs, compasesMs: compases, pulsos: 4, duracion, ...extra })
   assert.deepEqual(plan('Coro', 6000), {
-    desdeMs: 4000,
+    // la guia se calla los 2 ultimos compases (diria la seccion que venia un compas antes)
+    desdeMs: 2000,
     hastaMs: 6000,
     partes: [
       { clave: 'coro', enMs: 4000 },
@@ -1704,6 +1712,8 @@ test('voz del salto: nombres del pack, sinónimos y en qué pulso va cada voz', 
   })
   // un nombre largo que pisa el pulso 3: solo "4"
   assert.deepEqual(plan('Instrumental', 6000)!.partes.map((p) => `${p.clave}@${p.enMs}`), ['instrumental@4000', '4@5500'])
+  // sin tiempo para 2 compases: la guia se calla el ultimo
+  assert.equal(plan('Coro', 6000, 3000)!.desdeMs, 4000)
   // el salto esta tan cerca que el "1" ya paso: el nombre en el primer pulso que llega a tiempo
   const tarde = plan('Puente', 6000, 4300)!
   assert.deepEqual(tarde.partes.map((p) => `${p.clave}@${p.enMs}`), ['puente@4500', '3@5000', '4@5500'])
@@ -2491,7 +2501,7 @@ test('colchón de la lista: se crea, empieza al dar play, cambia en vivo y se ap
   await env.cerrar()
 })
 
-test('colchón dentro de la canción: en el próximo compás se va la banda, y vuelve en el "1" de la sección que se toque', async (t) => {
+test('colchón dentro de la canción: en el próximo compás (o al terminar la sección) se va la banda, y vuelve en el "1" de la sección que se toque', async (t) => {
   const env = await entorno(t)
   const compu = await env.conectar(compuAuth)
   const largo = path.join(tmpDir('multitrack-audio-'), 'largo.wav')
@@ -2504,6 +2514,9 @@ test('colchón dentro de la canción: en el próximo compás se va la banda, y v
   p.cuenta = 0
   const entrar = (): Promise<{ ok: boolean; error?: string }> => emitAck(compu, 'colchon:entrar', {})
   const estado = (): Promise<EstadoCompleto> => emitAck<EstadoCompleto>(compu, 'state:request', {})
+  // modo de salto "En el compás": el colchon entra en el proximo compas (al final, "Al terminar")
+  compu.emit('salto:modo', { modo: 'compas' })
+  await esperar(50)
   const play = (filtro: (c: ComandoProgramado) => boolean = (c) => c.accion === 'play'): Promise<ComandoProgramado> => esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', filtro, 5000)
 
   // parado no hay colchon
@@ -2575,6 +2588,35 @@ test('colchón dentro de la canción: en el próximo compás se va la banda, y v
   const inicioCuenta = conCuenta.playback.cuenta!.golpes[0].t
   assert.equal(c.hasta, inicioCuenta, 'el click del colchon para cuando empieza la cuenta')
   assert.equal(c.salidaPadMs, conCuenta.executeAtServerTime - inicioCuenta + 1500, 'el pad acompaña la cuenta')
+  await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.colchon, 8000), compu.emit('transport:stop')])
+
+  // "Al terminar" (el modo de siempre): la banda termina la seccion; el pad ya entro por debajo
+  compu.emit('salto:modo', { modo: 'seccion' })
+  const primera = env.server.state.listaTabs().find((x) => x.nombre === 'Colchon')!
+  compu.emit('tabs:switch', { tabId: primera.tabId })
+  await esperar(100)
+  const [desde1] = await Promise.all([play(), compu.emit('transport:play', { positionMs: 1000 })])
+  await esperar(50)
+  const pedido = Date.now()
+  assert.equal((await entrar()).ok, true)
+  c = (await estado()).colchon!
+  assert.equal(c.empezo, desde1.executeAtServerTime + 3000, 'cuando termina el Inicio (4 s), no en el proximo compas')
+  assert.ok(c.padDesde! >= pedido && c.padDesde! <= c.empezo - 1000, `el pad entra antes, por debajo de la banda (${c.empezo - c.padDesde!} ms antes)`)
+  // stop (ya en el colchon): silencio, el pad se va rapido
+  await esperar(c.empezo + 300 - Date.now())
+  const [, conStop] = await Promise.all([play((x) => x.accion === 'stop'), esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => x.colchon?.hasta != null), compu.emit('transport:stop')])
+  assert.equal(conStop.colchon!.salidaPadMs, 800)
+  await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.colchon, 8000)
+
+  // en la ultima seccion: el colchon sigue cuando termina la cancion (en el pulso de su click)
+  const [desde2] = await Promise.all([play(), compu.emit('transport:play', { positionMs: 13000 })])
+  await esperar(50)
+  assert.equal((await entrar()).ok, true)
+  c = (await estado()).colchon!
+  const durCancion = env.server.state.getActiveTab()!.proyecto.duracionTotalMs
+  const finEnGrilla = Math.ceil((durCancion - 50) / 2000) * 2000
+  assert.equal(c.empezo, desde2.executeAtServerTime + (finEnGrilla - 13000))
+  assert.equal(c.padDesde, c.empezo - 4000, '2 compases antes')
   compu.emit('transport:stop')
   await env.cerrar()
 })

@@ -3,7 +3,7 @@ import type { Server } from 'socket.io'
 import type { AccionProgramada, AnuncioSalto, ColchonActivo, ComandoProgramado, SeccionSaltarPayload, TramoReproduccion } from '../shared/types'
 import { calcularSecciones, nuevoPlayback, posicionActualMs, seccionEn, type Seccion } from '../shared/playback'
 import { compasesDeCuenta, programarCuenta } from '../shared/cuenta'
-import { SALIDA_PAD_MS, SALIDA_PAD_VUELTA_MS, largoDeCompas, notaDelPad, padDeCancion, proximoCompas, proximoPulso } from '../shared/colchon'
+import { SALIDA_PAD_MS, SALIDA_PAD_STOP_MS, SALIDA_PAD_VUELTA_MS, largoDeCompas, notaDelPad, padDeCancion, proximoCompas, proximoPulso } from '../shared/colchon'
 import type { AppState, Tab } from './state'
 
 /**
@@ -149,8 +149,9 @@ export class Transporte {
   stop(): void {
     const tab = this.state.getActiveTab()
     if (!tab) return
-    // stop = silencio: tambien el colchon que este sonando (de esta cancion, de otra o de la lista)
-    this.terminarColchon()
+    // stop = silencio: tambien el colchon que este sonando (de esta cancion, de otra o de la lista),
+    // mas rapido que con "Terminar" (que el pad no quede sonando despues de parar)
+    this.terminarColchon(SALIDA_PAD_STOP_MS)
     if (tab.proyecto.colchon) return
     if (tab.playback.estado === 'stopped' && tab.playback.positionMs === 0) return
     const executeAt = Date.now() + (tab.playback.estado === 'playing' ? this.margen() : 0)
@@ -365,9 +366,23 @@ export class Transporte {
     if (!tempo || tempo.compasesMs.length < 2) return 'Esta canción no tiene el tempo detectado: el colchón sigue su click'
     const now = Date.now()
     const dur = tab.proyecto.duracionTotalMs
-    const limite = this.limiteDeSalto(tab, calcularSecciones(tab.proyecto.marcadores, dur), 'compas', now)
-    if (!limite || limite.limiteMs >= dur) return 'La canción ya está terminando'
-    const compasMs = largoDeCompas(tempo.compasesMs, limite.limiteMs)
+    // como los saltos: "al terminar" = cuando termina la seccion que suena (en la ultima, al final de
+    // la cancion: el pad sigue despues); si no, en el proximo compas
+    const alTerminar = this.state.modoSalto === 'seccion'
+    const limite = this.limiteDeSalto(tab, calcularSecciones(tab.proyecto.marcadores, dur), alTerminar ? 'seccion' : 'compas', now)
+    if (!limite || limite.limiteMs > dur || (!alTerminar && limite.limiteMs >= dur)) return 'La canción ya está terminando'
+    if (limite.limiteMs >= dur) {
+      // la ultima seccion: el colchon sigue cuando termina la cancion, en el pulso de su click (el "1" que seguiria)
+      const c = tempo.compasesMs
+      const largo = largoDeCompas(c, c[c.length - 1])
+      let grilla = c.find((x) => x >= dur - 50) ?? c[c.length - 1]
+      while (grilla < dur - 50) grilla += largo
+      limite.tSalto += grilla - limite.limiteMs
+      limite.limiteMs = grilla
+    }
+    const compasMs = largoDeCompas(tempo.compasesMs, Math.min(limite.limiteMs, dur - 1))
+    // el pad entra por debajo de la banda los 2 compases antes (si hay tiempo): cuando la banda se va, ya esta sonando
+    const padDesde = Math.min(limite.tSalto, Math.max(now + this.margen(), limite.tSalto - 2 * compasMs))
     // un salto elegido queda sin efecto: la banda se va
     this.state.saltoPendiente = null
     this.state.colchon = {
@@ -375,11 +390,12 @@ export class Transporte {
       tabId: tab.tabId,
       empezo: limite.tSalto,
       inicio: limite.tSalto,
+      padDesde,
       compasMs,
       pulsos: Math.max(1, tempo.compas),
       desdeCancion: true,
-      // el tono de la seccion donde entra (si la cancion cambia de tono)
-      pad: padDeCancion(tab.proyecto, limite.limiteMs),
+      // el tono de la seccion que termina (si la cancion cambia de tono)
+      pad: padDeCancion(tab.proyecto, Math.min(limite.limiteMs, dur) - 1),
       click: true,
       volumenPad: this.state.volumenPadColchon,
       volumenClick: 100,
@@ -431,6 +447,7 @@ export class Transporte {
       tabId: tab.tabId,
       empezo: inicio,
       inicio,
+      padDesde: inicio,
       compasMs: (60000 / a.bpm) * a.compas,
       pulsos: a.compas,
       desdeCancion: false,
@@ -449,7 +466,7 @@ export class Transporte {
    * se apaga despacio. Si todavia no habia empezado, se cancela (la banda de
    * la cancion sigue).
    */
-  terminarColchon(): void {
+  terminarColchon(salidaPadMs = SALIDA_PAD_MS): void {
     const c = this.colchonSonando()
     if (!c) return
     const desde = Date.now() + this.margen()
@@ -460,7 +477,7 @@ export class Transporte {
       this.alCambiarColchon()
       return
     }
-    this.terminarColchonEn(c, proximoPulso(c, desde), SALIDA_PAD_MS)
+    this.terminarColchonEn(c, proximoPulso(c, desde), salidaPadMs)
   }
 
   private terminarColchonEn(c: ColchonActivo, t: number, salidaPadMs: number, avisar = true): void {

@@ -2028,8 +2028,10 @@ test('voz del salto con audio real: en el último compás se calla la guía y se
     // antes del ultimo compas se oye la guia; en el hueco entre "Puente" y "3", nada (la guia se calla)
     assert.ok(pico(1.2, 1.95) > 0.1, `${quien}: la guía suena antes (${pico(1.2, 1.95)})`)
     assert.ok(pico(2.5, 2.95) < 0.02, `${quien}: la guía se calla en el compás del aviso (${pico(2.5, 2.95)})`)
-    // "Puente" en el 1 y el "3" justo en su pulso (a 3 s de la cancion)
-    assert.ok(pico(2.0, 2.35) > 0.2, `${quien}: suena "Puente" (${pico(2.0, 2.35)})`)
+    // "Puente" en el 1, tan fuerte como la guia (la voz se iguala a ella), y el "3" justo en su pulso (a 3 s de la cancion)
+    const guia = pico(1.2, 1.95)
+    const voz = pico(2.0, 2.35)
+    assert.ok(voz > guia * 0.75 && voz < guia * 1.33, `${quien}: "Puente" al nivel de la guía (${voz.toFixed(3)} vs ${guia.toFixed(3)})`)
     const tres = m.find(([pos, v]) => pos >= 2.95 && pos < 3.3 && v > 0.05)
     assert.ok(tres, `${quien}: suena el "3"`)
     assert.ok(Math.abs(tres[0] - 3.0) < 0.006, `${quien}: el "3" a los ${tres[0].toFixed(4)} s de la canción (debía ser 3,000)`)
@@ -2172,7 +2174,8 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
   assert.match((await compu.locator('.banner-colchon').textContent())!, /Colchón · D · 120 BPM/)
   assert.equal(await boton.getAttribute('aria-pressed'), 'true')
   await cel.locator('.m-colchon').waitFor()
-  assert.match((await cel.locator('.m-colchon').textContent())!, /La banda (paró|se va en el próximo compás).*Tocá una sección para volver/)
+  assert.match((await cel.locator('.m-colchon').textContent())!, /La banda (paró|se va al terminar la sección).*Tocá una sección para volver/)
+  assert.ok(c.padDesde! < c.inicio - 1000, 'el pad entra antes, por debajo de la banda')
   await captura(compu, 'colchon-cancion-compu')
   await captura(cel, 'colchon-cancion-celular')
   // Mi mezcla del celular: el pad aparece para ajustarlo
@@ -2227,10 +2230,14 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
     assert.ok(max(c.inicio + 2100, hasta - 50, 2) < bandaAntes * 0.05, `${nombre}: la banda sonó en el colchón (${max(c.inicio + 2100, hasta - 50, 2)})`)
     assert.ok(max(c.inicio + 900, c.inicio + 1100, 2) < bandaAntes * 0.75, `${nombre}: la banda no se estaba yendo a mitad del compás`)
     assert.ok(max(hasta + 100, hasta + 2000, 2) > bandaAntes * 0.8, `${nombre}: la banda no volvió`)
-    // el pad: no antes; en el colchon si (grave, a la derecha); despues de volver se va enseguida
-    const padAntes = max(t0 + 500, c.inicio - 50, 3)
+    // el pad: no antes de entrar; entra por debajo de la banda y cuando la banda se va ya esta entero
+    // (no se oye que arranca); en el colchon si (grave, a la derecha); despues de volver se va enseguida
+    const padAntes = max(t0 + 500, c.padDesde! - 50, 3)
     const pad = max(c.inicio + 4000, hasta - 50, 3)
     assert.ok(pad > 0.05 && pad > 10 * padAntes, `${nombre}: el pad (${pad.toFixed(3)}; antes ${padAntes.toFixed(3)})`)
+    // (el pad "ondula" despacio, por el coro: se mira un compas entero)
+    const padAlIrseLaBanda = max(c.inicio - 2000, c.inicio, 3)
+    assert.ok(padAlIrseLaBanda > pad * 0.25, `${nombre}: el pad ya está sonando cuando se va la banda (${padAlIrseLaBanda.toFixed(3)} de ${pad.toFixed(3)})`)
     assert.ok(max(hasta + 1800, hasta + 2500, 3) < pad * 0.1, `${nombre}: el pad no se fue al volver`)
   }
   const verGolpes = (r: Record<string, Map<number, number>>): string =>

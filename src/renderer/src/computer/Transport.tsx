@@ -305,7 +305,7 @@ export function Transport(p: Props) {
                 ? 'Terminar el colchón (C): el click para y el pad se apaga'
                 : !p.proyecto.tempo
                   ? 'Colchón: hace falta el tempo de la canción (el click)'
-                  : 'Colchón (C): en el próximo compás se va la banda y siguen el click y un pad en el tono de la canción. Tocá una sección para volver.'
+                  : 'Colchón (C): al terminar la sección (o en el próximo compás, según el modo de salto) se va la banda y siguen el click y un pad en el tono de la canción, que ya entra por debajo. Tocá una sección para volver.'
             }
             aria-pressed={p.enColchon}
             aria-label="Colchón"

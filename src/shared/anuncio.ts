@@ -2,8 +2,9 @@
  * Voz que avisa a que seccion se salta: con un salto elegido, en el ultimo
  * compas antes del salto suena el nombre de la seccion ("Coro") en el "1" y
  * los ultimos pulsos contados ("3, 4"), con las voces del pack que se importo
- * en la compu. Mientras tanto la voz guia de la cancion no se escucha (diria
- * la seccion que venia, no la elegida).
+ * en la compu. Los 2 ultimos compases la voz guia de la cancion no se escucha
+ * (diria la seccion que venia, no la elegida), y la voz suena al mismo nivel
+ * que hablaba la guia.
  *
  * Aca esta lo que no depende del audio: de que archivo sale cada nombre y en
  * que momento de la cancion va cada voz.
@@ -128,8 +129,13 @@ export function planearAnuncio(p: PedidoAnuncio): PlanAnuncio | null {
 
   const compases = p.compasesMs
   let inicioCompas: number | undefined
+  let compasAnterior: number | undefined
   if (compases && compases.length > 1) {
-    for (const c of compases) if (c < p.limiteMs - 1) inicioCompas = c
+    for (const c of compases)
+      if (c < p.limiteMs - 1) {
+        compasAnterior = inicioCompas
+        inicioCompas = c
+      }
   }
 
   if (inicioCompas === undefined) {
@@ -165,7 +171,14 @@ export function planearAnuncio(p: PedidoAnuncio): PlanAnuncio | null {
     libreDesde = t + d + RESPIRO_MS
   }
   if (partes.length === 0) return null
-  // la guia se calla todo el compas (si ya empezo, desde la primera voz)
-  const desdeMs = inicioCompas >= p.minInicioMs ? inicioCompas : partes[0].enMs
+  // la guia se calla los 2 ultimos compases: muchas guias dicen la seccion que venia un compas
+  // antes ("Puente…") y se mezclaria con la elegida. Si no hay tiempo, el ultimo; si ya empezo,
+  // desde la primera voz
+  const desdeMs =
+    compasAnterior !== undefined && compasAnterior >= p.minInicioMs
+      ? compasAnterior
+      : inicioCompas >= p.minInicioMs
+        ? inicioCompas
+        : partes[0].enMs
   return { desdeMs, hastaMs: p.limiteMs, partes }
 }

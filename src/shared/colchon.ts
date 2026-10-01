@@ -9,10 +9,12 @@ import { largoTipicoDeCompas } from './playback'
  * - Como canción de la lista ("Colchón · D"): no tiene pistas; play arranca
  *   el pad (y el click, si se eligió) y stop lo apaga despacio. Para la
  *   oración, la ministración o entre canciones.
- * - Dentro de una canción: en el próximo compás la banda se apaga en un
- *   compás, el click sigue en el mismo pulso (se funde con el de la canción,
- *   el mismo sonido) y entra el pad en el tono de la canción. Tocando una
- *   sección, la canción vuelve en el "1" del próximo compás.
+ * - Dentro de una canción: al terminar la sección (o en el próximo compás,
+ *   según el modo de salto) la banda se apaga en un compás, el click sigue
+ *   en el mismo pulso (se funde con el de la canción, el mismo sonido) y el
+ *   pad, que ya entró por debajo de la banda, queda sonando en el tono de la
+ *   sección. En la última sección, el pad sigue cuando termina la canción.
+ *   Tocando una sección, la canción vuelve en el "1" del próximo compás.
  *
  * El click no es audio de la canción: cada dispositivo programa los golpes a
  * la hora de la compu (como la cuenta), así suena en todos a la vez sin
@@ -53,6 +55,8 @@ export const ENTRADA_PAD_SOLO_MS = 3000
 export const SALIDA_PAD_MS = 4000
 /** Volviendo a la canción, el pad se va en esto (la banda ya entró). */
 export const SALIDA_PAD_VUELTA_MS = 1500
+/** Con stop (■), el pad se va en esto: stop es silencio, sin quedar sonando. */
+export const SALIDA_PAD_STOP_MS = 800
 
 /** El pad suena del lado de la banda (con el paneo por defecto, a la derecha). */
 export const PAN_PAD = PAN_BANDA / 100

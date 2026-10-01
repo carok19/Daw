@@ -382,6 +382,12 @@ export interface ColchonActivo {
    * (es `empezo`, salvo que se haya cambiado el BPM sonando: ahí, el primer "1" del pulso nuevo)
    */
   inicio: number
+  /**
+   * hora del servidor en que el pad empieza a entrar: dentro de una canción,
+   * por debajo de la banda antes de que se vaya (cuando se va, ya está
+   * entero); de la lista, `empezo`
+   */
+  padDesde?: number
   compasMs: number
   pulsos: number
   /** dentro de una canción: la banda se apaga en el primer compás (de `empezo` a `empezo + compasMs`) */

@@ -1150,8 +1150,15 @@ export class StreamingEngine implements PlaybackEngine {
     }
     // click: dentro de una cancion entra durante el compas en que se va la banda (el mismo pulso: se funden)
     this.envolvente(v.clickEnv.gain, c.desdeCancion ? [[tI, 0], [tI + compas, 1]] : [[tI, 1]])
-    const entradaPad = c.desdeCancion ? 2 * compas : ENTRADA_PAD_SOLO_MS / 1000
-    this.envolvente(v.padEnv.gain, cortar([[tI, 0], [tI + entradaPad, 1]], [[tFin + salida, 0]]))
+    // el pad: dentro de una cancion entra por debajo de la banda antes de que se vaya (cuando se va, ya
+    // esta entero: no se oye que "arranca"); si no hubo tiempo, rapido. El de la lista, despacio
+    const tP = this.ctxDeServidor(c.padDesde ?? c.empezo, off)
+    const entradaPad: [number, number][] = !c.desdeCancion
+      ? [[tI, 0], [tI + ENTRADA_PAD_SOLO_MS / 1000, 1]]
+      : tP < tI - 0.2
+        ? [[tP, 0], [tI, 1]]
+        : [[tI, 0], [tI + compas / 2, 1]]
+    this.envolvente(v.padEnv.gain, cortar(entradaPad, [[tFin + salida, 0]]))
     this.programarCancion()
   }
 
@@ -1291,7 +1298,7 @@ export class StreamingEngine implements PlaybackEngine {
     void this.bufferDePad(i).then((buffer) => {
       if (!buffer || v.pad !== pad || v.fin) return
       const off = v.offset()
-      const tInicio = this.ctxDeServidor(v.c.empezo, off)
+      const tInicio = this.ctxDeServidor(v.c.padDesde ?? v.c.empezo, off)
       const t = Math.max(tInicio, this.ctx.currentTime + 0.02)
       // todos en el mismo punto del loop (el pad "respira" igual en la compu y en los celulares)
       const enLoop = (((this.servidorDeCtx(t, off) - v.c.empezo) / 1000) % buffer.duration + buffer.duration) % buffer.duration

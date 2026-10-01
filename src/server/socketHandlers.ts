@@ -80,6 +80,7 @@ import { planearAnuncio } from '../shared/anuncio'
 import { nombreDeColchon, normalizarAjustesColchon, NOTAS_PAD } from '../shared/colchon'
 import { Pads } from './pads'
 import { Huellas, type RespuestaHuella } from './huellas'
+import { NivelesGuia } from './nivelGuia'
 import { esVelocidadValida, redondearVelocidad, textoPorcentaje, velocidadAplicada } from '../shared/velocidad'
 import { normalizarTonalidad, textoSemitonos, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { direccionesLan, ipParaCliente } from './network'
@@ -275,6 +276,8 @@ export function registerSocketHandlers(
   // voz que avisa los saltos ("Coro… 3, 4"): las que trae la app, o el pack que se importo en la compu
   const voces = new Voces(undefined, conexion.dirVocesDeFabrica ?? null)
   const anuncios = new Anuncios()
+  // la voz suena al nivel que habla la guia de cada cancion
+  const nivelesGuia = new NivelesGuia(projectDir, algoSuena)
   state.voces = voces.info()
   const anunciar = (tab: Tab, nombre: string, limiteMs: number, minInicioMs: number): AnuncioSalto | null => {
     const tempo = tab.proyecto.tempo
@@ -292,7 +295,7 @@ export function registerSocketHandlers(
       desdeMs: plan.desdeMs,
       hastaMs: plan.hastaMs,
       ...pistasDeAnuncio(tab.proyecto),
-      muestras: voces.renderizar(plan)
+      muestras: voces.renderizar(plan, nivelesGuia.nivel(tab.proyecto))
     })
     return { id, desdeMs, hastaMs, pistaId, guiaPistaId }
   }
@@ -347,7 +350,10 @@ export function registerSocketHandlers(
       })
   }
   function revisarCuentasAbiertas(): void {
-    for (const p of state.listaProyectos()) revisarCuentaPropia(p)
+    for (const p of state.listaProyectos()) {
+      revisarCuentaPropia(p)
+      nivelesGuia.preparar(p)
+    }
   }
 
   function emitirDispositivos(): void {

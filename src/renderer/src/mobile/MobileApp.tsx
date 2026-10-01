@@ -551,7 +551,7 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
                 disabled={!enColchon && (!sonando || hayColchon)}
                 aria-pressed={enColchon}
                 aria-label="Colchón"
-                title={enColchon ? 'Terminar el colchón' : 'Colchón: en el próximo compás se va la banda y siguen el click y un pad'}
+                title={enColchon ? 'Terminar el colchón' : 'Colchón: al terminar la sección se va la banda y siguen el click y un pad'}
               >
                 <Waves size={19} />
               </button>
@@ -763,7 +763,11 @@ function AvisoColchon({ controller, colchon }: { controller: AppController; colc
   const empezo = useGolpeColchon() !== null
   const terminando = colchon.hasta !== null
   const deEstaCancion = colchon.desdeCancion && colchon.tabId === e?.activeTabId
-  const banda = empezo ? 'La banda paró: siguen el click y el pad.' : 'La banda se va en el próximo compás: siguen el click y el pad.'
+  const banda = empezo
+    ? 'La banda paró: siguen el click y el pad.'
+    : e?.modoSalto === 'seccion'
+      ? 'La banda se va al terminar la sección: siguen el click y el pad.'
+      : 'La banda se va en el próximo compás: siguen el click y el pad.'
   return (
     <div className={`m-colchon ${terminando ? 'terminando' : ''}`} role="status">
       <span className="m-colchon-fila">

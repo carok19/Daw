@@ -75,6 +75,24 @@ function medirVoz(m: Float32Array, sr: number): { inicioMs: number; vozMs: numbe
   return { inicioMs: (primero / sr) * 1000, vozMs: ((ultimo - primero + 1) / sr) * 1000 }
 }
 
+/**
+ * Que tan fuerte habla una voz (RMS de lo hablado, en cuadros de 50 ms: los
+ * que pasan el 10 % del mas fuerte, sin los silencios). null = no habla.
+ */
+export function nivelDeHabla(m: Float32Array, sr: number): number | null {
+  const n = Math.max(1, Math.round(0.05 * sr))
+  const cuadros: number[] = []
+  for (let i = 0; i + n <= m.length; i += n) {
+    let s = 0
+    for (let k = i; k < i + n; k++) s += m[k] * m[k]
+    cuadros.push(Math.sqrt(s / n))
+  }
+  const max = Math.max(0, ...cuadros)
+  if (max < 1e-4) return null
+  const hablados = cuadros.filter((r) => r >= max * 0.1)
+  return Math.sqrt(hablados.reduce((a, r) => a + r * r, 0) / hablados.length)
+}
+
 export class Voces {
   private indice: Indice | null
   /** las voces en uso son las de fabrica (no se importo ningun pack) */
@@ -94,6 +112,7 @@ export class Voces {
   /** El pack importado; si no hay, las voces de fabrica. */
   private cargar(): Indice | null {
     this.muestras.clear()
+    this.niveles.clear()
     const importado = this.leerIndice(this.dir)
     this.deFabrica = !importado
     if (importado) return importado
@@ -228,11 +247,25 @@ export class Voces {
       this.indice = indice
       this.deFabrica = false
       this.muestras.clear()
+      this.niveles.clear()
       return this.info()!
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
       fs.rmSync(nuevo, { recursive: true, force: true })
     }
+  }
+
+  private niveles = new Map<string, number | null>()
+
+  /** Que tan fuerte habla esa voz del pack (solo lo hablado). */
+  private nivelDe(v: Voz): number | null {
+    if (!this.niveles.has(v.archivo)) {
+      const m = this.muestrasDe(v)
+      const desde = Math.round((v.inicioMs / 1000) * SR_VOCES)
+      const hasta = Math.min(m.length, Math.round(((v.inicioMs + v.vozMs) / 1000) * SR_VOCES))
+      this.niveles.set(v.archivo, nivelDeHabla(m.subarray(desde, Math.max(desde, hasta)), SR_VOCES))
+    }
+    return this.niveles.get(v.archivo) ?? null
   }
 
   private muestrasDe(v: Voz): Float32Array {
@@ -244,8 +277,13 @@ export class Voces {
     return m
   }
 
-  /** El audio del anuncio (mono, SR_VOCES): de `plan.desdeMs` a `plan.hastaMs`, cada voz hablando justo en su momento. */
-  renderizar(plan: PlanAnuncio): Float32Array {
+  /**
+   * El audio del anuncio (mono, SR_VOCES): de `plan.desdeMs` a `plan.hastaMs`,
+   * cada voz hablando justo en su momento. Con `nivelGuia` (que tan fuerte
+   * habla la guia de la cancion), cada voz suena a ese mismo nivel: ni mas
+   * baja ni mas fuerte que la guia, con su mismo fader.
+   */
+  renderizar(plan: PlanAnuncio, nivelGuia: number | null = null): Float32Array {
     const sr = SR_VOCES
     const salida = new Float32Array(Math.max(0, Math.round(((plan.hastaMs - plan.desdeMs) / 1000) * sr)))
     const fundido = Math.round(0.005 * sr)
@@ -253,6 +291,8 @@ export class Voces {
       const v = this.voz(parte.clave)
       if (!v) continue
       const m = this.muestrasDe(v)
+      const nivelVoz = nivelGuia ? this.nivelDe(v) : null
+      const g = nivelGuia && nivelVoz ? Math.max(0.25, Math.min(8, nivelGuia / nivelVoz)) : 1
       // desde donde empieza a hablar hasta un poco despues de que termina (sin la cola de silencio)
       const desde = Math.round((v.inicioMs / 1000) * sr)
       const hasta = Math.min(m.length, Math.round(((v.inicioMs + v.vozMs + 60) / 1000) * sr))
@@ -260,9 +300,13 @@ export class Voces {
       const n = Math.min(hasta - desde, salida.length - destino)
       for (let i = 0; i < n; i++) {
         const fin = n - i
-        salida[destino + i] += m[desde + i] * (fin < fundido ? fin / fundido : 1)
+        salida[destino + i] += m[desde + i] * g * (fin < fundido ? fin / fundido : 1)
       }
     }
+    // subida de mas: que no recorte
+    let pico = 0
+    for (const x of salida) pico = Math.max(pico, Math.abs(x))
+    if (pico > 0.98) for (let i = 0; i < salida.length; i++) salida[i] *= 0.98 / pico
     return salida
   }
 }
