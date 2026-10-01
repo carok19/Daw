@@ -2520,11 +2520,6 @@ test('colchón dentro de la canción: en el próximo compás (o al terminar la s
   await esperar(50)
   const play = (filtro: (c: ComandoProgramado) => boolean = (c) => c.accion === 'play'): Promise<ComandoProgramado> => esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', filtro, 5000)
 
-  // parado no hay colchon
-  const parado = await entrar()
-  assert.equal(parado.ok, false)
-  assert.match(parado.error!, /sonando/)
-
   // sonando en 1 s: el colchon empieza en el "1" del proximo compas (2 s de la cancion)
   const [inicio] = await Promise.all([play(), compu.emit('transport:play', { positionMs: 1000 })])
   await esperar(100)
@@ -2784,5 +2779,68 @@ test('pads propios: el tono sale del nombre, los que faltan se hacen desde el m�
   await emitAck(compu, 'pads:borrar', {})
   assert.equal((await emitAck<EstadoCompleto>(compu, 'state:request', {})).pads, null)
   assert.equal((await bajar(9)).length, 32 * sr)
+  await env.cerrar()
+})
+
+test('colchón con la canción parada: arranca ya (click y pad en su tono) y ▶ o una sección hacen entrar la canción con su "1" en el del colchón', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const largo = path.join(tmpDir('multitrack-audio-'), 'largo.wav')
+  generarAudio(largo, 20, 'mono')
+  await cargarZip(compu, crearZip('Colchon parado', { 'Click.wav': largo, 'marcas.txt': Buffer.from('0:04.5 Verso\n0:08.5 Coro\n') }))
+  const p = env.server.state.getActiveTab()!.proyecto
+  p.tonalidad = 'G'
+  p.cuenta = 0
+  const entrar = (): Promise<{ ok: boolean; error?: string }> => emitAck(compu, 'colchon:entrar', {})
+  const estado = (): Promise<EstadoCompleto> => emitAck<EstadoCompleto>(compu, 'state:request', {})
+  const play = (filtro: (c: ComandoProgramado) => boolean = (c) => c.accion === 'play'): Promise<ComandoProgramado> => esperarEvento<ComandoProgramado>(compu, 'playback:scheduled', filtro, 5000)
+
+  // sin el tempo de la cancion no hay click que seguir
+  p.tempo = null
+  assert.match((await entrar()).error ?? '', /tempo/)
+  // 120 BPM 4/4 (compas de 2 s); el primer "1" a los 0,5 s (antes, una entrada)
+  p.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 10 }, (_, k) => 500 + k * 2000), clickPistaId: p.pistas[0].id, acentoClaro: true }
+
+  // parada al principio: el colchon empieza ya, con el click entero y el pad en el tono de la cancion
+  const antes = Date.now()
+  assert.equal((await entrar()).ok, true)
+  let c = (await estado()).colchon!
+  assert.deepEqual([c.desdeCancion, c.sinBanda, c.pad, c.pulsos, c.compasMs, c.click, c.hasta], [true, true, 'G', 4, 2000, true, null])
+  assert.ok(c.inicio >= antes && c.inicio <= Date.now() + 1600, `empieza ya (${c.inicio - antes} ms)`)
+  assert.equal(c.padDesde, c.inicio)
+  assert.equal((await estado()).playbackActivo?.estado, 'stopped', 'la canción sigue parada')
+
+  // ▶: la cancion entra sin cuenta; lo de antes de su primer "1" (0,5 s) suena antes, asi su "1" cae en uno del colchon
+  await esperar(Math.max(0, c.inicio + 300 - Date.now()))
+  const [arranca] = await Promise.all([play(), compu.emit('transport:play', {})])
+  assert.equal(arranca.positionMs, 0)
+  assert.equal(arranca.playback.cuenta, undefined, 'sin cuenta: el click ya está sonando')
+  assert.equal((arranca.executeAtServerTime + 500 - c.inicio) % 2000, 0, 'su "1" en el "1" de un compás del colchón')
+  c = (await estado()).colchon!
+  assert.equal(c.hasta, arranca.executeAtServerTime, 'el colchón termina cuando entra la canción')
+
+  // en pausa a mitad de un compas (5,3 s): entra 1,2 s antes del "1" del colchon (el proximo "1" de la cancion es 6,5 s)
+  compu.emit('transport:stop')
+  await esperar(1200)
+  compu.emit('transport:seek', { positionMs: 5300 })
+  await esperar(100)
+  assert.equal((await entrar()).ok, true)
+  c = (await estado()).colchon!
+  assert.equal(c.sinBanda, true)
+  await esperar(Math.max(0, c.inicio + 300 - Date.now()))
+  const [sigue] = await Promise.all([play(), compu.emit('transport:play', {})])
+  assert.equal(sigue.positionMs, 5300)
+  assert.equal((sigue.executeAtServerTime + 1200 - c.inicio) % 2000, 0)
+
+  // tocar una seccion con la cancion parada: entra ahi, en el "1" de un compas del colchon
+  compu.emit('transport:stop')
+  await esperar(1200)
+  assert.equal((await entrar()).ok, true)
+  c = (await estado()).colchon!
+  await esperar(Math.max(0, c.inicio + 300 - Date.now()))
+  const coro = p.marcadores.find((m) => m.nombre === 'Coro')!
+  const [seccion] = await Promise.all([play(), compu.emit('seccion:saltar', { posicionMs: coro.tiempoMs })])
+  assert.equal(seccion.positionMs, 8500)
+  assert.equal((seccion.executeAtServerTime - c.inicio) % 2000, 0)
   await env.cerrar()
 })

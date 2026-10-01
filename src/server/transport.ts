@@ -58,6 +58,20 @@ function alCompas(tab: Tab, ms: number): number {
   return dist <= medio ? mejor : ms
 }
 
+/**
+ * Cuanto le falta a la cancion, desde `ms`, para su proximo "1" (lo que tiene
+ * antes: una entrada, la cuenta de la guia, o el resto del compas donde quedo).
+ * 0 si `ms` ya esta en un "1" (o pasado el ultimo).
+ */
+function hastaElCompas(tab: Tab, ms: number): number {
+  const compases = tab.proyecto.tempo?.compasesMs
+  if (!compases || compases.length < 2) return 0
+  const c = compases.find((x) => x >= ms - 1)
+  if (c === undefined) return 0
+  const falta = c - ms
+  return falta >= 30 ? falta : 0
+}
+
 function formatoTiempo(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -219,7 +233,8 @@ export class Transporte {
 
     // en el colchon de esta cancion: la cancion vuelve en esa seccion, en el "1" del proximo compas del colchon
     const propio = this.colchonDe(tab)
-    if (propio && this.volverDeColchon(tab, propio, alCompas(tab, destino.inicioMs))) return
+    // (con la cancion parada, desde el comienzo de la seccion: lo de antes de su "1" entra antes, a tiempo)
+    if (propio && this.volverDeColchon(tab, propio, propio.sinBanda ? destino.inicioMs : alCompas(tab, destino.inicioMs))) return
 
     if (tab.playback.estado !== 'playing' || p.inmediato || this.state.modoSalto === 'inmediato') {
       this.cancelarSalto()
@@ -363,9 +378,9 @@ export class Transporte {
     const tab = this.state.getActiveTab()
     if (!tab || tab.proyecto.colchon) return 'No hay una canción sonando'
     if (this.colchonSonando()) return null // ya esta
-    if (tab.playback.estado !== 'playing') return 'El colchón se arma con la canción sonando'
     const tempo = tab.proyecto.tempo
     if (!tempo || tempo.compasesMs.length < 2) return 'Esta canción no tiene el tempo detectado: el colchón sigue su click'
+    if (tab.playback.estado !== 'playing') return this.colchonConLaCancionParada(tab)
     const now = Date.now()
     const dur = tab.proyecto.duracionTotalMs
     // como los saltos: "al terminar" = cuando termina la seccion que suena (en la ultima, al final de
@@ -412,6 +427,41 @@ export class Transporte {
   }
 
   /**
+   * Colchon con la cancion parada o en pausa (para orar antes de empezar, o
+   * despues de parar): arranca enseguida con el click de la cancion (su BPM y
+   * su compas donde quedo) y el pad en su tono. ▶ o una seccion la hacen
+   * entrar en el "1" de un compas del colchon, sin cuenta (el click ya suena).
+   */
+  private colchonConLaCancionParada(tab: Tab): null {
+    const tempo = tab.proyecto.tempo!
+    const pos = tab.playback.positionMs
+    const inicio = Date.now() + this.margen()
+    this.state.saltoPendiente = null
+    this.state.colchon = {
+      id: crypto.randomUUID(),
+      tabId: tab.tabId,
+      empezo: inicio,
+      inicio,
+      padDesde: inicio,
+      compasMs: largoDeCompas(tempo.compasesMs, pos),
+      pulsos: Math.max(1, tempo.compas),
+      desdeCancion: true,
+      sinBanda: true,
+      padsRevision: this.revisionPads(),
+      pad: padDeCancion(tab.proyecto, pos),
+      click: true,
+      volumenPad: this.state.volumenPadColchon,
+      volumenClick: 100,
+      hasta: null,
+      salidaPadMs: SALIDA_PAD_MS
+    }
+    this.pausaDeColchon = null
+    this.reprogramarTimers()
+    this.alCambiarColchon()
+    return null
+  }
+
+  /**
    * Sale del colchon de esta cancion: la cancion vuelve en `destinoMs` (null =
    * donde va a estar, si todavia suena) en el "1" del proximo compas del
    * colchon, sin cuenta (el click nunca paro). false = el colchon todavia no
@@ -420,8 +470,12 @@ export class Transporte {
   private volverDeColchon(tab: Tab, c: ColchonActivo, destinoMs: number | null): boolean {
     const now = Date.now()
     const anticipo = this.hayCelulares() ? ANTICIPO_MIN_SALTO_MS : MARGIN_SIN_CELULARES_MS
-    const t = proximoCompas(c, now + anticipo)
-    if (t <= c.empezo) {
+    // lo que la cancion tiene antes de su "1" (una entrada, o el resto del compas donde quedo): arranca
+    // antes, asi su "1" cae justo en el de un compas del colchon
+    const falta = destinoMs !== null ? hastaElCompas(tab, destinoMs) : 0
+    const t = proximoCompas(c, now + anticipo + falta) - falta
+    // (el "1" donde entra la cancion; si el colchon todavia no empezo, no hubo colchon)
+    if (t + falta <= c.empezo) {
       this.state.colchon = null
       this.pausaDeColchon = null
       this.reprogramarTimers()

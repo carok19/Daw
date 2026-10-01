@@ -390,6 +390,8 @@ export interface ColchonActivo {
   padDesde?: number
   /** de que pads se trata ('app' o el pack propio): va en la direccion del pad (nadie usa los de antes guardados) */
   padsRevision?: string
+  /** se prendio con la cancion parada o en pausa: no hay banda que se vaya (el click entra entero y el pad despacio) */
+  sinBanda?: boolean
   compasMs: number
   pulsos: number
   /** dentro de una canción: la banda se apaga en el primer compás (de `empezo` a `empezo + compasMs`) */

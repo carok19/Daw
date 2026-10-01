@@ -548,10 +548,16 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
               <button
                 className={`m-colchon-boton ${enColchon ? 'activo' : ''}`}
                 onClick={enColchon ? controller.terminarColchon : () => void controller.entrarEnColchon()}
-                disabled={!enColchon && (!sonando || hayColchon)}
+                disabled={!enColchon && hayColchon}
                 aria-pressed={enColchon}
                 aria-label="Colchón"
-                title={enColchon ? 'Terminar el colchón' : 'Colchón: al terminar la sección se va la banda y siguen el click y un pad'}
+                title={
+                  enColchon
+                    ? 'Terminar el colchón'
+                    : sonando
+                      ? 'Colchón: al terminar la sección se va la banda y siguen el click y un pad'
+                      : 'Colchón: el click y un pad en el tono de la canción, ya (▶ la hace entrar en el próximo compás)'
+                }
               >
                 <Waves size={19} />
               </button>
@@ -764,7 +770,9 @@ function AvisoColchon({ controller, colchon }: { controller: AppController; colc
   const empezo = useGolpeColchon() !== null
   const terminando = colchon.hasta !== null
   const deEstaCancion = colchon.desdeCancion && colchon.tabId === e?.activeTabId
-  const banda = empezo
+  const banda = colchon.sinBanda
+    ? 'Click y pad, con la canción parada.'
+    : empezo
     ? 'La banda paró: siguen el click y el pad.'
     : e?.modoSalto === 'seccion'
       ? 'La banda se va al terminar la sección: siguen el click y el pad.'
@@ -784,7 +792,9 @@ function AvisoColchon({ controller, colchon }: { controller: AppController; colc
           : deEstaCancion
             ? locked
               ? banda
-              : `${banda} Tocá una sección para volver (entra en el próximo compás).`
+              : colchon.sinBanda
+                ? `${banda} ▶ o una sección: la canción entra en el próximo compás, sin cuenta.`
+                : `${banda} Tocá una sección para volver (entra en el próximo compás).`
             : 'Suenan el click y el pad.'}
       </span>
       {!terminando && !locked && (

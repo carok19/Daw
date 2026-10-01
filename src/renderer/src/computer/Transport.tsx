@@ -299,13 +299,15 @@ export function Transport(p: Props) {
           <button
             className={`tbtn tbtn-colchon ${p.enColchon ? 'activo' : ''}`}
             onClick={p.onColchon}
-            disabled={!p.enColchon && (p.hayColchon || !sonando || !p.proyecto.tempo || p.proyecto.tempo.compasesMs.length < 2)}
+            disabled={!p.enColchon && (p.hayColchon || !p.proyecto.tempo || p.proyecto.tempo.compasesMs.length < 2)}
             title={
               p.enColchon
                 ? 'Terminar el colchón (C): el click para y el pad se apaga'
                 : !p.proyecto.tempo
                   ? 'Colchón: hace falta el tempo de la canción (el click)'
-                  : 'Colchón (C): al terminar la sección (o en el próximo compás, según el modo de salto) se va la banda y siguen el click y un pad en el tono de la canción, que ya entra por debajo. Tocá una sección para volver.'
+                  : sonando
+                    ? 'Colchón (C): al terminar la sección (o en el próximo compás, según el modo de salto) se va la banda y siguen el click y un pad en el tono de la canción, que ya entra por debajo. Tocá una sección para volver.'
+                    : 'Colchón (C): con la canción parada, el click de la canción y un pad en su tono, ya. ▶ o una sección: la canción entra en el próximo compás, sin cuenta.'
             }
             aria-pressed={p.enColchon}
             aria-label="Colchón"

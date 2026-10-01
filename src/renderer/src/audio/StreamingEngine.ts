@@ -1148,12 +1148,14 @@ export class StreamingEngine implements PlaybackEngine {
       }
       return [...antes, [tFin, valor], ...alFinal]
     }
-    // click: dentro de una cancion entra durante el compas en que se va la banda (el mismo pulso: se funden)
-    this.envolvente(v.clickEnv.gain, c.desdeCancion ? [[tI, 0], [tI + compas, 1]] : [[tI, 1]])
+    // click: dentro de una cancion entra durante el compas en que se va la banda (el mismo pulso: se funden);
+    // con la cancion parada (o el de la lista), entero desde el primer golpe
+    const sinBanda = !c.desdeCancion || !!c.sinBanda
+    this.envolvente(v.clickEnv.gain, sinBanda ? [[tI, 1]] : [[tI, 0], [tI + compas, 1]])
     // el pad: dentro de una cancion entra por debajo de la banda antes de que se vaya (cuando se va, ya
     // esta entero: no se oye que "arranca"); si no hubo tiempo, rapido. El de la lista, despacio
     const tP = this.ctxDeServidor(c.padDesde ?? c.empezo, off)
-    const entradaPad: [number, number][] = !c.desdeCancion
+    const entradaPad: [number, number][] = sinBanda
       ? [[tI, 0], [tI + ENTRADA_PAD_SOLO_MS / 1000, 1]]
       : tP < tI - 0.2
         ? [[tP, 0], [tI, 1]]
@@ -1175,7 +1177,8 @@ export class StreamingEngine implements PlaybackEngine {
     }
     const off = v.offset()
     const tI = this.ctxDeServidor(v.c.empezo, off)
-    const tF = tI + v.c.compasMs / 1000
+    // con la cancion parada no hay banda que se vaya: el bus vuelve justo cuando arranca la cancion
+    const tF = v.c.sinBanda ? tI : tI + v.c.compasMs / 1000
     const puntos: [number, number][] = [
       [tI, 1],
       [tF, 0]

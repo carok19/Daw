@@ -105,7 +105,9 @@ export function BannerColchon({ controller, colchon }: { controller: AppControll
     ? colchon.salidaPadMs <= SALIDA_PAD_VUELTA_MS
       ? 'Vuelve la banda…'
       : 'Se está apagando…'
-    : deEstaCancion
+    : deEstaCancion && colchon.sinBanda
+      ? 'Click y pad, con la canción parada. ▶ la arranca donde está o tocá una sección: entra en el próximo compás, sin cuenta (el click ya suena).'
+      : deEstaCancion
       ? `${empezo ? 'La banda paró.' : e?.modoSalto === 'seccion' ? 'La banda se va al terminar la sección (el pad ya está entrando).' : 'La banda se va en el próximo compás.'} Tocá una sección para volver (entra en el próximo compás) o ▶ para seguir donde quedó.`
       : 'Sigue sonando: al darle ▶ a una canción, acompaña la cuenta y se va.'
   return (

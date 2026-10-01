@@ -337,7 +337,13 @@ cambian a propósito.
       click.
       Para volver, **tocar una sección** (en la compu o en el celular): la
       canción entra ahí en el “1” del próximo compás, sin cuenta (el click
-      nunca paró). **▶** vuelve donde quedó; **Terminar** (o **C**) para el
+      nunca paró). **▶** vuelve donde quedó. **También con la canción parada
+      o en pausa** (para orar antes de empezar, o después de parar): el
+      colchón empieza enseguida con el click de la canción (su BPM y su
+      compás) y el pad en su tono; **▶** (o una sección) hace entrar la
+      canción en el próximo compás del colchón, sin cuenta —lo que la
+      canción tiene antes de su primer “1” suena antes, así su “1” cae en el
+      del colchón—. **Terminar** (o **C**) para el
       click y apaga el pad despacio; **■** (stop) corta todo y el pad se va en
       menos de un segundo, sin quedar sonando. Mientras dura se ve arriba “Colchón · D
       · 72 BPM” con el pulso, y se puede cambiar el tono y el volumen del
@@ -820,6 +826,11 @@ estado. **Nada de su audio viaja por la red mientras suena:**
   “Re#”, “Sib”); los que faltan, con rubberband desde el más cercano (a igual
   distancia, bajando). Del archivo se leen 75 s; el loop es de hasta 40 s,
   mono a 22 kHz y con el pico en −3 dB, como los de la app.
+- **Con la canción parada** (`sinBanda`): empieza con el margen de
+  sincronización, sin banda que se vaya (el click entra entero y el pad en
+  3 s, como el de la lista). Al volver, la canción arranca `hastaElCompas`
+  antes del “1” de un compás del colchón (lo que tiene antes de su próximo
+  “1”), y el colchón termina en ese instante.
 - **De la lista:** un proyecto sin pistas con `colchon` (ajustes). El
   motor no baja nada; play/pausa del transporte lo empiezan y terminan. Un
   cambio de BPM sonando mueve el “1” al próximo golpe (el pad sigue).
