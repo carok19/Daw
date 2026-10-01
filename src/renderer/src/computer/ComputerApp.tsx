@@ -265,6 +265,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
           <Transport
             key={proyecto.id}
             proyecto={proyecto}
+            videoEnProyector={!!estado?.pantallaVideo?.conectada && estado.pantallaVideo.canciones.includes(proyecto.id)}
             secciones={secciones}
             playback={estado?.playbackActivo ?? null}
             loop={estado?.loop ?? false}

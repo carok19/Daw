@@ -79,6 +79,7 @@ import { Anuncios, ErrorVoces, pistasDeAnuncio, Voces } from './voces'
 import { planearAnuncio } from '../shared/anuncio'
 import { nombreDeColchon, normalizarAjustesColchon, NOTAS_PAD } from '../shared/colchon'
 import { Pads } from './pads'
+import { Huellas, type RespuestaHuella } from './huellas'
 import { esVelocidadValida, redondearVelocidad, textoPorcentaje, velocidadAplicada } from '../shared/velocidad'
 import { normalizarTonalidad, textoSemitonos, tonalidadOriginal, transponerTonalidad } from '../shared/tonalidad'
 import { direccionesLan, ipParaCliente } from './network'
@@ -101,7 +102,9 @@ type Ack<T> = ((r: T) => void) | undefined
  */
 function origenDe(socket: Socket, compuToken: string): OrigenCliente {
   const auth = (socket.handshake.auth ?? {}) as AuthHandshake
-  return auth.origen === 'compu' && typeof auth.token === 'string' && auth.token === compuToken ? 'compu' : 'celular'
+  if (auth.origen === 'compu' && typeof auth.token === 'string' && auth.token === compuToken) return 'compu'
+  // AirTracks Video: no recibe audio ni manda nada a los celulares (solo mira la reproduccion)
+  return auth.origen === 'video' ? 'video' : 'celular'
 }
 
 function rechazar(socket: Socket, mensaje: string): void {
@@ -199,10 +202,19 @@ export function registerSocketHandlers(
     next(errorCodigo('codigo-requerido'))
   })
 
+  // AirTracks Video: una sola pantalla a la vez (la misma que reconecta, si). No cuenta como celular
+  io.use((socket, next) => {
+    if (origenDe(socket, compuToken) !== 'video') return next()
+    const deviceId = (socket.handshake.auth as AuthHandshake | undefined)?.deviceId
+    const otra = devices.listar().some((d) => d.origen === 'video' && d.conectado && d.id !== `video:${deviceId}`)
+    if (otra) return next(new Error('video-ocupado'))
+    next()
+  })
+
   // licencia: cuantos celulares a la vez (el que reconecta no cuenta dos veces)
   io.use((socket, next) => {
     const limite = conexion.licencias?.limiteCelulares() ?? null
-    if (limite === null || origenDe(socket, compuToken) === 'compu') return next()
+    if (limite === null || origenDe(socket, compuToken) !== 'celular') return next()
     const deviceId = (socket.handshake.auth as AuthHandshake | undefined)?.deviceId
     const propio = typeof deviceId === 'string' ? `celular:${deviceId}` : null
     const conectados = devices.listar().filter((d) => d.origen === 'celular' && d.conectado && d.id !== propio).length
@@ -360,6 +372,9 @@ export function registerSocketHandlers(
       emitirEstado()
     }, 80)
   }
+
+  // huella del audio de cada cancion para AirTracks Video (solo con la musica parada)
+  const huellas = new Huellas(projectDir, algoSuena)
 
   const analizador = new Analizador({
     obtener(id) {
@@ -616,6 +631,33 @@ export function registerSocketHandlers(
       entrega.olvidar(socket.id)
       devices.desconectar(socket.id)
       emitirDispositivos()
+      if (origen === 'video' && state.pantallaVideo) {
+        state.pantallaVideo = { ...state.pantallaVideo, conectada: false }
+        emitirEstadoPronto()
+      }
+    })
+
+    // ---- AirTracks Video (la compu del proyector) ----
+
+    // que canciones tiene con video (se muestra en la compu)
+    socket.on('video:estado', (payload: { nombre?: unknown; canciones?: unknown }) => {
+      if (origen !== 'video') return
+      const canciones = Array.isArray(payload?.canciones) ? payload.canciones.filter((id): id is string => esIdValido(id)).slice(0, 2000) : []
+      state.pantallaVideo = {
+        conectada: true,
+        nombre: typeof payload?.nombre === 'string' ? payload.nombre.replace(/\s+/g, ' ').trim().slice(0, 40) : '',
+        canciones
+      }
+      emitirEstadoPronto()
+    })
+
+    // huella del audio de la cancion, para alinear su video (solo se calcula con la musica parada)
+    socket.on('video:huella', (payload: { proyectoId?: unknown }, ack?: Ack<RespuestaHuella>) => {
+      if (origen === 'celular' || !esIdValido(payload?.proyectoId)) return ack?.({ estado: 'error', mensaje: 'No permitido' })
+      const id = payload.proyectoId
+      if (!proyectoExiste(id)) return ack?.({ estado: 'error', mensaje: 'La canción no existe' })
+      const p = state.tabDeProyecto(id)?.proyecto ?? loadProyecto(id)
+      void huellas.pedir(p).then((r) => ack?.(r))
     })
 
     // ---- conexion de celulares: invitar, codigo de la banda, WiFi ----

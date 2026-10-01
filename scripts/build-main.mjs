@@ -50,6 +50,14 @@ if (existsSync('src/e2e/e2e.test.ts')) {
   })
 }
 
+if (existsSync('src/e2e/video.test.ts')) {
+  await esbuild.build({
+    ...common,
+    entryPoints: ['src/e2e/video.test.ts'],
+    outfile: 'out/main/video.test.cjs'
+  })
+}
+
 if (existsSync('src/server/analisis/analisis.test.ts')) {
   await esbuild.build({
     ...common,

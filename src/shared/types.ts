@@ -440,6 +440,8 @@ export interface EstadoCompleto {
   colchon?: ColchonActivo | null
   /** la lista del dia cargada arriba (null = canciones sueltas) */
   lista: ListaActiva | null
+  /** AirTracks Video (null = nunca se conecto) */
+  pantallaVideo?: EstadoPantallaVideo | null
   serverTime: number
 }
 
@@ -459,7 +461,17 @@ export interface ComandoProgramado {
   playback: PlaybackState
 }
 
-export type OrigenCliente = 'compu' | 'celular'
+/** `video`: AirTracks Video, la compu del proyector (no cuenta como celular: no frena ni cambia nada de los celulares) */
+export type OrigenCliente = 'compu' | 'celular' | 'video'
+
+/** AirTracks Video (la compu del proyector): si esta conectada y para que canciones tiene video. */
+export interface EstadoPantallaVideo {
+  conectada: boolean
+  /** nombre de la compu del proyector */
+  nombre: string
+  /** canciones (ids) con video cargado */
+  canciones: string[]
+}
 
 // ---- Payloads de eventos Socket.IO ----
 

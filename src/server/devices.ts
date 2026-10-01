@@ -8,6 +8,8 @@ interface DispositivoInterno extends DispositivoInfo {
 }
 
 const ID_DISPOSITIVO_RE = /^[A-Za-z0-9_-]{8,64}$/
+/** en la lista: la compu, la pantalla de video y los celulares */
+const ORDEN: Record<OrigenCliente, number> = { compu: 0, video: 1, celular: 2 }
 const BUFFERS_VALIDOS: EstadoBuffer[] = ['normal', 'rellenando', 'critico']
 
 const num = (v: unknown, min = 0, max = 1e6): number | null =>
@@ -56,7 +58,11 @@ export class DeviceRegistry {
   conectar(socketId: string, origen: OrigenCliente, deviceId: unknown, nombre: unknown): DispositivoInfo {
     // la compu es una sola (la que tiene el token): siempre la misma fila
     const id =
-      origen === 'compu' ? 'compu' : typeof deviceId === 'string' && ID_DISPOSITIVO_RE.test(deviceId) ? `celular:${deviceId}` : socketId
+      origen === 'compu'
+        ? 'compu'
+        : typeof deviceId === 'string' && ID_DISPOSITIVO_RE.test(deviceId)
+          ? `${origen === 'video' ? 'video' : 'celular'}:${deviceId}`
+          : socketId
     let info = this.dispositivos.get(id)
     if (!info) {
       info = {
@@ -131,7 +137,7 @@ export class DeviceRegistry {
 
   listar(): DispositivoInfo[] {
     return [...this.dispositivos.values()]
-      .sort((a, b) => (a.origen === b.origen ? a.numero - b.numero : a.origen === 'compu' ? -1 : 1))
+      .sort((a, b) => (a.origen === b.origen ? a.numero - b.numero : ORDEN[a.origen] - ORDEN[b.origen]))
       .map((info) => this.aPublico(info))
   }
 
@@ -141,7 +147,7 @@ export class DeviceRegistry {
   }
 
   private actualizarEtiqueta(info: DispositivoInterno): void {
-    info.etiqueta = info.nombre ?? (info.origen === 'compu' ? 'Computadora' : `Celular ${info.numero}`)
+    info.etiqueta = info.nombre ?? (info.origen === 'compu' ? 'Computadora' : info.origen === 'video' ? 'Pantalla de video' : `Celular ${info.numero}`)
   }
 
   private aPublico(info: DispositivoInterno): DispositivoInfo {

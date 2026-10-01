@@ -31,6 +31,9 @@ import { normalizarTonalidad, pareceBateria, pareceVoz, tonalidadDesdeNombre, to
 import { generarClick, wav16 } from './__fixtures__/sintetico'
 import { candidatosDeSeccion, clavesDeArchivoDeVoz, planearAnuncio } from '../shared/anuncio'
 import { bpmDeTramo, bpmDistintoEnSeccion, calcularSecciones, compasesQueFaltan, largoTipicoDeCompas, nuevoPlayback, posicionActualMs, seccionEn, textoQueFaltan } from '../shared/playback'
+import { alinear, alineacionSegura, calcularHuella, huellaABytes, huellaDeBytes } from '../shared/huella'
+import { ajusteDeVideo, objetivoVideo, proximoCorte } from '../shared/videoSync'
+import { generarBanda } from './__fixtures__/banda'
 import {
   compasYPulso,
   golpesDeColchon,
@@ -46,6 +49,7 @@ import type {
   AjustesConexion,
   ClockSyncAck,
   DatosInvitacion,
+  DiagnosticoServidor,
   ComandoProgramado,
   EstadoLicencia,
   DispositivoInfo,
@@ -1328,6 +1332,126 @@ test('compases que faltan: hasta el final de la sección (o hasta el salto elegi
   assert.equal(compasesQueFaltan(null, verso, 0), null)
   assert.equal(compasesQueFaltan([500, 2500, 4500], verso, 100), null)
   assert.deepEqual([textoQueFaltan(1), textoQueFaltan(3), textoQueFaltan(null)], ['último compás', 'faltan 3', null])
+})
+
+test('AirTracks Video: la huella encuentra dónde empieza la canción en su video, y no se confunde con otra grabación', () => {
+  const seg = 120
+  const { banda, voz } = generarBanda(seg, 7)
+  /** el "lyric video": la misma grabacion (con la voz que la multitrack no tiene) corrida `desfase` s, mas bajo y con ruido */
+  const video = (desfase: number, ganancia = 0.7): Float32Array => {
+    const n0 = Math.round(desfase * 8000)
+    const v = new Float32Array(Math.max(0, n0) + banda.length + 8000 * 3)
+    let semilla = 99
+    for (let i = 0; i < banda.length; i++) {
+      const j = i + n0
+      if (j >= 0 && j < v.length) v[j] += ganancia * (banda[i] + 1.5 * voz[i])
+    }
+    for (let i = 0; i < v.length; i++) v[i] += 0.01 * (((semilla = (semilla * 16807) % 2147483647) / 2147483647) * 2 - 1)
+    return v
+  }
+  const cancion = huellaDeBytes(huellaABytes(calcularHuella(banda)))
+  for (const desfase of [4.37, -2.5, 1.234]) {
+    const a = alinear(cancion, huellaDeBytes(huellaABytes(calcularHuella(video(desfase, desfase === 1.234 ? 0.3 : 0.7)))))!
+    assert.ok(Math.abs(a.desfaseMs - desfase * 1000) <= 20, `desfase ${a.desfaseMs} (esperado ${desfase * 1000})`)
+    assert.equal(alineacionSegura(a), true, JSON.stringify(a))
+  }
+  // otra cancion (otro tempo), o la misma grabada de nuevo (un poco mas rapida): no se toma como buena
+  for (const [semilla, bpm] of [
+    [4242, 80],
+    [7, 77.2]
+  ]) {
+    const otra = generarBanda(seg, semilla, bpm)
+    const mezcla = otra.banda.map((x, i) => x + otra.voz[i])
+    assert.equal(alineacionSegura(alinear(cancion, calcularHuella(mezcla))), false, `semilla ${semilla} a ${bpm}`)
+  }
+  // la huella en bytes: un byte por valor
+  const h = calcularHuella(banda)
+  assert.equal(huellaABytes(h).length, h.length)
+  assert.ok(huellaDeBytes(huellaABytes(h)).every((x, i) => Math.abs(x - Math.min(h[i], 255 / 40)) <= 1 / 80 + 1e-6))
+})
+
+test('AirTracks Video: dónde tiene que estar el video (cuenta, sonando, velocidad, pausa, saltos y antes/después del video)', () => {
+  const ahora = 100_000
+  const sonando = { estado: 'playing' as const, positionMs: 10_000, referenceServerTime: ahora - 2000 }
+  // parado: no se ve (Holyrics)
+  assert.equal(objetivoVideo({ estado: 'stopped', positionMs: 0, referenceServerTime: 0 }, ahora, 1, 3000, 200).visible, false)
+  assert.equal(objetivoVideo(null, ahora, 1, 3000, 200).visible, false)
+  // sonando: 12 s de cancion + 3 s de placa = 15 s de video
+  assert.deepEqual(objetivoVideo(sonando, ahora, 1, 3000, 200), { visible: true, corriendo: true, segundos: 15, velocidad: 1 })
+  // a otra velocidad: el video corre a esa velocidad (la cancion sono 12 s a 1,1 = 13,2 s del original)
+  const rapido = objetivoVideo(sonando, ahora, 1.1, 3000, 200)
+  assert.ok(Math.abs(rapido.segundos - 16.2) < 1e-9 && rapido.velocidad === 1.1)
+  // contando (la musica todavia no entro): quieto donde va a entrar
+  assert.deepEqual(objetivoVideo({ estado: 'playing', positionMs: 0, referenceServerTime: ahora + 2000 }, ahora, 1, 3000, 200), { visible: true, corriendo: false, segundos: 3, velocidad: 1 })
+  // en pausa: quieto donde quedo
+  assert.deepEqual(objetivoVideo({ estado: 'paused', positionMs: 20_000, referenceServerTime: ahora - 10 }, ahora, 1, 3000, 200), { visible: true, corriendo: false, segundos: 23, velocidad: 1 })
+  // la cancion empieza antes que el video: el primer cuadro, quieto; despues del final del video, no se ve
+  assert.deepEqual(objetivoVideo({ ...sonando, positionMs: 0, referenceServerTime: ahora - 1000 }, ahora, 1, -5000, 200), { visible: true, corriendo: false, segundos: 0, velocidad: 1 })
+  assert.equal(objetivoVideo({ ...sonando, positionMs: 198_000 }, ahora, 1, 3000, 200).visible, false)
+  // salto ya programado (una seccion elegida): hasta su hora sigue lo de antes; el corte es a su punto
+  const salto = { estado: 'playing' as const, positionMs: 60_000, referenceServerTime: ahora + 500, previo: sonando }
+  assert.equal(objetivoVideo(salto, ahora, 1, 3000, 200).segundos, 15)
+  assert.deepEqual(proximoCorte(salto, ahora, 1, 3000), { en: ahora + 500, segundos: 63 })
+  assert.equal(proximoCorte(sonando, ahora, 1, 3000), null)
+  assert.equal(proximoCorte({ estado: 'paused', positionMs: 0, referenceServerTime: ahora + 500, previo: sonando }, ahora, 1, 3000), null)
+  // como se corrige: lejos salta, cerca se apura o frena apenas, muy cerca nada
+  const obj = { visible: true, corriendo: true, segundos: 10, velocidad: 1 }
+  assert.deepEqual(ajusteDeVideo(11, obj), { saltarA: 10, velocidad: 1 })
+  assert.equal(ajusteDeVideo(10.01, obj).saltarA, null)
+  assert.equal(ajusteDeVideo(10.01, obj).velocidad, 1)
+  const atrasado = ajusteDeVideo(9.9, obj)
+  assert.ok(atrasado.saltarA === null && atrasado.velocidad > 1 && atrasado.velocidad <= 1.08)
+  assert.deepEqual(ajusteDeVideo(9.9, { ...obj, corriendo: false }), { saltarA: 10, velocidad: 1 })
+})
+
+test('AirTracks Video: entra como pantalla (no como celular), una sola, avisa qué canciones tiene y pide la huella', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const margenSolo = (await emitAck<DiagnosticoServidor>(compu, 'diagnostico:obtener', {})).arranque?.margenMs
+  const video = await env.conectar({ origen: 'video', deviceId: 'pantalla-video-1', nombre: 'PC-DATA' })
+  await esperar(150)
+  const diag = await emitAck<DiagnosticoServidor>(compu, 'diagnostico:obtener', {})
+  assert.equal(diag.arranque?.margenMs, margenSolo, 'no es un celular: el margen de arranque no cambia')
+  const fila = diag.dispositivos.find((d) => d.origen === 'video')!
+  assert.equal(fila.etiqueta, 'PC-DATA')
+  assert.equal(diag.dispositivos.filter((d) => d.origen === 'celular').length, 0)
+  // otra pantalla de video no entra (la misma reconectando, si)
+  const intentar = (deviceId: string): Promise<string> =>
+    new Promise((resolve) => {
+      const s = ioClient(`http://localhost:${env.port}`, { auth: { origen: 'video', deviceId }, reconnection: false })
+      s.once('connect', () => (s.close(), resolve('ok')))
+      s.once('connect_error', (e: Error) => (s.close(), resolve(e.message)))
+    })
+  assert.equal(await intentar('pantalla-video-2'), 'video-ocupado')
+  assert.equal(await intentar('pantalla-video-1'), 'ok')
+
+  // que canciones tiene: la compu lo ve
+  const a = audiosDePrueba()
+  const estado = await cargarZip(compu, crearZip('Con video', { 'Click.wav': a.wav2s, 'Pad.wav': a.wavEstereo }))
+  const id = estado.proyectoActivo!.id
+  video.emit('video:estado', { nombre: 'PC-DATA', canciones: [id, '../no-es-un-id'] })
+  const conVideo = await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => !!e.pantallaVideo?.conectada)
+  assert.deepEqual(conVideo.pantallaVideo, { conectada: true, nombre: 'PC-DATA', canciones: [id] })
+
+  // la huella de la cancion (sin el click), una vez; con la musica sonando, espera
+  const r = await emitAck<{ estado: string; huella?: Uint8Array | Buffer; duracionMs?: number }>(video, 'video:huella', { proyectoId: id }, 60000)
+  assert.equal(r.estado, 'lista')
+  assert.ok(r.huella && r.huella.byteLength >= 150 * 12, `huella de ${r.huella?.byteLength} bytes`)
+  const otra = (await cargarZip(compu, crearZip('Otra', { 'Pad.wav': a.wavEstereo }))).proyectoActivo!.id
+  compu.emit('transport:play', {})
+  await esperar(300)
+  assert.equal((await emitAck<{ estado: string }>(video, 'video:huella', { proyectoId: otra })).estado, 'esperando', 'sonando no se calcula')
+  // (la que ya esta guardada se da aunque suene)
+  assert.equal((await emitAck<{ estado: string }>(video, 'video:huella', { proyectoId: id })).estado, 'lista')
+  compu.emit('transport:stop')
+  // un celular no la puede pedir
+  const cel = await env.conectar({ origen: 'celular', deviceId: 'celular-sin-huella' })
+  assert.equal((await emitAck<{ estado: string }>(cel, 'video:huella', { proyectoId: id })).estado, 'error')
+
+  // se desconecta: la compu lo ve
+  video.close()
+  const sinVideo = await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (e) => e.pantallaVideo?.conectada === false)
+  assert.equal(sinVideo.pantallaVideo?.canciones.length, 1)
 })
 
 test('compases irregulares y cambios de tempo: la cuenta y el colchón siguen el compás típico; el BPM de la sección que suena', () => {

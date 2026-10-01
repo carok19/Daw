@@ -25,6 +25,7 @@ export function buildEstadoCompleto(state: AppState): EstadoCompleto {
     voces: state.voces,
     colchon: state.colchon,
     lista: state.listaActiva,
+    pantallaVideo: state.pantallaVideo,
     serverTime: Date.now()
   }
 }

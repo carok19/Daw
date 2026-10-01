@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import type { ColchonActivo, InfoVoces, ListaActiva, Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
+import type { ColchonActivo, EstadoPantallaVideo, InfoVoces, ListaActiva, Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
 import { posicionActualMs } from '../shared/playback'
 import { normalizarTonalidad } from '../shared/tonalidad'
 import { guardarSesion, saveProyecto, type SesionGuardada } from './projects'
@@ -56,6 +56,8 @@ export class AppState {
   volumenPadColchon = 80
   /** el pack de voces para avisar los saltos (lo mantiene socketHandlers) */
   voces: InfoVoces | null = null
+  /** AirTracks Video (la compu del proyector): null = nunca se conecto */
+  pantallaVideo: EstadoPantallaVideo | null = null
   /** la lista del dia cargada en las pestanas (null = canciones sueltas) */
   listaActiva: ListaActiva | null = null
   /** lo que estaba abierto la ultima vez, si la app se abrio despues de mucho ("Seguir donde quede") */

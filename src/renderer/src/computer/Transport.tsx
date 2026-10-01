@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, ChevronRight, Magnet, Pause, Play, Repeat, SkipBack, SkipForward, Square, Waves, X } from 'lucide-react'
+import { ArrowRight, ChevronRight, Magnet, MonitorPlay, Pause, Play, Repeat, SkipBack, SkipForward, Square, Waves, X } from 'lucide-react'
 import type { OndaCancion, PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { bpmDistintoEnSeccion, compasesQueFaltan, seccionEn } from '@shared/playback'
@@ -45,6 +45,8 @@ interface Props {
   /** hay un colchon sonando (de esta cancion, de otra o de la lista) */
   hayColchon: boolean
   onColchon: () => void
+  /** AirTracks Video tiene el video de esta canción (se ve en el proyector mientras suena) */
+  videoEnProyector?: boolean
 }
 
 function textoCompas(compas: number): string {
@@ -239,6 +241,11 @@ export function Transport(p: Props) {
                 >
                   <Magnet size={13} />
                 </button>
+              </span>
+            )}
+            {p.videoEnProyector && (
+              <span className="chip-seccion-dato" title="AirTracks Video tiene el video con la letra de esta canción: se ve en el proyector mientras suena, siguiendo las secciones" data-testid="chip-video">
+                <MonitorPlay size={12} /> Video
               </span>
             )}
             {p.proyecto.tempo && p.proyecto.tempo.compasesMs.length > 1 && (

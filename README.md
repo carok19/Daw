@@ -22,6 +22,8 @@ Página de descargas (se actualiza sola con cada cambio, los enlaces no cambian)
   — incluye el reconocedor de voz y la app Android (la compu se la ofrece a los celulares).
 - Celulares Android: [AirTracks.apk](https://github.com/carok19/Daw/releases/download/descargas/AirTracks.apk)
   — también se baja desde la compu, sin internet.
+- Compu del proyector (Windows 7 en adelante, 32 o 64 bits): [AirTracks-Video-Instalador.exe](https://github.com/carok19/Daw/releases/download/descargas/AirTracks-Video-Instalador.exe)
+  — el video con la letra en el proyector, siguiendo a la canción (ver *AirTracks Video*).
 
 Los arma GitHub Actions (`.github/workflows/instaladores.yml`): pruebas, app
 Android, instalador de Windows con el reconocedor y la app adentro, y los sube
@@ -328,6 +330,39 @@ cambian a propósito.
       acompaña bajando y se va cuando entra la canción. Así se pasa de un
       momento de oración a la próxima canción sin silencio.
 
+13. **AirTracks Video: el video con la letra en el proyector.** Un
+    programa aparte para la compu del data (la de Holyrics; corre desde
+    **Windows 7**, en compus viejas). Ahí se cargan los videos con la letra
+    (*lyric videos*) de las canciones que los tengan; las demás siguen con
+    Holyrics como siempre.
+    - **Instalarlo** en la compu del proyector y abrirlo: busca sola la compu
+      de AirTracks en la red del router (sin internet y sin escribir IP; si
+      la banda tiene código, lo pide una vez). Elegir en qué pantalla está el
+      proyector y tocar **Probar**.
+    - **+ Agregar video** → elegir el archivo → **¿de qué canción es?** (sugiere
+      la del mismo nombre). El programa encuentra solo **dónde empieza la
+      canción en el video** comparando el sonido del video con el de las
+      pistas: tiene que ser **la misma grabación** que la multitrack (que el
+      video tenga voz y la multitrack no, o una placa con el título al
+      principio, da igual). Si es otra versión (en vivo, otro tempo, un video
+      editado), avisa y se ajusta a mano con **+0,1 s / −0,1 s**.
+    - **En el culto no se toca nada:** al darle ▶ a una canción con video, el
+      video aparece **encima de Holyrics** en el proyector (quieto durante la
+      cuenta) y sigue a la banda: saltos de sección, repetir, pausa, cambio
+      de velocidad. Al parar, se va y vuelve a verse Holyrics. Nunca le saca
+      el teclado ni el mouse al que maneja Holyrics.
+    - En la compu de AirTracks, la canción muestra **Video** al lado del
+      tempo, y en *Conectar celulares* figura la pantalla de video.
+    - **Los celulares no se enteran:** la pantalla de video no cuenta como
+      celular (no cambia la espera para arrancar juntos ni ocupa lugar de la
+      licencia), no recibe audio, los videos ya están en su compu (no viajan
+      por el WiFi) y nadie la espera: si se traba o se cae, la música sigue
+      igual. Medido: el video queda a menos de 30 ms de la canción (sonando,
+      después de un salto y en pausa).
+    - Conviene que los videos sean **MP4 de 720p** (en una compu vieja, un
+      1080p o un WebM pueden ir a los saltos). La compu del data mejor por
+      **cable** al router (igual funciona por WiFi: el video no pasa por la red).
+
 **Ancho de banda:** la compu le arma a cada celular **su mezcla** (la del
 director + su “Mi mezcla”) y le manda **una sola pista estéreo**: ~1,4 Mbps
 por celular, tenga la canción 4 pistas o 20 (antes, con cada pista por
@@ -606,6 +641,49 @@ y el audio es el mismo WAV de siempre.
   caer a esa velocidad. Medido: el click cae a ±2 ms de donde corresponde,
   el bajo ~5 ms antes (el vocoder de fase adelanta los graves), y la nota
   exacta (< 5 cents).
+
+### AirTracks Video
+
+`src/video/` (programa aparte: `video/package.json`, Electron **22**, el último
+que corre en Windows 7; se arma con `npm run build:video` y el instalador con
+`cd video && npm run dist:win`, 32 y 64 bits en uno), `shared/huella.ts`,
+`shared/videoSync.ts`, `server/huellas.ts`.
+
+- **Conexión:** busca la compu como la app Android (pregunta UDP
+  `MULTITRACK-ALABANZA?` al puerto 48480) y entra con `origen: 'video'`. El
+  servidor la trata aparte: no está en `idsCelulares` (margen de arranque,
+  pings de entrega), no cuenta para la licencia, una sola a la vez
+  (`video-ocupado`), y avisa qué canciones tiene (`video:estado` →
+  `pantallaVideo` en el estado). Recibe lo mismo que un celular
+  (`estado:actualizado`, `playback:scheduled`) y sincroniza el reloj igual.
+- **Alineación:** la *huella* de un audio son, cada 10 ms y en 12 bandas
+  (80 Hz a 3,4 kHz), las subidas de energía (ataques), suavizadas y en un
+  byte (~1 KB por segundo). La compu de AirTracks hace la de la canción
+  (sus pistas sin click ni guía, a 8 kHz, una vez y guardada; solo con la
+  música parada: `video:huella` contesta `esperando` mientras suena); la del
+  video la hace la compu del data (Chromium decodifica el audio del video).
+  La correlación (FFT) da el desfase; es *segura* si el pico sobresale
+  (confianza ≥ 9 desvíos) y coincide en ≥ 60 % de la canción por tramos de
+  15 s. Probado: encuentra el desfase a ±20 ms con la voz de más, con la
+  banda baja y con ruido, y rechaza otra canción o la misma grabada de nuevo.
+- **Seguir la canción** (`objetivoVideo`): tiempo del video = posición ×
+  velocidad + desfase (el video es la grabación original). Cada 50 ms:
+  lejos (> 0,3 s) salta, cerca lo apura o frena hasta un 8 %, a menos de
+  30 ms lo deja. Un salto ya programado deja el otro `<video>` quieto en el
+  punto nuevo y corta justo a su hora. Contando o en pausa: quieto en el
+  cuadro justo. Sin video, parado o desconectado: la ventana se esconde.
+- **La ventana del proyector:** sin marco, encima de todo (`screen-saver`),
+  sin foco ni mouse (`focusable: false`, `setIgnoreMouseEvents`), solo en la
+  pantalla elegida (sin segunda pantalla no se muestra, salvo que se elija la
+  principal a propósito). Las páginas y los videos se sirven por un protocolo
+  propio (`atv://app/…`, con saltos dentro del archivo).
+- `npm run test:video` (en Linux dentro de `xvfb-run`): servidor real +
+  AirTracks Video real (Electron 22) + un celular; arma una canción y su
+  "lyric video" (otra grabación no, la misma con 3 s de placa y una voz de
+  más), y comprueba la alineación (3000 ms ± 40), el video sonando, después
+  de un salto y en pausa (< 0,12 s; medido < 30 ms), que se esconda al parar,
+  que el margen de arranque no cambie y que si el programa se cae la
+  reproducción siga.
 
 ### Colchón (pad y click)
 

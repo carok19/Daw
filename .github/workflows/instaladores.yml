@@ -27,6 +27,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Dependencias de AirTracks Video (solo los tipos de Electron 22)
+        run: npm ci --prefix video
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: npm run typecheck
       - run: npm run test:server
 
@@ -44,6 +48,11 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: AirTracks Video (Electron 22 de verdad, con pantalla virtual)
+        run: |
+          npm ci --prefix video
+          sudo apt-get install -y xvfb > /dev/null
+          xvfb-run -a npm run test:video
 
   android:
     name: App Android
@@ -116,9 +125,33 @@ jobs:
           path: dist/AirTracks-Wireless-Monitor-Instalador.exe
           if-no-files-found: error
 
+  video:
+    # programa aparte para la compu del proyector: Electron 22, el ultimo que corre en Windows 7
+    name: Instalador de AirTracks Video (Windows 7 en adelante)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix video
+      - run: npm run build:video
+      - name: Armar el instalador (32 y 64 bits en uno)
+        working-directory: video
+        run: npx electron-builder --win --ia32 --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: instalador-video
+          path: video/dist/AirTracks-Video-Instalador.exe
+          if-no-files-found: error
+
   publicar:
     name: Publicar en Descargas
-    needs: [pruebas, android, windows]
+    needs: [pruebas, android, windows, video]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -137,17 +170,18 @@ jobs:
 
           - **AirTracks-Wireless-Monitor-Instalador.exe**: para la computadora (Windows). Incluye el reconocedor de voz y la app Android para ofrecerla a los celulares.
           - **AirTracks.apk**: app para Android. También se baja desde la compu (en el celular: "Invitar" o "La próxima vez sin QR").
+          - **AirTracks-Video-Instalador.exe**: para la compu del proyector (Windows 7 en adelante, 32 o 64 bits). Muestra el video con la letra siguiendo a la canción.
 
           Windows puede avisar que el instalador "no es común": tocá **Más información → Ejecutar de todas formas**.
           EOF
           mv descargas/airtracks.apk descargas/AirTracks.apk
           if gh release view descargas --repo "$REPO" > /dev/null 2>&1; then
-            gh release upload descargas descargas/AirTracks-Wireless-Monitor-Instalador.exe descargas/AirTracks.apk --repo "$REPO" --clobber
+            gh release upload descargas descargas/AirTracks-Wireless-Monitor-Instalador.exe descargas/AirTracks.apk descargas/AirTracks-Video-Instalador.exe --repo "$REPO" --clobber
             gh release edit descargas --repo "$REPO" --title "Descargas" --notes-file notas.md
             # los de antes del cambio de nombre (Multitrack Alabanza): que nadie baje una version vieja
             for viejo in Multitrack-Alabanza-Instalador.exe alabanza.apk; do
               gh release delete-asset descargas "$viejo" --repo "$REPO" --yes 2> /dev/null || true
             done
           else
-            gh release create descargas descargas/AirTracks-Wireless-Monitor-Instalador.exe descargas/AirTracks.apk --repo "$REPO" --target "$GITHUB_SHA" --title "Descargas" --notes-file notas.md
+            gh release create descargas descargas/AirTracks-Wireless-Monitor-Instalador.exe descargas/AirTracks.apk descargas/AirTracks-Video-Instalador.exe --repo "$REPO" --target "$GITHUB_SHA" --title "Descargas" --notes-file notas.md
           fi

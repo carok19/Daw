@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ClipboardCopy, KeyRound, Laptop, Printer, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi } from 'lucide-react'
+import { Check, ClipboardCopy, KeyRound, Laptop, MonitorPlay, Printer, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi } from 'lucide-react'
 import type { AjustesConexion, DatosInvitacion, DispositivoInfo, EstadoFirewall } from '@shared/types'
 import type { AppController } from '../app/useAppController'
 import { copiarTexto, direccionVisible, enlaceConCodigo, textoQrWifi } from '../conexion'
@@ -19,6 +19,12 @@ function EstadoDispositivo({ d, sonando }: { d: DispositivoInfo; sonando: boolea
     )
   }
   if (d.origen === 'compu') return <span className="dispositivo-estado texto-gris">Director</span>
+  if (d.origen === 'video')
+    return (
+      <span className="dispositivo-estado texto-gris" title="AirTracks Video: el video con la letra en el proyector, siguiendo la canción">
+        <span className="punto verde" /> Video en el proyector
+      </span>
+    )
   if (d.error) {
     return (
       <span className="dispositivo-estado texto-rojo" title={d.error}>
@@ -281,7 +287,13 @@ export function ConnectionPanel({
             {dispositivos.length === 0 && <li className="vacio">Nadie conectado todavía.</li>}
             {dispositivos.map((d) => (
               <li key={d.id} className="lista-fila">
-                {d.origen === 'compu' ? <Laptop size={18} color="var(--text-3)" /> : <Smartphone size={18} color="var(--text-3)" />}
+                {d.origen === 'compu' ? (
+                  <Laptop size={18} color="var(--text-3)" />
+                ) : d.origen === 'video' ? (
+                  <MonitorPlay size={18} color="var(--text-3)" />
+                ) : (
+                  <Smartphone size={18} color="var(--text-3)" />
+                )}
                 <div className="lista-principal">
                   <span className="lista-titulo">{d.etiqueta}</span>
                   {d.error && d.conectado && <span className="lista-meta texto-rojo">{d.error}</span>}
