@@ -76,8 +76,10 @@ button {
   transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.06s;
   user-select: none;
 }
-button:hover:not(:disabled) {
-  background: var(--panel-4);
+@media (hover: hover) {
+  button:hover:not(:disabled) {
+    background: var(--panel-4);
+  }
 }
 button:active:not(:disabled) {
   transform: translateY(1px);
@@ -97,8 +99,10 @@ input:focus-visible {
   color: #fff;
   font-weight: 600;
 }
-.btn-primario:hover:not(:disabled) {
-  background: var(--accent-hover);
+@media (hover: hover) {
+  .btn-primario:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
 }
 .btn-peligro {
   background: var(--danger);
@@ -106,17 +110,21 @@ input:focus-visible {
   color: #fff;
   font-weight: 600;
 }
-.btn-peligro:hover:not(:disabled) {
-  background: #f25c5c;
+@media (hover: hover) {
+  .btn-peligro:hover:not(:disabled) {
+    background: #f25c5c;
+  }
 }
 .btn-fantasma {
   background: transparent;
   border-color: transparent;
   color: var(--text-2);
 }
-.btn-fantasma:hover:not(:disabled) {
-  background: var(--panel-3);
-  color: var(--text);
+@media (hover: hover) {
+  .btn-fantasma:hover:not(:disabled) {
+    background: var(--panel-3);
+    color: var(--text);
+  }
 }
 .btn-icono {
   padding: 7px;
@@ -391,8 +399,10 @@ kbd {
   flex-shrink: 1;
   transition: background 0.12s, border-color 0.12s;
 }
-.setlist-tab:hover {
-  background: var(--panel-3);
+@media (hover: hover) {
+  .setlist-tab:hover {
+    background: var(--panel-3);
+  }
 }
 .setlist-tab.activo {
   background: var(--accent-soft);
@@ -439,13 +449,19 @@ kbd {
   border-radius: 5px;
   opacity: 0;
 }
-.setlist-tab:hover .setlist-cerrar,
 .setlist-tab.activo .setlist-cerrar {
   opacity: 1;
 }
-.setlist-cerrar:hover:not(:disabled) {
-  background: var(--panel-4);
-  color: var(--text);
+@media (hover: hover) {
+  .setlist-tab:hover .setlist-cerrar {
+    opacity: 1;
+  }
+}
+@media (hover: hover) {
+  .setlist-cerrar:hover:not(:disabled) {
+    background: var(--panel-4);
+    color: var(--text);
+  }
 }
 .boton-nueva {
   flex-shrink: 0;
@@ -593,8 +609,10 @@ kbd {
   color: #05230f;
   box-shadow: 0 6px 22px rgba(34, 197, 94, 0.28);
 }
-.tbtn-play:hover:not(:disabled) {
-  background: #3ad67f;
+@media (hover: hover) {
+  .tbtn-play:hover:not(:disabled) {
+    background: #3ad67f;
+  }
 }
 .tbtn-play.sonando {
   background: var(--panel-4);
@@ -772,13 +790,21 @@ kbd {
   border: 6px solid transparent;
   border-bottom-color: #fff;
 }
-.timeline-marca:hover::before,
 .timeline-marca.arrastrando::before {
   background: var(--warn);
 }
-.timeline-marca:hover::after,
+@media (hover: hover) {
+  .timeline-marca:hover::before {
+    background: var(--warn);
+  }
+}
 .timeline-marca.arrastrando::after {
   border-bottom-color: var(--warn);
+}
+@media (hover: hover) {
+  .timeline-marca:hover::after {
+    border-bottom-color: var(--warn);
+  }
 }
 .timeline-hover {
   position: absolute;
@@ -840,9 +866,11 @@ kbd {
   width: 100%;
   cursor: pointer;
 }
-.canal-color:hover:not(:disabled) {
-  background: var(--color-pista);
-  filter: brightness(1.2);
+@media (hover: hover) {
+  .canal-color:hover:not(:disabled) {
+    background: var(--color-pista);
+    filter: brightness(1.2);
+  }
 }
 .canal-cabeza {
   padding: 8px 6px 4px;
@@ -1130,9 +1158,11 @@ kbd {
     transform 0.08s,
     border-color 0.12s;
 }
-.seccion-tarjeta:hover {
-  border-color: color-mix(in srgb, var(--color-seccion) 70%, var(--line-2));
-  border-top-color: var(--color-seccion);
+@media (hover: hover) {
+  .seccion-tarjeta:hover {
+    border-color: color-mix(in srgb, var(--color-seccion) 70%, var(--line-2));
+    border-top-color: var(--color-seccion);
+  }
 }
 .seccion-tarjeta:active {
   transform: scale(0.98);
@@ -1205,8 +1235,10 @@ kbd {
   margin-left: auto;
   opacity: 0;
 }
-.seccion-tarjeta:hover .seccion-acciones {
-  opacity: 1;
+@media (hover: hover) {
+  .seccion-tarjeta:hover .seccion-acciones {
+    opacity: 1;
+  }
 }
 .seccion-acciones button {
   padding: 4px;
@@ -1214,9 +1246,11 @@ kbd {
   border-color: transparent;
   color: var(--text-2);
 }
-.seccion-acciones button:hover:not(:disabled) {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.12);
+@media (hover: hover) {
+  .seccion-acciones button:hover:not(:disabled) {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.12);
+  }
 }
 .secciones-pie {
   margin-top: auto;
@@ -1293,9 +1327,11 @@ kbd {
 .lista-fila.clic {
   cursor: pointer;
 }
-.lista-fila.clic:hover {
-  border-color: var(--line-2);
-  background: var(--panel-3);
+@media (hover: hover) {
+  .lista-fila.clic:hover {
+    border-color: var(--line-2);
+    background: var(--panel-3);
+  }
 }
 .lista-principal {
   flex: 1;
@@ -1873,8 +1909,10 @@ input[type='range'].slider::-moz-range-thumb {
   gap: 8px;
   box-shadow: 0 0 0 10px rgba(79, 124, 255, 0.15), 0 0 0 22px rgba(79, 124, 255, 0.07);
 }
-.activar-boton:hover:not(:disabled) {
-  background: var(--accent-hover);
+@media (hover: hover) {
+  .activar-boton:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
 }
 
 @media (max-width: 1279px) {
@@ -1979,9 +2017,11 @@ input[type='range'].slider::-moz-range-thumb {
   background: transparent;
   color: var(--text-2);
 }
-.boton-tono:hover:not(:disabled) {
-  background: var(--panel-4);
-  color: var(--text);
+@media (hover: hover) {
+  .boton-tono:hover:not(:disabled) {
+    background: var(--panel-4);
+    color: var(--text);
+  }
 }
 .boton-tono:disabled {
   opacity: 0.35;
@@ -2000,8 +2040,10 @@ input[type='range'].slider::-moz-range-thumb {
   cursor: pointer;
   text-align: center;
 }
-.tono-original:hover {
-  background: var(--panel-4);
+@media (hover: hover) {
+  .tono-original:hover {
+    background: var(--panel-4);
+  }
 }
 .tono-original option {
   background: var(--panel-2);
@@ -2019,8 +2061,10 @@ input[type='range'].slider::-moz-range-thumb {
 .tono-destino b {
   font-weight: 700;
 }
-.tono-destino:hover:not(:disabled) {
-  background: var(--warn-soft);
+@media (hover: hover) {
+  .tono-destino:hover:not(:disabled) {
+    background: var(--warn-soft);
+  }
 }
 .tono-destino:disabled {
   cursor: default;
@@ -2271,10 +2315,12 @@ input[type='range'].slider::-moz-range-thumb {
   border-radius: 999px;
   display: inline-flex;
 }
-.salto-pendiente button:hover,
-.seccion-pendiente button:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--text);
+@media (hover: hover) {
+  .salto-pendiente button:hover,
+  .seccion-pendiente button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text);
+  }
 }
 @keyframes latido {
   50% {
@@ -3263,9 +3309,11 @@ input[type='date'] {
   border-radius: 9px;
   text-align: left;
 }
-.carpeta:hover:not(:disabled) {
-  background: var(--panel-3);
-  color: var(--text);
+@media (hover: hover) {
+  .carpeta:hover:not(:disabled) {
+    background: var(--panel-3);
+    color: var(--text);
+  }
 }
 .carpeta.activo {
   background: var(--accent-soft);
@@ -3449,8 +3497,10 @@ input[type='date'] {
   font-weight: 700;
   padding: 9px 14px;
 }
-.btn-play:hover:not(:disabled) {
-  background: #3ad271;
+@media (hover: hover) {
+  .btn-play:hover:not(:disabled) {
+    background: #3ad271;
+  }
 }
 .listas-seguir {
   margin-top: auto;
@@ -3606,8 +3656,10 @@ input[type='date'] {
   gap: 2px;
   opacity: 0.55;
 }
-.fila-orden:hover .fila-orden-botones {
-  opacity: 1;
+@media (hover: hover) {
+  .fila-orden:hover .fila-orden-botones {
+    opacity: 1;
+  }
 }
 .fila-orden-botones .btn-icono {
   padding: 5px;
@@ -3697,8 +3749,10 @@ input[type='date'] {
   cursor: pointer;
   flex-shrink: 0;
 }
-.chip-cuenta:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .chip-cuenta:hover {
+    color: var(--text);
+  }
 }
 .chip-cuenta option {
   background: var(--panel-2);
@@ -3775,7 +3829,9 @@ input[type='date'] {
   gap: 4px;
   background: transparent;
   border: none;
-  padding: 0;
+  /* se toca con el dedo: la zona es mas alta que el texto (sin mover nada) */
+  padding: 12px 0;
+  margin: -12px 0;
   font-size: 15px;
   color: var(--text-2);
   text-align: left;
@@ -4134,8 +4190,10 @@ input[type='date'] {
   border-color: var(--line-2);
   color: var(--text);
 }
-.btn-terminar:hover:not(:disabled) {
-  background: var(--panel-3);
+@media (hover: hover) {
+  .btn-terminar:hover:not(:disabled) {
+    background: var(--panel-3);
+  }
 }
 .colchon-ajustes {
   display: grid;
