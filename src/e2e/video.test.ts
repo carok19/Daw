@@ -153,6 +153,9 @@ test('AirTracks Video: un video dejado en la carpeta se vincula y se alinea solo
   assert.ok(Math.abs(alineado.desfaseMs! - PLACA_SEG * 1000) <= 40, `desfase ${alineado.desfaseMs}`)
   assert.equal(alineado.archivo, path.basename(video))
   assert.deepEqual((await estadoApp()).sueltos, [])
+  // la ventana: la cancion de hoy con su video listo y, abajo, el sonido de la cancion y el del video encimados
+  await control.locator('.cancion', { hasText: 'Gracia Sublime' }).locator('.chip.ok').waitFor({ timeout: 10000 })
+  await control.locator('.encimadas canvas').waitFor({ timeout: 15000 })
   await captura(control, 'video-alineado')
   // al lado del video, su ficha con la cancion y la alineacion
   const ficha = path.join(carpeta, 'Gracia Sublime (Lyric Video).airtracks-video.json')
@@ -191,6 +194,13 @@ test('AirTracks Video: un video dejado en la carpeta se vincula y se alinea solo
   const enPlay = await diferencia()
   assert.equal(enPlay.paused, false)
   assert.ok(Math.abs(enPlay.dif) < 0.12, `video corrido ${enPlay.dif.toFixed(3)} s`)
+  // en la ventana de control: el monitor muestra lo del proyector, "En vivo", en sync, y la cancion que suena resaltada
+  await control.locator('.insignia.vivo').waitFor({ timeout: 5000 })
+  await control.waitForFunction(() => (document.querySelector('img.vivo') as HTMLImageElement | null)?.src.startsWith('data:image/jpeg'), null, { timeout: 5000 })
+  await control.locator('.sync.ok').waitFor({ timeout: 5000 })
+  assert.match((await control.locator('.sync').textContent()) ?? '', /En sync · \d+ ms/)
+  assert.equal(await control.locator('.cancion.arriba .mini-suena').count(), 1)
+  await captura(control, 'video-en-vivo')
 
   // ---- salto de seccion: el video salta al mismo punto ----
   /** espera a que la ultima orden llegue a su hora (el margen de arranque de los celulares) y `ms` mas */
@@ -216,6 +226,7 @@ test('AirTracks Video: un video dejado en la carpeta se vincula y se alinea solo
   // ---- stop: se va (vuelve a verse Holyrics) ----
   compu.emit('transport:stop')
   await esperarQue(async () => !(await visible()), 5000, 'que se esconda')
+  await control.locator('.insignia.apagado').waitFor({ timeout: 5000 })
 
   // ---- si el programa del video se cae, la reproduccion de los celulares sigue igual ----
   compu.emit('transport:play', {})
@@ -250,7 +261,8 @@ test('AirTracks Video: un video dejado en la carpeta se vincula y se alinea solo
   const copiado = await esperarQue(async () => (await estado2()).videos.find((v) => v.proyectoId === proyecto.id) ?? null, 30000, 'el video de la carpeta copiada')
   assert.equal(copiado.estado, 'listo')
   assert.equal(copiado.desfaseMs, alineado.desfaseMs, 'con la misma alineación')
-  assert.equal(fs.readdirSync(path.join(datosOtra, 'huellas')).length, 0, 'sin volver a procesar el video')
+  // (la de la cancion la pide a AirTracks para dibujarlas encimadas: ya estaba calculada alla)
+  assert.equal(fs.readdirSync(path.join(datosOtra, 'huellas')).filter((f) => !f.startsWith('cancion-')).length, 0, 'sin volver a procesar el video')
   assert.equal(JSON.parse(fs.readFileSync(fichaOtra, 'utf-8')).proyectoId, proyecto.id, 'la ficha queda con la canción de esta AirTracks')
   await esperarQue(async () => (await ack<EstadoCompleto>('state:request', {})).pantallaVideo?.canciones.includes(proyecto.id), 10000, 'el aviso a la compu')
 
@@ -269,6 +281,7 @@ test('AirTracks Video: un video dejado en la carpeta se vincula y se alinea solo
     'que se alinee el nuevo'
   )
   assert.equal(realineado.estado, 'listo')
+  await captura(control2, 'video-otra-compu')
   assert.ok(Math.abs(realineado.desfaseMs! - PLACA_SEG * 1000) <= 40, `desfase ${realineado.desfaseMs}`)
   assert.deepEqual((await estado2()).sueltos, [])
   assert.deepEqual(errores2, [])

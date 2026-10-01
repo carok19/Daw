@@ -1,4 +1,4 @@
-import type { ApiVideo, Reproduccion, VideoGuardado } from '../tipos'
+import type { ApiVideo, EstadoPantalla, Reproduccion, VideoGuardado } from '../tipos'
 import { ajusteDeVideo, objetivoVideo, proximoCorte } from '../../shared/videoSync'
 
 /**
@@ -31,6 +31,10 @@ let pruebaHasta = 0
 let adelanto = 0.06
 let medirSalto: { en: number } | null = null
 let corte: { en: number; segundos: number; timer: ReturnType<typeof setTimeout> } | null = null
+/** "Ver en el proyector": el video que se esta revisando (con la musica parada) */
+let enPrueba: string | null = null
+/** lo que se le cuenta a la ventana de control (cada medio segundo) */
+const informe: EstadoPantalla = { visible: false, proyectoId: null, corriendo: false, difMs: null, prueba: null }
 
 for (const v of [a, b]) {
   v.muted = true
@@ -125,9 +129,38 @@ function prepararCorte(v: VideoGuardado, ahora: number): void {
   }
 }
 
+/** "Ver en el proyector": el video desde el comienzo de la cancion, en loop, mientras no suene nada. */
+function pasoPrueba(v: VideoGuardado): void {
+  cargar(v)
+  if (enPrueba !== v.proyectoId) {
+    if (activo.readyState < 1) return
+    enPrueba = v.proyectoId
+    cancelarCorte()
+    activo.currentTime = Math.max(0, v.desfaseMs! / 1000)
+  }
+  activo.playbackRate = 1
+  if (activo.ended) activo.currentTime = Math.max(0, v.desfaseMs! / 1000)
+  if (activo.paused) void activo.play().catch(() => undefined)
+  if (activo.readyState >= 2) mostrar(true)
+  Object.assign(informe, { proyectoId: v.proyectoId, corriendo: true, difMs: null, prueba: 'video' })
+}
+
 function paso(): void {
-  if (pruebaHasta) return
+  if (pruebaHasta) {
+    informe.prueba = 'cartel'
+    return
+  }
+  informe.prueba = null
+  const prueba = rep?.prueba && rep.playback?.estado !== 'playing' ? rep.videos.find((x) => x.proyectoId === rep!.prueba!.proyectoId && x.desfaseMs !== null) : null
+  if (prueba) return pasoPrueba(prueba)
+  if (enPrueba) {
+    enPrueba = null
+    activo.pause()
+  }
   const v = videoDeLaCancion()
+  informe.proyectoId = v?.proyectoId ?? null
+  informe.corriendo = false
+  informe.difMs = null
   if (!v || !rep) {
     mostrar(false)
     soltar()
@@ -143,6 +176,8 @@ function paso(): void {
     if (!activo.paused) activo.pause()
     return
   }
+  informe.corriendo = obj.corriendo
+  if (activo.readyState >= 2 && !activo.seeking) informe.difMs = Math.round((activo.currentTime - obj.segundos) * 1000)
   if (activo.readyState < 1) return // todavia leyendo el archivo
   prepararCorte(v, ahora)
   if (activo.seeking) return
@@ -164,3 +199,26 @@ function paso(): void {
 }
 
 setInterval(paso, 50)
+
+// a la ventana de control: como va el proyector y, mientras se ve, una imagen chiquita (el monitor)
+const lienzo = document.createElement('canvas')
+lienzo.width = 384
+lienzo.height = 216
+const dibujo = lienzo.getContext('2d')!
+setInterval(() => {
+  informe.visible = visible
+  api.informarPantalla({ ...informe })
+  if (!visible || informe.prueba === 'cartel' || activo.readyState < 2 || !activo.videoWidth) return
+  // el cuadro entero, con franjas negras si el video no es 16:9 (como se ve en el proyector)
+  const escala = Math.min(lienzo.width / activo.videoWidth, lienzo.height / activo.videoHeight)
+  const w = activo.videoWidth * escala
+  const h = activo.videoHeight * escala
+  dibujo.fillStyle = '#000'
+  dibujo.fillRect(0, 0, lienzo.width, lienzo.height)
+  try {
+    dibujo.drawImage(activo, (lienzo.width - w) / 2, (lienzo.height - h) / 2, w, h)
+    api.enviarVistaPrevia(lienzo.toDataURL('image/jpeg', 0.6))
+  } catch {
+    // un cuadro que no se pudo leer: se manda el proximo
+  }
+}, 500)

@@ -1,248 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProyectoResumen } from '../../shared/types'
 import { cancionPara, esVideo, nombreDe, parecido } from '../nombres'
-import type { ApiVideo, EstadoApp, VideoGuardado } from '../tipos'
+import type { CancionDeHoy, EstadoApp, VideoGuardado } from '../tipos'
 import { alinearVideo } from './alinear'
+import { AvisoConexion, Encabezado, PrimeraVezCarpeta } from './Encabezado'
+import { Escenario } from './Escenario'
+import { api, estadoDe, useMiniatura, useReproduccion } from './estado'
 
-declare global {
-  interface Window {
-    airtracksVideo: ApiVideo
-  }
-}
+/**
+ * AirTracks Video, la ventana de control: a la izquierda lo que se ve en el
+ * proyector (en vivo), las secciones de la cancion y el ajuste del inicio; a
+ * la derecha las canciones de hoy en AirTracks, cada una con su video (o un
+ * lugar para soltarlo). Los videos se agregan arrastrandolos: a la ventana
+ * (se vinculan por el nombre) o encima de la cancion.
+ */
 
-const api = window.airtracksVideo
+/** La ruta de un archivo arrastrado (Electron 22: el File la trae). */
+const rutaDe = (f: File): string => (f as File & { path?: string }).path ?? ''
 
-function segundos(ms: number): string {
-  return `${(Math.abs(ms) / 1000).toFixed(1).replace('.', ',')} s`
-}
-
-function textoDesfase(ms: number): string {
-  if (Math.abs(ms) < 50) return 'El video y la canción empiezan juntos'
-  return ms > 0 ? `El video tiene ${segundos(ms)} más al principio` : `La canción empieza ${segundos(ms)} antes que el video`
-}
-
-function textoEstado(v: VideoGuardado): { texto: string; tipo: 'ok' | 'aviso' | 'error' | 'info' } {
-  switch (v.estado) {
-    case 'alineando':
-      return { texto: 'Alineando con la canción…', tipo: 'info' }
-    case 'esperando-musica':
-      return { texto: 'Se alinea cuando pare la música en AirTracks', tipo: 'info' }
-    case 'sin-conexion':
-      return { texto: 'Se alinea al conectar con AirTracks', tipo: 'info' }
-    case 'listo':
-      return v.alineacion?.manual
-        ? { texto: 'Listo (ajustado a mano) · al darle ▶ a esta canción en AirTracks, el video aparece solo', tipo: 'ok' }
-        : {
-            texto: `Listo · coincide en el ${Math.round((v.alineacion?.coincide ?? 1) * 100)} % de la canción · al darle ▶ a esta canción en AirTracks, el video aparece solo`,
-            tipo: 'ok'
-          }
-    case 'revisar':
-      return {
-        texto: 'No coincide del todo: ¿es la misma grabación? Probalo con la canción y ajustá el inicio a mano',
-        tipo: 'aviso'
-      }
-    case 'desactualizado':
-      return { texto: 'Para alinear hay que actualizar AirTracks en la compu principal (ver arriba)', tipo: 'error' }
-    default:
-      return { texto: v.mensaje ?? 'No se pudo alinear', tipo: 'error' }
-  }
-}
-
-function Conexion({ e }: { e: EstadoApp }) {
-  const c = e.conexion
-  const [codigo, setCodigo] = useState('')
-  const [direccion, setDireccion] = useState('')
-  const [escribir, setEscribir] = useState(false)
-  if (c.estado === 'conectado' && c.desactualizado)
-    return (
-      <div className="conexion aviso" role="alert">
-        <span className="punto amarillo" /> Conectado a <b>{c.nombreServidor ?? c.servidor}</b>, pero tiene una versión de AirTracks de antes de los
-        videos: actualizala con el instalador de siempre (Descargas) para alinear y mostrar los videos.
-      </div>
-    )
-  if (c.estado === 'conectado')
-    return (
-      <div className="conexion ok">
-        <span className="punto verde" /> Conectado a <b>{c.nombreServidor ?? c.servidor}</b>
-        {e.cancionActiva && (
-          <span className="suena">
-            · Arriba: <b>{e.cancionActiva.nombre}</b>
-          </span>
-        )}
-      </div>
-    )
-  if (c.estado === 'codigo')
-    return (
-      <form
-        className="conexion aviso"
-        onSubmit={(ev) => {
-          ev.preventDefault()
-          api.usarCodigo(codigo)
-        }}
-      >
-        <span>
-          {c.motivoCodigo === 'codigo-incorrecto'
-            ? 'Ese no es el código de la banda.'
-            : c.motivoCodigo === 'codigo-bloqueado'
-              ? 'Demasiados intentos: esperá un minuto.'
-              : 'AirTracks pide el código de la banda.'}
-        </span>
-        <input value={codigo} onChange={(ev) => setCodigo(ev.target.value)} inputMode="numeric" maxLength={8} placeholder="Código" aria-label="Código de la banda" />
-        <button className="primario">Entrar</button>
-      </form>
-    )
-  return (
-    <div className={`conexion ${c.estado === 'ocupado' ? 'aviso' : ''}`}>
-      <span className="punto amarillo" />
-      {c.estado === 'ocupado'
-        ? 'Ya hay otra pantalla de video conectada a AirTracks.'
-        : c.estado === 'conectando'
-          ? `Conectando con ${c.nombreServidor ?? c.servidor}…`
-          : 'Buscando la compu de AirTracks en la red… (tiene que estar abierta y en el mismo router)'}
-      {escribir ? (
-        <form
-          className="direccion"
-          onSubmit={(ev) => {
-            ev.preventDefault()
-            api.usarDireccion(direccion)
-            setEscribir(false)
-          }}
-        >
-          <input value={direccion} onChange={(ev) => setDireccion(ev.target.value)} placeholder="192.168.0.10:4848" aria-label="Dirección de la compu de AirTracks" />
-          <button className="primario">Conectar</button>
-        </form>
-      ) : (
-        <button className="enlace" onClick={() => setEscribir(true)}>
-          Escribir la dirección
-        </button>
-      )}
-    </div>
-  )
-}
-
-function Proyector({ e }: { e: EstadoApp }) {
-  const secundaria = e.pantallas.some((p) => !p.principal)
-  return (
-    <section className="tarjeta">
-      <h2>Proyector</h2>
-      {!secundaria && e.pantallaId === null && (
-        <p className="aviso-texto">No hay una segunda pantalla. Conectá el proyector (como pantalla extendida) para que se vea el video.</p>
-      )}
-      <div className="fila">
-        <label>
-          Mostrar el video en{' '}
-          <select value={e.pantallaId ?? ''} onChange={(ev) => api.elegirPantalla(Number(ev.target.value))} aria-label="Pantalla del proyector">
-            {e.pantallaId === null && <option value="">(elegí una)</option>}
-            {e.pantallas.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.nombre}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button onClick={() => api.probarPantalla()}>Probar</button>
-      </div>
-      {e.pantallas.find((p) => p.id === e.pantallaId)?.principal && (
-        <p className="aviso-texto">
-          Elegiste la pantalla principal (sirve para probar sin proyector): mientras suene una canción con video, el video tapa esta pantalla.
-          Para sacarlo, pará la canción en AirTracks.
-        </p>
-      )}
-      <label className="check">
-        <input type="checkbox" checked={e.inicioConWindows} onChange={(ev) => api.inicioConWindows(ev.target.checked)} />
-        Abrir AirTracks Video al prender la compu
-      </label>
-      <p className="ayuda">
-        El video aparece encima de todo (también de Holyrics) solo mientras suena una canción que tiene video, y se va al pararla. No le saca
-        el teclado ni el mouse a Holyrics.
-      </p>
-    </section>
-  )
-}
-
-function FilaVideo({
-  v,
-  suena,
-  sinCancion,
-  progreso,
-  onCambiar
-}: {
-  v: VideoGuardado
-  suena: boolean
-  sinCancion: boolean
-  progreso: { texto: string; fraccion: number | null } | null
-  onCambiar: () => void
-}) {
-  const est = sinCancion
-    ? { texto: 'Esta canción no está en AirTracks: elegí de qué canción es con "Cambiar canción"', tipo: 'aviso' as const }
-    : v.estado === 'alineando' && progreso
-      ? { texto: progreso.texto, tipo: 'info' as const }
-      : textoEstado(v)
-  const mover = (ms: number): void => {
-    void api.actualizarVideo(v.proyectoId, {
-      desfaseMs: (v.desfaseMs ?? 0) + ms,
-      estado: 'listo',
-      alineacion: v.alineacion ? { ...v.alineacion, manual: true } : { desfaseMs: 0, confianza: 0, ventaja: 0, coincide: 0, segura: false, manual: true }
-    })
-  }
-  return (
-    <li className={`video ${suena ? 'suena' : ''}`}>
-      <div className="video-arriba">
-        <div className="video-nombres">
-          <b>{v.cancion}</b>
-          <small title={v.nombreArchivo}>{v.nombreArchivo}</small>
-        </div>
-        {suena && <span className="etiqueta">suena ahora</span>}
-        <button className="chico" title="Este video es de otra canción" onClick={onCambiar}>
-          Cambiar canción
-        </button>
-        <button
-          className="chico"
-          disabled={v.estado === 'alineando'}
-          title="Volver a calcular dónde empieza la canción en el video"
-          onClick={() => void api.actualizarVideo(v.proyectoId, { estado: 'alineando', mensaje: undefined })}
-        >
-          Alinear de nuevo
-        </button>
-        <button
-          className="chico peligro"
-          onClick={() => {
-            if (confirm(`¿Quitar el video de "${v.cancion}"? Se borra de la carpeta de videos.`)) void api.quitarVideo(v.proyectoId)
-          }}
-        >
-          Quitar
-        </button>
-      </div>
-      <div className={`video-estado ${est.tipo}`}>{est.texto}</div>
-      {v.estado === 'alineando' && (
-        <div className={`barra-progreso ${progreso?.fraccion == null ? 'indefinida' : ''}`} role="progressbar" aria-label="Alineando">
-          <i style={progreso?.fraccion != null ? { width: `${Math.round(progreso.fraccion * 100)}%` } : undefined} />
-        </div>
-      )}
-      {v.desfaseMs !== null && (
-        <div className="video-desfase">
-          <span>{textoDesfase(v.desfaseMs)}</span>
-          <span className="botones">
-            <span className="rotulo">Si la letra llega tarde:</span>
-            <button className="chico" onClick={() => mover(100)}>
-              +0,1 s
-            </button>
-            <button className="chico" onClick={() => mover(1000)}>
-              +1 s
-            </button>
-            <span className="rotulo">temprano:</span>
-            <button className="chico" onClick={() => mover(-100)}>
-              −0,1 s
-            </button>
-            <button className="chico" onClick={() => mover(-1000)}>
-              −1 s
-            </button>
-          </span>
-        </div>
-      )}
-    </li>
-  )
-}
+type Progreso = { texto: string; fraccion: number | null }
 
 function ElegirCancion({
   archivo,
@@ -304,75 +80,109 @@ function ElegirCancion({
   )
 }
 
-function Carpeta({ e }: { e: EstadoApp }) {
-  const [moviendo, setMoviendo] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  async function cambiar(): Promise<void> {
-    setError(null)
-    setMoviendo(true)
-    const r = await api.elegirCarpeta()
-    setMoviendo(false)
-    if (r.error) setError(r.error)
-  }
-  const elegir = (
-    <button onClick={() => void cambiar()} disabled={moviendo}>
-      {moviendo ? 'Moviendo los videos…' : e.carpetaConfirmada ? 'Cambiar…' : 'Elegir otra carpeta…'}
-    </button>
-  )
-  if (!e.carpetaConfirmada)
-    return (
-      <section className="tarjeta destacada" aria-label="Carpeta de los videos">
-        <h2>¿Dónde se guardan los videos?</h2>
-        <p className="texto">
-          En <code className="ruta">{e.carpeta}</code>. Cada video queda con el nombre de su canción y, al lado, un archivito con su
-          alineación.
-        </p>
-        <p className="ayuda">
-          Para pasar todo a otra compu, copiá esa carpeta y elegila allá: los videos aparecen ya alineados, sin volver a procesar.
-        </p>
-        <div className="fila arriba">
-          <button className="primario" onClick={() => api.confirmarCarpeta()}>
-            Usar esta carpeta
-          </button>
-          {elegir}
-        </div>
-        {error && <p className="error-texto">{error}</p>}
-      </section>
-    )
+/** Una cancion de la lista: su video (cuadro), el tono y el BPM y como esta. Se le puede soltar un video encima. */
+function TarjetaCancion(p: {
+  numero: number | null
+  nombre: string
+  detalle: string | null
+  colchon?: boolean
+  video: VideoGuardado | null
+  /** es la que esta arriba en AirTracks */
+  arriba: boolean
+  /** y esta sonando */
+  suena: boolean
+  elegida: boolean
+  arrastrando: boolean
+  sinCancion?: boolean
+  progreso: Progreso | null
+  onElegir: () => void
+  onSoltar: (rutas: string[]) => void
+}) {
+  const mini = useMiniatura(p.video)
+  const [encima, setEncima] = useState(false)
+  const est = p.video ? estadoDe(p.video) : null
+  const fraccion = p.video?.estado === 'alineando' ? (p.progreso?.fraccion ?? null) : null
+  const aceptaVideo = !p.colchon
   return (
-    <section className="tarjeta" aria-label="Carpeta de los videos">
-      <h2>Carpeta de los videos</h2>
-      <div className="fila">
-        <code className="ruta">{e.carpeta}</code>
-        <button onClick={() => api.abrirCarpeta()}>Abrir</button>
-        {elegir}
+    <li
+      className={`cancion ${p.arriba ? 'arriba' : ''} ${p.elegida ? 'elegida' : ''} ${p.colchon ? 'colchon' : ''} ${aceptaVideo && p.arrastrando ? 'puede-soltar' : ''} ${encima ? 'encima' : ''}`}
+      onClick={p.onElegir}
+      onDragOver={(ev) => {
+        if (!aceptaVideo) return
+        ev.preventDefault()
+        ev.stopPropagation()
+        setEncima(true)
+      }}
+      onDragLeave={() => setEncima(false)}
+      onDrop={(ev) => {
+        if (!aceptaVideo) return
+        ev.preventDefault()
+        ev.stopPropagation()
+        setEncima(false)
+        const rutas = [...ev.dataTransfer.files].map(rutaDe).filter(Boolean)
+        if (rutas.length) p.onSoltar(rutas)
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(ev) => ev.key === 'Enter' && p.onElegir()}
+      aria-label={p.nombre}
+      aria-current={p.elegida}
+    >
+      <div className={`mini ${p.video ? '' : 'vacia'}`} style={mini ? { backgroundImage: `url(${mini})` } : undefined}>
+        {!p.video && <span>{p.colchon ? '〰' : '＋'}</span>}
+        {p.suena && <i className="mini-suena" />}
       </div>
-      {error && <p className="error-texto">{error}</p>}
-      <p className="ayuda">
-        Un video que dejes acá con el nombre de la canción se vincula y se alinea solo. Para otra compu, copiá la carpeta entera (con los
-        archivitos .airtracks-video.json) y elegila allá: los videos ya vienen alineados.
-      </p>
-    </section>
+      <div className="cancion-datos">
+        <b>{p.nombre}</b>
+        {p.detalle && <small>{p.detalle}</small>}
+        {p.colchon ? (
+          <span className="chip apagado">Sin video: se ve Holyrics</span>
+        ) : encima || (p.arrastrando && !p.video) ? (
+          <span className="chip soltar">Soltá el video acá</span>
+        ) : !p.video ? (
+          <span className="chip apagado">Sin video</span>
+        ) : p.sinCancion ? (
+          <span className="chip aviso">No está en AirTracks</span>
+        ) : (
+          <span className={`chip ${est!.tono}`}>
+            {p.video.estado === 'alineando' && <span className="anillo" style={{ '--avance': `${Math.round((fraccion ?? 0.25) * 100)}%` } as React.CSSProperties} />}
+            {p.video.estado === 'listo' && '✓ '}
+            {p.video.estado === 'alineando' && fraccion !== null ? `Alineando · ${Math.round(fraccion * 100)} %` : est!.corto}
+          </span>
+        )}
+      </div>
+      {p.numero !== null && <span className="cancion-n num">{p.numero}</span>}
+    </li>
   )
 }
 
-/** La ruta de un archivo arrastrado (Electron 22: el File la trae). */
-const rutaDe = (f: File): string => (f as File & { path?: string }).path ?? ''
-
 export function App() {
   const [e, setE] = useState<EstadoApp | null>(null)
-  /** videos que esperan que se elija su cancion (el primero se muestra) */
+  /** videos que esperan que se elija su cancion (el primero se muestra); `para`: el video que cambia de cancion */
   const [cola, setCola] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [copiando, setCopiando] = useState<string | null>(null)
   const [arrastrando, setArrastrando] = useState(false)
-  const [progreso, setProgreso] = useState<Record<string, { texto: string; fraccion: number | null }>>({})
+  const [progreso, setProgreso] = useState<Record<string, Progreso>>({})
+  /** la cancion que se esta mirando (por defecto, la que esta arriba en AirTracks) */
+  const [elegida, setElegida] = useState<string | null>(null)
+  const [verOtros, setVerOtros] = useState(false)
   const trabajando = useRef(false)
+  const rep = useReproduccion()
 
   useEffect(() => {
     void api.estado().then(setE)
     api.onEstado(setE)
   }, [])
+
+  // cuando AirTracks pasa a otra cancion, se mira esa
+  const activa = e?.cancionActiva?.id ?? null
+  useEffect(() => {
+    if (activa) setElegida(activa)
+  }, [activa])
+  useEffect(() => {
+    if (!elegida && e) setElegida(e.cancionActiva?.id ?? e.hoy.canciones[0]?.proyectoId ?? e.videos[0]?.proyectoId ?? null)
+  }, [e, elegida])
 
   // alinear de a un video: los nuevos enseguida; los que esperan (musica sonando, sin conexion), cada 20 s
   const ultimoIntento = useRef(new Map<string, number>())
@@ -496,85 +306,135 @@ export function App() {
     if ('error' in r) setError(r.error)
   }
 
+
+  /** Videos soltados encima de una cancion: el primero va a esa cancion (sin preguntar); los demas, como siempre. */
+  async function soltarEn(proyectoId: string, nombre: string, rutas: string[]): Promise<void> {
+    setError(null)
+    const videos = rutas.filter((r) => esVideo(nombreDe(r)))
+    if (!videos.length) return setError(`${nombreDe(rutas[0])} no es un video (mp4, mov, webm o mkv)`)
+    setElegida(proyectoId)
+    await vincular(videos[0], { id: proyectoId, nombre } as ProyectoResumen)
+    if (videos.length > 1) await recibir(videos.slice(1))
+  }
+
+  /** "Elegir el video…" de una cancion que no tiene. */
+  async function agregarA(proyectoId: string, nombre: string): Promise<void> {
+    const rutas = await api.elegirArchivos()
+    if (rutas.length) await soltarEn(proyectoId, nombre, rutas)
+  }
+
   if (!e) return null
   const conectado = e.conexion.estado === 'conectado' && !e.conexion.desactualizado
   const conVideo = new Map(e.videos.map((v) => [v.proyectoId, v.archivo]))
+  const videoDe = (id: string | null): VideoGuardado | null => (id ? (e.videos.find((v) => v.proyectoId === id) ?? null) : null)
+  const enHoy = new Set(e.hoy.canciones.map((c) => c.proyectoId))
+  const otros = e.videos.filter((v) => !conectado || !enHoy.has(v.proyectoId))
+  const cancionElegida: CancionDeHoy | null = e.hoy.canciones.find((c) => c.proyectoId === elegida) ?? null
+  const videoElegido = videoDe(elegida)
+  const detalle = (c: CancionDeHoy): string | null => [c.tonalidad, c.bpm ? `${Math.round(c.bpm)} BPM` : null].filter(Boolean).join(' · ') || null
+  const tarjetaVideo = (v: VideoGuardado) => (
+    <TarjetaCancion
+      key={v.proyectoId}
+      numero={null}
+      nombre={v.cancion}
+      detalle={v.nombreArchivo !== v.archivo ? v.nombreArchivo : null}
+      video={v}
+      arriba={rep?.proyectoId === v.proyectoId}
+      suena={rep?.proyectoId === v.proyectoId && rep.playback?.estado === 'playing'}
+      elegida={elegida === v.proyectoId}
+      arrastrando={arrastrando}
+      sinCancion={e.sinCancion.includes(v.proyectoId)}
+      progreso={progreso[v.proyectoId] ?? null}
+      onElegir={() => setElegida(v.proyectoId)}
+      onSoltar={(rutas) => void soltarEn(v.proyectoId, v.cancion, rutas)}
+    />
+  )
+
   return (
     <div className="app">
-      <header>
-        <h1>
-          AirTracks <span>Video</span>
-        </h1>
-        <Conexion e={e} />
-      </header>
+      <Encabezado e={e} />
+      {(!e.carpetaConfirmada || e.conexion.estado === 'codigo' || e.conexion.estado === 'ocupado' || e.conexion.desactualizado) && (
+        <div className="avisos">
+          {!e.carpetaConfirmada && <PrimeraVezCarpeta e={e} />}
+          <AvisoConexion e={e} />
+        </div>
+      )}
       <main>
-        {!e.carpetaConfirmada && <Carpeta e={e} />}
-        <section className="tarjeta">
-          <div className="titulo-seccion">
-            <h2>Videos con la letra</h2>
+        <Escenario
+          cancion={cancionElegida}
+          nombre={cancionElegida?.nombre ?? videoElegido?.cancion ?? null}
+          proyectoId={elegida}
+          video={videoElegido}
+          progreso={elegida ? (progreso[elegida] ?? null) : null}
+          conectado={conectado}
+          sinCancion={!!elegida && e.sinCancion.includes(elegida)}
+          onElegirVideo={() => elegida && void agregarA(elegida, cancionElegida?.nombre ?? videoElegido?.cancion ?? '')}
+          onCambiarCancion={() => videoElegido && setCola((c) => (c.includes(videoElegido.archivo) ? c : [...c, videoElegido.archivo]))}
+        />
+        <section className="tarjeta lista" aria-label="Canciones">
+          <div className="lista-cabeza">
+            <div>
+              <h2>{conectado ? (e.hoy.lista ? 'Canciones de hoy' : 'Canciones abiertas') : 'Tus videos'}</h2>
+              <small>{conectado ? 'Arrastrá un video encima de su canción' : 'Al conectar con AirTracks aparecen las canciones de hoy'}</small>
+            </div>
             <button className="primario" onClick={() => void agregar()} disabled={copiando !== null}>
-              + Agregar videos
+              ＋ Videos
             </button>
           </div>
-          <p className="ayuda arriba">O arrastrá los videos a esta ventana: el que tiene el nombre de la canción se vincula solo.</p>
           {copiando && <p className="info-texto">{copiando}</p>}
           {error && <p className="error-texto">{error}</p>}
-          {e.videos.length === 0 && e.sueltos.length === 0 ? (
-            <p className="vacio">
-              Todavía no hay videos. Agregá el video con la letra de una canción (la misma grabación que la multitrack): el programa encuentra
-              solo dónde empieza la canción en el video, y en el culto el video sigue a la banda.
-            </p>
-          ) : (
-            <ul className="videos">
-              {e.videos.map((v) => (
-                <FilaVideo
-                  key={v.proyectoId}
-                  v={v}
-                  suena={e.cancionActiva?.id === v.proyectoId}
-                  sinCancion={e.sinCancion.includes(v.proyectoId)}
-                  progreso={progreso[v.proyectoId] ?? null}
-                  onCambiar={() => setCola((c) => (c.includes(v.archivo) ? c : [...c, v.archivo]))}
+          <ul className="canciones-hoy">
+            {conectado &&
+              e.hoy.canciones.map((c, i) => (
+                <TarjetaCancion
+                  key={c.proyectoId}
+                  numero={i + 1}
+                  nombre={c.nombre}
+                  detalle={c.colchon ? null : detalle(c)}
+                  colchon={c.colchon}
+                  video={videoDe(c.proyectoId)}
+                  arriba={rep?.proyectoId === c.proyectoId}
+                  suena={rep?.proyectoId === c.proyectoId && rep.playback?.estado === 'playing'}
+                  elegida={elegida === c.proyectoId}
+                  arrastrando={arrastrando}
+                  progreso={progreso[c.proyectoId] ?? null}
+                  onElegir={() => setElegida(c.proyectoId)}
+                  onSoltar={(rutas) => void soltarEn(c.proyectoId, c.nombre, rutas)}
                 />
               ))}
-              {e.sueltos.map((a) => (
-                <li key={a} className="video suelto">
-                  <div className="video-arriba">
-                    <div className="video-nombres">
-                      <b>{a}</b>
-                      <small>Sin canción</small>
-                    </div>
-                    <button className="chico" disabled={!conectado} onClick={() => setCola((c) => (c.includes(a) ? c : [...c, a]))}>
-                      Elegir canción
-                    </button>
-                    <button
-                      className="chico peligro"
-                      onClick={() => {
-                        if (confirm(`¿Borrar "${a}" de la carpeta de videos?`)) void api.borrarSuelto(a)
-                      }}
-                    >
-                      Borrar
-                    </button>
-                  </div>
-                  <div className="video-estado aviso">
-                    {conectado
-                      ? 'No se sabe de qué canción es (el nombre no coincide, o esa canción ya tiene video): elegila'
-                      : 'Al conectar con AirTracks se vincula sola, si el nombre es el de la canción'}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            {!conectado && otros.map(tarjetaVideo)}
+          </ul>
+          {conectado && e.hoy.canciones.length === 0 && <p className="vacio">No hay canciones abiertas en AirTracks.</p>}
+          {!conectado && e.videos.length === 0 && (
+            <p className="vacio">Todavía no hay videos. Arrastrá acá el video con la letra de una canción (la misma grabación que la multitrack).</p>
+          )}
+          {e.sueltos.length > 0 && (
+            <button className="sueltos" disabled={!conectado} onClick={() => setCola((c) => [...c, ...e.sueltos.filter((a) => !c.includes(a))])}>
+              <span className="sueltos-icono">🎬</span>
+              <span>
+                <b>
+                  {e.sueltos.length === 1 ? 'Un video en la carpeta sin canción.' : `${e.sueltos.length} videos en la carpeta sin canción.`}
+                </b>{' '}
+                {conectado ? 'Tocá para elegir de cuál son.' : 'Se vinculan solos al conectar, si tienen el nombre de la canción.'}
+              </span>
+            </button>
           )}
           {e.copiandose > 0 && (
             <p className="ayuda">
-              {e.copiandose === 1 ? 'Hay un video copiándose a la carpeta' : `Hay ${e.copiandose} videos copiándose a la carpeta`}: se agrega cuando
-              termine.
+              {e.copiandose === 1 ? 'Hay un video copiándose a la carpeta' : `Hay ${e.copiandose} videos copiándose a la carpeta`}: se agrega cuando termine.
             </p>
           )}
+          {conectado && otros.length > 0 && (
+            <div className="otros">
+              <button className="enlace" onClick={() => setVerOtros(!verOtros)} aria-expanded={verOtros}>
+                {verOtros ? '▾' : '▸'} Otros videos ({otros.length}) · de canciones que hoy no están abiertas
+              </button>
+              {verOtros && <ul className="canciones-hoy chicas">{otros.map(tarjetaVideo)}</ul>}
+            </div>
+          )}
         </section>
-        <Proyector e={e} />
-        {e.carpetaConfirmada && <Carpeta e={e} />}
-        <p className="version">AirTracks Video {e.version} · funciona sin internet, por la red del router</p>
       </main>
+      <p className="version">AirTracks Video {e.version} · funciona sin internet, por la red del router</p>
       {cola.length > 0 && (
         <ElegirCancion
           key={cola[0]}
@@ -586,7 +446,7 @@ export function App() {
       )}
       {arrastrando && (
         <div className="soltar" aria-hidden>
-          Soltá los videos acá
+          <span>Soltá el video encima de su canción, o en cualquier lado (se vincula por el nombre)</span>
         </div>
       )}
     </div>

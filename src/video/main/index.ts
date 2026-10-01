@@ -3,10 +3,13 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { colorDeSeccion } from '../../shared/colorSeccion'
+import { calcularSecciones } from '../../shared/playback'
+import { tonalidadEn } from '../../shared/tonalidad'
 import type { ProyectoResumen } from '../../shared/types'
 import { velocidadAplicada } from '../../shared/velocidad'
 import { cancionPara } from '../nombres'
-import type { EstadoApp, Reproduccion, VideoGuardado } from '../tipos'
+import type { EstadoApp, EstadoPantalla, Reproduccion, VideoGuardado } from '../tipos'
 import { BibliotecaVideos } from './biblioteca'
 import { ConexionAirTracks } from './conexion'
 
@@ -88,6 +91,8 @@ const conexion = new ConexionAirTracks({
   },
   alCambiar: () => avisarControl(),
   alReproduccion: () => {
+    // suena una cancion: el video de prueba deja lugar a la de verdad
+    if (pruebaVideo && conexion.estado?.playbackActivo?.estado === 'playing') pruebaVideo = null
     avisarPantalla()
     avisarControl()
   },
@@ -127,6 +132,7 @@ function estadoApp(): EstadoApp {
     inicioConWindows: ajustes.inicioConWindows,
     cancionActiva: e?.proyectoActivo ? { id: e.proyectoActivo.id, nombre: e.proyectoActivo.nombre } : null,
     version: app.getVersion(),
+    hoy: cancionesDeHoy(),
     carpeta: biblioteca.dir,
     carpetaConfirmada: ajustes.carpeta !== null,
     sueltos: biblioteca.sueltos,
@@ -134,6 +140,31 @@ function estadoApp(): EstadoApp {
     sinCancion: cancionesConocidas ? biblioteca.videos.filter((v) => !cancionesConocidas!.some((p) => p.id === v.proyectoId)).map((v) => v.proyectoId) : []
   }
 }
+
+/** Las canciones abiertas en AirTracks (la lista del dia), en orden, con sus secciones y colores. */
+function cancionesDeHoy(): EstadoApp['hoy'] {
+  const e = conexion.estado
+  if (!e || !conexion.conectado) return { lista: null, canciones: [] }
+  const canciones = e.tabs.flatMap((t) => {
+    const p = e.proyectos.find((x) => x.id === t.proyectoId)
+    if (!p) return []
+    return [
+      {
+        proyectoId: p.id,
+        nombre: p.nombre,
+        tonalidad: tonalidadEn(p, 0),
+        bpm: p.tempo?.bpm ?? null,
+        colchon: !!p.colchon,
+        duracionMs: p.duracionTotalMs,
+        secciones: calcularSecciones(p.marcadores, p.duracionTotalMs).map((s) => ({ nombre: s.nombre, inicioMs: s.inicioMs, finMs: s.finMs, color: colorDeSeccion(s) }))
+      }
+    ]
+  })
+  return { lista: e.lista?.nombre ?? null, canciones }
+}
+
+/** "Ver en el proyector": el video que se esta revisando (solo con la musica parada). */
+let pruebaVideo: { proyectoId: string } | null = null
 
 /** Las canciones de AirTracks la ultima vez que se pidieron (null = todavia no se sabe). */
 let cancionesConocidas: ProyectoResumen[] | null = null
@@ -201,12 +232,16 @@ function reproduccion(): Reproduccion {
     velocidad: p ? velocidadAplicada(p) : 1,
     playback: e?.playbackActivo ?? null,
     relojMs: conexion.relojMs,
-    videos: biblioteca.videos
+    videos: biblioteca.videos,
+    prueba: pruebaVideo
   }
 }
 
+/** A la ventana del proyector y a la de control (su monitor y el cabezal de las secciones). */
 function avisarPantalla(): void {
-  pantalla?.webContents.send('reproduccion', reproduccion())
+  const r = reproduccion()
+  pantalla?.webContents.send('reproduccion', r)
+  control?.webContents.send('reproduccion', r)
 }
 
 /** A la compu de AirTracks: que canciones tienen video (se ve en su transporte). */
@@ -226,18 +261,20 @@ function videosCambiaron(): void {
 function crearVentanas(): void {
   const preload = path.join(__dirname, 'preload.cjs')
   control = new BrowserWindow({
-    width: 900,
-    height: 700,
-    minWidth: 640,
-    minHeight: 480,
+    width: 1240,
+    height: 800,
+    minWidth: 760,
+    minHeight: 520,
     title: 'AirTracks Video',
-    backgroundColor: '#101216',
+    icon: path.join(__dirname, 'icono.png'),
+    backgroundColor: '#0b0d12',
     webPreferences: { preload, contextIsolation: true, backgroundThrottling: false }
   })
   control.removeMenu()
   // un video que se suelta afuera de la zona: que no se abra en la ventana
   control.webContents.on('will-navigate', (ev) => ev.preventDefault())
   void control.loadURL('atv://app/control.html')
+  control.webContents.on('did-finish-load', avisarPantalla)
   control.on('closed', () => {
     control = null
     app.quit()
@@ -364,6 +401,30 @@ ipcMain.handle('actualizar-video', (_e, proyectoId: string, cambio: Partial<Vide
   videosCambiaron()
 })
 ipcMain.handle('huella-cancion', (_e, proyectoId: string) => conexion.huella(String(proyectoId)))
+ipcMain.handle('leer-huellas', (_e, proyectoId: string) => {
+  const leer = (ruta: string | null): Uint8Array | null => {
+    try {
+      return ruta ? new Uint8Array(fs.readFileSync(ruta)) : null
+    } catch {
+      return null
+    }
+  }
+  return { cancion: leer(biblioteca.rutaHuellaCancion(String(proyectoId))), video: leer(biblioteca.rutaHuella(String(proyectoId))) }
+})
+ipcMain.handle('guardar-huella-cancion', (_e, proyectoId: string, huella: Uint8Array) => {
+  fs.writeFileSync(biblioteca.rutaHuellaCancion(String(proyectoId)), Buffer.from(huella))
+})
+ipcMain.on('ver-en-proyector', (_e, proyectoId: string | null) => {
+  const suena = conexion.estado?.playbackActivo?.estado === 'playing'
+  pruebaVideo = proyectoId && !suena && biblioteca.de(String(proyectoId))?.desfaseMs != null ? { proyectoId: String(proyectoId) } : null
+  if (pruebaVideo) ubicarPantalla()
+  avisarPantalla()
+})
+// lo que cuenta la ventana del proyector, al monitor de la ventana de control
+ipcMain.on('estado-pantalla', (_e, p: EstadoPantalla) => control?.webContents.send('pantalla', p))
+ipcMain.on('vista-previa', (_e, jpeg: string) => {
+  if (control && control.isVisible() && !control.isMinimized() && typeof jpeg === 'string' && jpeg.startsWith('data:image/jpeg')) control.webContents.send('vista-previa', jpeg)
+})
 ipcMain.handle('leer-huella-video', (_e, proyectoId: string) => {
   const ruta = biblioteca.rutaHuella(String(proyectoId))
   try {

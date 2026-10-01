@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d2342"/>
+      <stop offset="1" stop-color="#2b2142"/>
+    </linearGradient>
+    <linearGradient id="luz" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b7cff"/>
+      <stop offset="0.55" stop-color="#9b7dff"/>
+      <stop offset="1" stop-color="#f472b6"/>
+    </linearGradient>
+    <linearGradient id="haz" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9b7dff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#9b7dff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="210" fill="url(#fondo)"/>
+  <!-- la pantalla del proyector -->
+  <rect x="190" y="218" width="644" height="404" rx="64" fill="none" stroke="url(#luz)" stroke-width="46"/>
+  <!-- play -->
+  <path d="M458 336 Q458 314 478 325 L604 401 Q622 412 604 423 L478 499 Q458 510 458 488 Z" fill="url(#luz)"/>
+  <!-- el sonido de AirTracks que la mueve -->
+  <g fill="url(#luz)">
+    <rect x="318" y="726" width="44" height="72" rx="22"/>
+    <rect x="398" y="694" width="44" height="136" rx="22"/>
+    <rect x="478" y="672" width="44" height="180" rx="22"/>
+    <rect x="558" y="694" width="44" height="136" rx="22"/>
+    <rect x="638" y="726" width="44" height="72" rx="22"/>
+  </g>
+</svg>

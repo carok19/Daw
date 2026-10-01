@@ -125,6 +125,8 @@ export async function alinearVideo(api: ApiVideo, v: VideoGuardado, progreso: Pr
       if (cancion.estado === 'esperando') return { estado: 'esperando-musica', duracionSeg }
       if (cancion.estado === 'sin-conexion' || cancion.estado === 'desactualizado') return { estado: cancion.estado, duracionSeg }
       if (cancion.estado === 'error') return { estado: 'error', mensaje: cancion.mensaje, duracionSeg }
+      // (queda en esta compu: con la del video se dibujan encimadas para ver que coinciden)
+      await api.guardarHuellaCancion(v.proyectoId, cancion.huella).catch(() => undefined)
       // 3) donde coinciden
       progreso('Comparando el video con la canción…', null)
       const r = await calcular({ tipo: 'alinear', cancion: cancion.huella, video: huellaVideo })

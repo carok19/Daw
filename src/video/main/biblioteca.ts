@@ -341,6 +341,11 @@ export class BibliotecaVideos {
     }
   }
 
+  /** Huella de la cancion de AirTracks (la trae al alinear; sirve para dibujar las dos encimadas). */
+  rutaHuellaCancion(proyectoId: string): string {
+    return path.join(this.dirHuellas, `cancion-${proyectoId.replace(/[^A-Za-z0-9_-]/g, '')}.huella`)
+  }
+
   private borrar(v: VideoGuardado): void {
     const huella = this.rutaHuella(v.proyectoId)
     for (const r of [this.ruta(v), this.rutaFicha(v.archivo), huella]) if (r) fs.rmSync(r, { force: true })

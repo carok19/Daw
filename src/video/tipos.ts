@@ -62,6 +62,31 @@ export interface VideoGuardado {
   agregado: string
 }
 
+/** Una cancion abierta en AirTracks (la lista del dia), con lo que hace falta para dibujarla. */
+export interface CancionDeHoy {
+  proyectoId: string
+  nombre: string
+  tonalidad: string | null
+  bpm: number | null
+  /** un colchon (pad y click): no lleva video */
+  colchon: boolean
+  duracionMs: number
+  secciones: { nombre: string; inicioMs: number; finMs: number; color: string }[]
+}
+
+/** Como esta la ventana del proyector (la cuenta ella misma, cada medio segundo). */
+export interface EstadoPantalla {
+  /** se ve el video (encima de Holyrics) */
+  visible: boolean
+  proyectoId: string | null
+  /** el video corre (no esta quieto contando o en pausa) */
+  corriendo: boolean
+  /** diferencia entre el video y donde tiene que estar (ms); null = no se midio */
+  difMs: number | null
+  /** se esta mostrando un video de prueba ("Ver en el proyector") o el cartel de "Probar" */
+  prueba: 'cartel' | 'video' | null
+}
+
 export interface PantallaDisponible {
   id: number
   nombre: string
@@ -78,6 +103,8 @@ export interface EstadoApp {
   /** la cancion que esta arriba en AirTracks */
   cancionActiva: { id: string; nombre: string } | null
   version: string
+  /** las canciones abiertas en AirTracks (la lista del dia), en orden */
+  hoy: { lista: string | null; canciones: CancionDeHoy[] }
   /** carpeta de los videos (cada uno con su alineacion al lado: se copia a otra compu tal cual) */
   carpeta: string
   /** false = todavia no se confirmo donde guardarlos (la primera vez) */
@@ -100,6 +127,8 @@ export interface Reproduccion {
   /** hora del servidor - hora de esta compu (ms) */
   relojMs: number
   videos: VideoGuardado[]
+  /** "Ver en el proyector": este video, desde el comienzo de la cancion (solo con la musica parada) */
+  prueba: { proyectoId: string } | null
 }
 
 export type RespuestaHuellaCancion =
@@ -139,8 +168,17 @@ export interface ApiVideo {
   inicioConWindows(activo: boolean): void
   /** direccion para el <video> y para leer el archivo (protocolo propio, con saltos) */
   urlDeVideo(archivo: string): string
-  // ---- ventana del proyector ----
+  /** la huella de la cancion y la del video, si ya estan en esta compu (para dibujarlas encimadas) */
+  leerHuellas(proyectoId: string): Promise<{ cancion: Uint8Array | null; video: Uint8Array | null }>
+  guardarHuellaCancion(proyectoId: string, huella: Uint8Array): Promise<void>
+  /** mostrar este video en el proyector para revisarlo (null = dejar de mostrarlo) */
+  verEnProyector(proyectoId: string | null): void
+  onPantalla(cb: (p: EstadoPantalla) => void): void
+  onVistaPrevia(cb: (jpeg: string) => void): void
+  // ---- ventana del proyector (y la de control, para el monitor) ----
   onReproduccion(cb: (r: Reproduccion) => void): void
   onPrueba(cb: () => void): void
   mostrarPantalla(visible: boolean): void
+  informarPantalla(p: EstadoPantalla): void
+  enviarVistaPrevia(jpeg: string): void
 }

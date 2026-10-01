@@ -146,7 +146,8 @@ cambian a propósito.
      arriba (la forma de onda entera, dividida en secciones de colores, como
      un reproductor: click para ir a un punto) y las secciones como
      **tarjetas grandes** (click = ir ahí; la que suena muestra cuánto va, la
-     elegida “sigue en 21 s”), y **Mezcla**, el mixer a pantalla completa con
+     elegida “sigue en 21 s”; la primera siempre es **Inicio**, el comienzo de
+     la canción), y **Mezcla**, el mixer a pantalla completa con
      el recorrido finito arriba. La vista elegida se recuerda.
 4. **Celulares:** botón **Celulares** (arriba a la derecha) → escanear el QR →
    **“Tocá para empezar”** → conectar auriculares. En ⚙ cada músico puede
@@ -188,7 +189,10 @@ cambian a propósito.
    en 21 s” si se eligió un salto), el **recorrido** con la forma de onda y
    las secciones como **tarjetas grandes para tocar** (tocar = ir ahí, según
    el modo de salto; si la compu bloqueó los celulares se ven pero no se
-   tocan). **Mi mezcla** es la otra pantalla, entera: cada músico sube o
+   tocan). La primera tarjeta es siempre **Inicio** (⏮): para **volver a
+   empezar desde el celular** sin depender de la compu; sonando va al
+   principio a tiempo (al terminar la sección o en el compás), en pausa va
+   enseguida. **Mi mezcla** es la otra pantalla, entera: cada músico sube o
    baja cada pista (más click, menos pad…) sin cambiar lo que escuchan los
    demás. El transporte va siempre abajo. Los faders se mueven **deslizando de costado**; deslizando para
    arriba o abajo la pantalla scrollea sin tocar ningún volumen, y un toque
@@ -358,6 +362,23 @@ cambian a propósito.
       de AirTracks en la red del router (sin internet y sin escribir IP; si
       la banda tiene código, lo pide una vez). Elegir en qué pantalla está el
       proyector y tocar **Probar**.
+    - **La ventana:** a la izquierda, **En el proyector**: un monitor con lo
+      mismo que se ve en el data, en chiquito y en vivo (con **EN VIVO**,
+      *En sync · 20 ms*, o **Se ve Holyrics** cuando el video no está), las
+      secciones de la canción con sus colores y una rayita que avanza, y el
+      **ajuste del inicio**: el sonido de la canción (azul) y el del video
+      (rosa) encimados —si están alineados, los picos caen juntos— con
+      **◀ Letra antes / Letra después ▶** (un toque: 0,1 s; dejándolo
+      apretado sigue moviendo). A la derecha, **las canciones de hoy** de
+      AirTracks, cada una con un cuadro de su video y su estado en color
+      (verde *Listo*, azul *Alineando* con su avance, amarillo *Revisar*);
+      las que no tienen video muestran un recuadro punteado y **se les suelta
+      el video encima**. Tocando una canción se la ve en el monitor (**▶ Ver
+      acá**, sin que salga en el proyector) y, con la música parada, **Ver en
+      el proyector** la muestra en el data para revisar la letra (al dar ▶ en
+      AirTracks vuelve sola). Arriba: la conexión, la lista del día, el
+      proyector (las pantallas dibujadas: se elige tocando) y la carpeta.
+      Tiene su propio ícono (la pantalla con ▶ y las barras de AirTracks).
     - **La carpeta de los videos:** al abrirlo la primera vez pregunta dónde
       guardarlos (por defecto *Documentos\AirTracks Video*). Cada video queda
       ahí **con el nombre de su canción** y, al lado, un archivito
@@ -726,6 +747,17 @@ que corre en Windows 7; se arma con `npm run build:video` y el instalador con
   en los datos del programa (no hace falta copiarla: la alineación ya está
   en la ficha). Los videos de la versión anterior (adentro del programa) se
   mudan solos a la carpeta.
+- **La ventana de control** (`video/control/`: `App.tsx`, `Escenario.tsx`,
+  `Encabezado.tsx`, `estado.ts`): las canciones de hoy salen del estado de
+  AirTracks (pestañas y proyectos, con las secciones y sus colores de
+  `shared/colorSeccion.ts`). El monitor no vuelve a decodificar el video: la
+  ventana del proyector dibuja su cuadro en un canvas de 384×216 dos veces
+  por segundo (solo mientras se ve) y manda un JPEG chiquito; también cuenta
+  cómo va (visible, corriendo, diferencia con la canción). Las curvas
+  encimadas son la suma de las 12 bandas de cada huella (la de la canción
+  queda guardada al alinear, o se le pide a AirTracks), la del video corrida
+  por el desfase. Los cuadros de las tarjetas se sacan de a uno (si sale
+  negro, prueba otro momento) y se recuerdan.
 - **La ventana del proyector:** sin marco, encima de todo (`screen-saver`),
   sin foco ni mouse (`focusable: false`, `setIgnoreMouseEvents`), solo en la
   pantalla elegida (sin segunda pantalla no se muestra, salvo que se elija la

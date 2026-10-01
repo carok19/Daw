@@ -16,7 +16,7 @@ await esbuild.build({ ...nodo, entryPoints: ['src/video/preload.ts'], outfile: `
 await esbuild.build({ ...ventana, entryPoints: ['src/video/control/index.tsx'], outfile: `${out}/control.js`, jsx: 'automatic' })
 await esbuild.build({ ...ventana, entryPoints: ['src/video/control/calculo.worker.ts'], outfile: `${out}/calculo.js` })
 await esbuild.build({ ...ventana, entryPoints: ['src/video/pantalla/index.ts'], outfile: `${out}/pantalla.js` })
-for (const f of ['src/video/control/control.html', 'src/video/control/control.css', 'src/video/pantalla/pantalla.html']) {
+for (const f of ['src/video/control/control.html', 'src/video/control/control.css', 'src/video/control/icono.svg', 'src/video/control/icono.png', 'src/video/pantalla/pantalla.html']) {
   fs.copyFileSync(f, path.join(out, path.basename(f)))
 }
 console.log('AirTracks Video armado en', out)

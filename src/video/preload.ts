@@ -23,9 +23,16 @@ const api: ApiVideo = {
   probarPantalla: () => ipcRenderer.send('probar-pantalla'),
   inicioConWindows: (activo) => ipcRenderer.send('inicio-windows', activo),
   urlDeVideo: (archivo) => `atv://app/videos/${encodeURIComponent(archivo)}`,
+  leerHuellas: (proyectoId) => ipcRenderer.invoke('leer-huellas', proyectoId),
+  guardarHuellaCancion: (proyectoId, huella) => ipcRenderer.invoke('guardar-huella-cancion', proyectoId, huella),
+  verEnProyector: (proyectoId) => ipcRenderer.send('ver-en-proyector', proyectoId),
+  onPantalla: (cb) => void ipcRenderer.on('pantalla', (_e, p) => cb(p)),
+  onVistaPrevia: (cb) => void ipcRenderer.on('vista-previa', (_e, j) => cb(j)),
   onReproduccion: (cb) => void ipcRenderer.on('reproduccion', (_e, r) => cb(r)),
   onPrueba: (cb) => void ipcRenderer.on('prueba', () => cb()),
-  mostrarPantalla: (visible) => ipcRenderer.send('mostrar-pantalla', visible)
+  mostrarPantalla: (visible) => ipcRenderer.send('mostrar-pantalla', visible),
+  informarPantalla: (p) => ipcRenderer.send('estado-pantalla', p),
+  enviarVistaPrevia: (jpeg) => ipcRenderer.send('vista-previa', jpeg)
 }
 
 contextBridge.exposeInMainWorld('airtracksVideo', api)
