@@ -330,6 +330,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
               modeloVoz={controller.modeloVoz}
               sonando={sonando}
               onJump={controller.jumpToMarker}
+              onJumpInicio={controller.irASeccionEn}
               saltoPendiente={estado?.saltoPendiente ?? null}
               modoSalto={estado?.modoSalto ?? 'seccion'}
               hayTempo={!!proyecto.tempo}

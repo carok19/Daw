@@ -4448,3 +4448,17 @@ input[type='date'] {
 .m-barra-faltan.ultimo {
   color: var(--warn);
 }
+
+/* "Inicio": la tarjeta del comienzo de la cancion (no es una marca: no se renombra ni se borra) */
+.m-marcador.inicio .m-marcador-nombre,
+.m-marcador.inicio > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.seccion-tarjeta.inicio .seccion-nombre {
+  color: var(--text-2);
+}
+.seccion-inicio-icono {
+  color: var(--text-3);
+}

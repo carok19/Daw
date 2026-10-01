@@ -625,6 +625,8 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
   const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
   const modo = estado?.modoSalto ?? 'seccion'
   const conMarcador = secciones.filter((s) => s.marcador)
+  // las tarjetas: las secciones marcadas y, siempre primero, el comienzo de la cancion ("Inicio")
+  const tarjetas = secciones.filter((s) => s.marcador || s.indice === 0)
   const compases = proyecto.tempo?.compasesMs ?? null
   // compases que faltan para que termine la seccion (o para el salto elegido)
   const faltan = compasesQueFaltan(compases, actual, pos, salto?.limiteMs)
@@ -708,30 +710,29 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
         )}
       </div>
       <MiniTimeline controller={controller} onda={onda} grande />
-      {conMarcador.length === 0 ? (
-        <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>
-      ) : (
-        <div className="m-marcadores">
-          {conMarcador.map((s) => {
-            const esActual = actual?.indice === s.indice
-            const pendiente = !!salto && destino?.indice === s.indice
-            const avance = esActual ? Math.min(1, Math.max(0, (pos - s.inicioMs) / Math.max(1, s.finMs - s.inicioMs))) : 0
-            return (
-              <button
-                key={s.marcador!.id}
-                className={`m-marcador ${esActual ? 'actual' : ''} ${pendiente ? 'pendiente' : ''}`}
-                style={{ '--color-seccion': colorDeSeccion(s) } as React.CSSProperties}
-                disabled={locked}
-                onClick={() => controller.jumpToMarker(s.marcador!.id)}
-              >
-                <span className="m-marcador-nombre">
-                  {esActual && loop && <Repeat size={15} />}
-                  {s.nombre}
-                </span>
+      <div className="m-marcadores">
+        {tarjetas.map((s) => {
+          const esActual = actual?.indice === s.indice
+          const pendiente = !!salto && destino?.indice === s.indice
+          const avance = esActual ? Math.min(1, Math.max(0, (pos - s.inicioMs) / Math.max(1, s.finMs - s.inicioMs))) : 0
+          return (
+            <button
+              key={s.marcador?.id ?? 'inicio'}
+              className={`m-marcador ${esActual ? 'actual' : ''} ${pendiente ? 'pendiente' : ''} ${s.marcador ? '' : 'inicio'}`}
+              style={{ '--color-seccion': colorDeSeccion(s) } as React.CSSProperties}
+              disabled={locked}
+              onClick={() => controller.irASeccionEn(s.inicioMs)}
+              aria-label={s.marcador ? undefined : 'Inicio: volver al principio de la canción'}
+            >
+              <span className="m-marcador-nombre">
+                {esActual && loop && <Repeat size={15} />}
+                {!s.marcador && <SkipBack size={17} />}
+                {s.nombre}
+              </span>
                 <small className="m-marcador-detalle num">
                   {pendiente
                     ? `sigue · ${faltaPara(salto!, pos)}`
-                    : esActual
+                    : esActual && (sonando || faltan !== null)
                       ? [loop ? 'repitiendo' : null, faltan === null ? (loop ? null : 'sonando') : faltan === 1 ? 'último compás' : `faltan ${faltan}`].filter(Boolean).join(' · ')
                       : largoDeSeccion(s, compases)}
                 </small>
@@ -739,8 +740,8 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
               </button>
             )
           })}
-        </div>
-      )}
+      </div>
+      {conMarcador.length === 0 && <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>}
       <p className="m-ayuda-salto">
         {locked ? (
           <>
@@ -826,7 +827,9 @@ function HojaSecciones({ controller, onCerrar }: { controller: AppController; on
   const sonando = estado?.playbackActivo?.estado === 'playing'
   const modo = estado?.modoSalto ?? 'seccion'
   const conMarcador = controller.secciones.filter((s) => s.marcador)
+  const tarjetas = controller.secciones.filter((s) => s.marcador || s.indice === 0)
   const actual = seccionEn(controller.secciones, pos)
+  const destino = salto ? seccionEn(controller.secciones, salto.destinoMs) : null
   const explicacion =
     modo === 'inmediato'
       ? 'Tocá una sección para ir ahí.'
@@ -855,23 +858,23 @@ function HojaSecciones({ controller, onCerrar }: { controller: AppController; on
           )}
         </div>
       )}
-      {conMarcador.length === 0 ? (
-        <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>
-      ) : (
-        <div className="m-marcadores">
-          {conMarcador.map((s) => (
-            <button
-              key={s.marcador!.id}
-              className={`m-marcador ${actual?.indice === s.indice ? 'actual' : ''} ${salto?.destinoMs === s.inicioMs ? 'pendiente' : ''}`}
-              style={{ '--color-seccion': colorDeSeccion(s) } as React.CSSProperties}
-              disabled={locked}
-              onClick={() => controller.jumpToMarker(s.marcador!.id)}
-            >
-              <span>{s.nombre}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="m-marcadores">
+        {tarjetas.map((s) => (
+          <button
+            key={s.marcador?.id ?? 'inicio'}
+            className={`m-marcador ${actual?.indice === s.indice ? 'actual' : ''} ${destino?.indice === s.indice ? 'pendiente' : ''} ${s.marcador ? '' : 'inicio'}`}
+            style={{ '--color-seccion': colorDeSeccion(s) } as React.CSSProperties}
+            disabled={locked}
+            onClick={() => controller.irASeccionEn(s.inicioMs)}
+            aria-label={s.marcador ? undefined : 'Inicio: volver al principio de la canción'}
+          >
+            <span>
+              {!s.marcador && <SkipBack size={15} />} {s.nombre}
+            </span>
+          </button>
+        ))}
+      </div>
+      {conMarcador.length === 0 && <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>}
     </Hoja>
   )
 }

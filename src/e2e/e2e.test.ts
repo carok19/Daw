@@ -277,13 +277,19 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
       await esperar(1200)
     }
     await vistaCompu(compu, 'Secciones')
-    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 3)
+    // las 3 marcadas y, primero, "Inicio" (el comienzo de la cancion: no se renombra ni se borra)
+    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 4)
+    const inicio = compu.locator('.seccion-tarjeta').first()
+    assert.match((await inicio.textContent()) ?? '', /Inicio/)
+    await inicio.hover()
+    assert.equal(await inicio.getByRole('button', { name: /Borrar/ }).count(), 0)
     const fila = compu.locator('.seccion-tarjeta').nth(2)
     await fila.hover()
     await fila.getByRole('button', { name: /Borrar/ }).click()
     await compu.getByRole('button', { name: 'Deshacer' }).click()
-    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 3)
-    assert.equal((await seccionesEnCelular(celulares[0])).cantidad, 3)
+    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 4)
+    assert.equal((await seccionesEnCelular(celulares[0])).cantidad, 4)
+    assert.equal(await celulares[0].locator('.m-vista-cancion .m-marcador').first().getAttribute('aria-label'), 'Inicio: volver al principio de la canción')
   })
 
   await t.test('saltos y repetir sección: los celulares entran en sync sin cortes', async () => {
@@ -470,8 +476,8 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
 
   await t.test('secciones automáticas por la voz guía, en el "1" del compás', async () => {
     await vistaCompu(compu, 'Secciones')
-    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 6, null, { timeout: 60000 })
-    assert.deepEqual(await compu.locator('.seccion-nombre').allTextContents(), ['Verso 1', 'Coro', 'Verso 2', 'Coro 2', 'Puente', 'Final'])
+    await compu.waitForFunction(() => document.querySelectorAll('.seccion-tarjeta').length === 7, null, { timeout: 60000 })
+    assert.deepEqual(await compu.locator('.seccion-nombre').allTextContents(), ['Inicio', 'Verso 1', 'Coro', 'Verso 2', 'Coro 2', 'Puente', 'Final'])
     assert.equal(await compu.locator('.seccion-origen').count(), 6)
     assert.match((await compu.locator('.analisis-linea').textContent()) ?? '', /voz guía/)
     assert.match((await compu.locator('.chip-tempo').textContent()) ?? '', /90 BPM · 4\/4/)
@@ -479,7 +485,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     santo.marcadores.forEach((m, i) =>
       assert.ok(Math.abs(m.tiempoMs - inicioCompas(ANUNCIOS[i][2]) * 1000) <= 8, `${m.nombre} en ${m.tiempoMs} ms: fuera del compás`)
     )
-    for (const cel of celulares) assert.equal((await seccionesEnCelular(cel)).cantidad, 6)
+    for (const cel of celulares) assert.equal((await seccionesEnCelular(cel)).cantidad, 7)
 
     // arrastrar una seccion en la linea de tiempo: cae en el "1" del compas mas cercano; con Alt, queda libre
     const compases = santo.tempo!.compasesMs

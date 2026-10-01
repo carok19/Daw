@@ -709,6 +709,10 @@ export function useAppController() {
        * (al terminar la seccion o en el compas, segun el modo) y es relativa a
        * la que ya se habia elegido: dos veces "siguiente" saltea una.
        */
+      /** Ir a la seccion que empieza en `inicioMs` (la de "Inicio", que no tiene marca, tambien). */
+      irASeccionEn(inicioMs: number, inmediato = false): void {
+        emit('seccion:saltar', { posicionMs: inicioMs, inmediato })
+      },
       saltarSeccion(delta: number, inmediato = false): void {
         emit('seccion:saltar', { relativo: delta, inmediato })
       },

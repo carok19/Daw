@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Music, Pencil, Repeat, Trash2, WandSparkles, X } from 'lucide-react'
+import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Music, Pencil, Repeat, SkipBack, Trash2, WandSparkles, X } from 'lucide-react'
 import type { AnalisisProyecto, InfoModeloVoz, InfoVoces, Marcador, ModoSalto, Proyecto, SaltoPendiente } from '@shared/types'
 import { TONALIDADES, tonalidadEn, transponerTonalidad } from '@shared/tonalidad'
 import type { Seccion } from '@shared/playback'
@@ -16,6 +16,8 @@ interface Props {
   modeloVoz: InfoModeloVoz
   sonando: boolean
   onJump: (marcadorId: string, inmediato: boolean) => void
+  /** ir a la seccion que empieza ahi (la de "Inicio", que no tiene marca) */
+  onJumpInicio: (inicioMs: number, inmediato: boolean) => void
   saltoPendiente: SaltoPendiente | null
   modoSalto: ModoSalto
   hayTempo: boolean
@@ -109,6 +111,8 @@ export function MarkersPanel(p: Props) {
   const pos = usePlayheadPaso(100)
   const actual = seccionEn(secciones, pos)
   const conMarcador = secciones.filter((s) => s.marcador)
+  // las tarjetas: las secciones marcadas y, siempre primero, el comienzo de la cancion ("Inicio")
+  const tarjetas = secciones.filter((s) => s.marcador || s.indice === 0)
   const destino = p.saltoPendiente ? seccionEn(secciones, p.saltoPendiente.destinoMs) : null
 
   function agregar(): void {
@@ -186,20 +190,13 @@ export function MarkersPanel(p: Props) {
         onReintentar={p.onDetectar}
       />
 
-      {conMarcador.length === 0 ? (
-        <p className="secciones-vacio">
-          Todavía no hay secciones.
-          <br />
-          Con la canción sonando, presioná <kbd>M</kbd> en cada parte
-          {p.analisis?.estado !== 'sin-guia' ? ', o dejá que se detecten por la voz guía.' : '.'}
-        </p>
-      ) : (
+      {tarjetas.length > 0 && (
         <ul className="secciones-tarjetas">
-          {conMarcador.map((s, i) => (
+          {tarjetas.map((s) => (
             <TarjetaSeccion
-              key={s.marcador!.id}
+              key={s.marcador?.id ?? 'inicio'}
               seccion={s}
-              numero={i + 1}
+              numero={s.marcador ? conMarcador.indexOf(s) + 1 : 0}
               pos={pos}
               compasesMs={p.compasesMs}
               actual={actual?.indice === s.indice}
@@ -207,14 +204,22 @@ export function MarkersPanel(p: Props) {
               salto={destino?.indice === s.indice ? p.saltoPendiente : null}
               limiteSalto={p.saltoPendiente?.limiteMs ?? null}
               onCancelarSalto={p.onCancelarSalto}
-              onJump={(inmediato) => onJump(s.marcador!.id, inmediato)}
-              onRename={(n) => onRename(s.marcador!.id, n)}
+              onJump={(inmediato) => (s.marcador ? onJump(s.marcador.id, inmediato) : p.onJumpInicio(s.inicioMs, inmediato))}
+              onRename={(n) => s.marcador && onRename(s.marcador.id, n)}
               proyecto={p.proyecto}
-              onTonalidad={(t) => p.onTonalidad(s.marcador!.id, t)}
-              onDelete={() => onDelete(s.marcador!)}
+              onTonalidad={(t) => s.marcador && p.onTonalidad(s.marcador.id, t)}
+              onDelete={() => s.marcador && onDelete(s.marcador)}
             />
           ))}
         </ul>
+      )}
+      {conMarcador.length === 0 && (
+        <p className="secciones-vacio">
+          Todavía no hay secciones.
+          <br />
+          Con la canción sonando, presioná <kbd>M</kbd> en cada parte
+          {p.analisis?.estado !== 'sin-guia' ? ', o dejá que se detecten por la voz guía.' : '.'}
+        </p>
       )}
 
       <div className="secciones-pie">
@@ -292,13 +297,18 @@ function TarjetaSeccion({
 
   return (
     <li
-      className={`seccion-tarjeta ${actual ? 'actual' : ''} ${salto ? 'pendiente' : ''} ${loop ? 'loop' : ''}`}
+      className={`seccion-tarjeta ${actual ? 'actual' : ''} ${salto ? 'pendiente' : ''} ${loop ? 'loop' : ''} ${seccion.marcador ? '' : 'inicio'}`}
       style={{ '--color-seccion': color } as React.CSSProperties}
       onClick={(e) => !editando && !eligiendoTono && onJump(e.shiftKey)}
-      title="Click para ir a esta sección (sonando, según el modo de salto; Shift+click: ya)"
+      title={
+        seccion.marcador
+          ? 'Click para ir a esta sección (sonando, según el modo de salto; Shift+click: ya)'
+          : 'Volver al principio de la canción (sonando, según el modo de salto; Shift+click: ya)'
+      }
     >
       <div className="seccion-tarjeta-arriba">
-        {numero <= 9 && <kbd className="seccion-numero num">{numero}</kbd>}
+        {numero >= 1 && numero <= 9 && <kbd className="seccion-numero num">{numero}</kbd>}
+        {!seccion.marcador && <SkipBack size={13} className="seccion-inicio-icono" />}
         <OrigenSeccion marcador={seccion.marcador} />
         <span className="seccion-tiempo num">{formatMmSs(seccion.inicioMs)}</span>
         {tonoPropio && !eligiendoTono && (
@@ -332,7 +342,7 @@ function TarjetaSeccion({
             ))}
           </select>
         )}
-        {!editando && !eligiendoTono && (
+        {!editando && !eligiendoTono && seccion.marcador && (
           <span className="seccion-acciones">
             <button
               title={tonoPropio ? 'Cambiar el tono de esta sección' : `Marcar un cambio de tono en esta sección (ahora: ${tonalidadEn(proyecto, seccion.inicioMs) ?? 'sin tonalidad'})`}
@@ -382,7 +392,7 @@ function TarjetaSeccion({
           }}
         />
       ) : (
-        <span className="seccion-nombre" onDoubleClick={(e) => (e.stopPropagation(), empezar())}>
+        <span className="seccion-nombre" onDoubleClick={(e) => seccion.marcador && (e.stopPropagation(), empezar())}>
           {loop && <Repeat size={16} />}
           {seccion.nombre}
         </span>
