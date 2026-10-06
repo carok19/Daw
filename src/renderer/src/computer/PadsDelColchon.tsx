@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Download, LoaderCircle, Trash2, Waves } from 'lucide-react'
+import { CircleCheck, Download, LoaderCircle, Trash2, Waves } from 'lucide-react'
 import { NOTAS_PAD } from '@shared/colchon'
 import type { AppController } from '../app/useAppController'
 
@@ -55,12 +55,15 @@ export function PadsDelColchon({ controller }: { controller: AppController }) {
   const ayuda =
     'Un .zip o .rar con un audio por tono (el nombre dice el tono: “Pad C.wav”, “Pad F#.wav”, “Pad Bb.mp3”…), o un solo audio: los tonos que faltan se hacen solos'
   if (!pads)
+    // el de la app viene incluido y listo (no hay que cargar nada): los propios son un extra
     return (
-      <div className="voz-salto">
-        <Waves size={14} />
-        <span>Pad del colchón: el de AirTracks</span>
-        <button className="btn-chico" onClick={() => void importar()} title={ayuda}>
-          Importar mis pads…
+      <div className="voz-salto activa incluido">
+        <CircleCheck size={14} className="texto-verde" />
+        <span>
+          <b>Pad incluido</b>: el de AirTracks, en los 12 tonos. No hace falta cargar nada.
+        </span>
+        <button className="btn-enlace" onClick={() => void importar()} title={ayuda}>
+          Usar los míos (opcional)…
         </button>
       </div>
     )

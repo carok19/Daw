@@ -4,7 +4,7 @@ import { posicionActualMs } from '@shared/playback'
 import { aplicarGrupos, clavePista, codificarMezcla, mezclaDeSonido, mezclaEfectiva } from '@shared/mezcla'
 import { LARGO_SONIDO_CUENTA_SEC } from '@shared/cuenta'
 import { ENTRADA_PAD_SOLO_MS, NOTAS_PAD, PAN_CLICK_COLCHON, PAN_PAD, golpesDeColchon } from '@shared/colchon'
-import { cargarProcesador, deInt16, EsperaTalkback, type PedazoTalkback } from './talkback'
+import { deInt16, EsperaTalkback, SR_TALKBACK, type PedazoTalkback } from './talkback'
 import type { CurvaFundido, MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
@@ -105,6 +105,25 @@ interface Precarga {
 }
 
 const INTERVALO_TICK_MS = 250
+
+/**
+ * Un pedazo de talkback (16 kHz) a la frecuencia del celular (48 o 44,1 kHz),
+ * interpolando. Va una muestra de 16 kHz atrasado (62 µs) para unirse con la
+ * ultima del pedazo anterior (`anterior`): los pedazos pegados no "clickean".
+ */
+function aFrecuenciaDelCelular(pcm: Float32Array, anterior: number, sr: number): Float32Array {
+  const n = Math.round((pcm.length * sr) / SR_TALKBACK)
+  const paso = SR_TALKBACK / sr
+  const out = new Float32Array(n)
+  for (let k = 0; k < n; k++) {
+    const x = k * paso - 1
+    const i = Math.floor(x)
+    const a = i < 0 ? anterior : pcm[i]
+    const b = pcm[Math.min(pcm.length - 1, i + 1)]
+    out[k] = a + (b - a) * (x - i)
+  }
+  return out
+}
 /** Se cancelo "Terminar" a mitad del fundido: en cuanto vuelve la musica a su volumen. */
 const VUELTA_FUNDIDO_SEC = 0.4
 /**
@@ -193,16 +212,12 @@ export class StreamingEngine implements PlaybackEngine {
   private salidaSonido: SalidaSonido | null = null
   /** "Probar el sync": los clicks de la prueba (al medio, volumen fijo) */
   private pruebaGain: GainNode | null = null
-  /** la musica (todo menos el talkback): baja 6 dB mientras habla la compu */
-  private atenuador: GainNode
-  /** talkback: volumen del celular x el de "Mi mezcla" para el talkback */
+  /** talkback: volumen del celular x el de "Mi mezcla" para el talkback (un fader mas) */
   private talkbackGain: GainNode
-  private talkbackNodo: AudioWorkletNode | null = null
-  private talkbackListo: Promise<void> | null = null
+  /** el ultimo pedazo de talkback programado: el siguiente se pega justo a continuacion (sin huecos) */
+  private talkbackUltimo: { n: number; fin: number; ultimaMuestra: number } | null = null
   private volumenGeneral = 1
   readonly esperaTalkback = new EsperaTalkback()
-  /** el talkback esta sonando ahora (para el aviso en pantalla) */
-  private onTalkbackCb: ((sonando: boolean) => void) | null = null
   /** lo ultimo antes del parlante (el limitador): de ahi mide el vumetro */
   private salidaFinal!: AudioNode
   private medidor: { izq: AnalyserNode; der: AnalyserNode; buf: Float32Array<ArrayBuffer> } | null = null
@@ -291,10 +306,8 @@ export class StreamingEngine implements PlaybackEngine {
     limitador.ratio.value = 20
     limitador.attack.value = 0.003
     limitador.release.value = 0.15
-    // la musica pasa por el atenuador (baja mientras habla el talkback); el talkback va directo al limitador
-    this.atenuador = this.ctx.createGain()
-    this.masterGain.connect(this.atenuador)
-    this.atenuador.connect(limitador)
+    // la musica y el talkback se juntan en el limitador (el talkback es un fader mas: no baja la musica)
+    this.masterGain.connect(limitador)
     this.talkbackGain = this.ctx.createGain()
     this.talkbackGain.connect(limitador)
     limitador.connect(this.ctx.destination)
@@ -332,10 +345,6 @@ export class StreamingEngine implements PlaybackEngine {
 
   // ---- talkback: la compu habla a los oidos de la banda (ver audio/talkback.ts) ----
 
-  onTalkback(cb: (sonando: boolean) => void): void {
-    this.onTalkbackCb = cb
-  }
-
   /** Volumen del talkback: el del celular por el "Talkback" de "Mi mezcla" (la consola no lo escucha nunca). */
   private volumenTalkback(): void {
     const g = this.salidaSonido ? 0 : this.volumenGeneral * this.factorPersonal('Talkback')
@@ -344,30 +353,36 @@ export class StreamingEngine implements PlaybackEngine {
 
   /**
    * Un pedazo de talkback (20 ms): suena `objetivo` ms despues de cuando se
-   * capto, con la misma hora del servidor que la musica. Mientras suena, la
-   * musica baja 6 dB.
+   * capto, con la misma hora del servidor que la musica. Se programa como
+   * cualquier audio (un AudioBufferSource a su hora), sin AudioWorklet: el
+   * navegador no lo habilita en http:// por la red local, que es como entran
+   * los celulares. Los pedazos seguidos se pegan uno detras del otro.
    */
   recibirTalkback(p: PedazoTalkback, clockOffsetMs: number): void {
     if (this.salidaSonido || !(p?.pcm instanceof ArrayBuffer) || typeof p.t !== 'number') return
-    const ahoraServidor = Date.now() + clockOffsetMs
-    this.esperaTalkback.registrar(ahoraServidor - p.t)
-    const t = this.ctxDeServidor(p.t + this.esperaTalkback.objetivoMs, clockOffsetMs)
-    const muestras = deInt16(new Int16Array(p.pcm))
-    if (!this.talkbackListo) {
-      this.talkbackListo = cargarProcesador(this.ctx, 'reproductor').then(() => {
-        const nodo = new AudioWorkletNode(this.ctx, 'reproductor-talkback', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
-        nodo.connect(this.talkbackGain)
-        nodo.port.onmessage = (e: MessageEvent<{ sonando: boolean }>) => {
-          const ahora = this.ctx.currentTime
-          // la musica baja enseguida y vuelve despacio (que no "respire" entre palabra y palabra)
-          this.atenuador.gain.setTargetAtTime(e.data.sonando ? 0.5 : 1, ahora, e.data.sonando ? 0.03 : 0.4)
-          this.onTalkbackCb?.(e.data.sonando)
-        }
-        this.talkbackNodo = nodo
-        this.volumenTalkback()
-      })
+    this.esperaTalkback.registrar(Date.now() + clockOffsetMs - p.t)
+    const pcm = deInt16(new Int16Array(p.pcm))
+    if (pcm.length === 0) return
+    const sr = this.ctx.sampleRate
+    let t = this.ctxDeServidor(p.t + this.esperaTalkback.objetivoMs, clockOffsetMs)
+    const previo = this.talkbackUltimo
+    // el que sigue, cerca de donde termino el anterior: pegado (ni un hueco ni encimado)
+    const seguido = !!previo && p.n === previo.n + 1 && Math.abs(t - previo.fin) < 0.03
+    if (seguido) t = previo!.fin
+    if (t < this.ctx.currentTime + 0.003) {
+      // ya paso su momento (llego tarde): se saltea; la espera se agranda sola (ver EsperaTalkback)
+      this.talkbackUltimo = null
+      return
     }
-    void this.talkbackListo.then(() => this.talkbackNodo?.port.postMessage({ t, muestras }, [muestras.buffer]))
+    const muestras = aFrecuenciaDelCelular(pcm, seguido ? previo!.ultimaMuestra : pcm[0], sr)
+    const buffer = this.ctx.createBuffer(1, muestras.length, sr)
+    buffer.getChannelData(0).set(muestras)
+    const fuente = this.ctx.createBufferSource()
+    fuente.buffer = buffer
+    fuente.connect(this.talkbackGain)
+    fuente.onended = () => fuente.disconnect()
+    fuente.start(t)
+    this.talkbackUltimo = { n: p.n, fin: t + muestras.length / sr, ultimaMuestra: pcm[pcm.length - 1] }
   }
 
   setAjusteManualMs(ms: number): void {

@@ -194,14 +194,12 @@ export function useAppController() {
   const salidaLocalHastaRef = useRef(0)
   /** el ajuste fino (lo puede cambiar la compu) */
   const ajusteFinoRef = useRef<((ms: number) => void) | null>(null)
-  // talkback (ver audio/talkback.ts). Celular: si esta sonando ahora y si ya llego alguna vez (para mostrar su volumen)
-  const [talkbackSonando, setTalkbackSonando] = useState(false)
-  const [talkbackRecibido, setTalkbackRecibido] = useState(false)
-  /** la compu esta hablando (el aviso en pantalla no parpadea entre palabra y palabra) */
-  const [talkbackHablando, setTalkbackHablando] = useState(false)
-  // compu: de donde sale la voz (microfono o interface, que entrada, si se mejora) y si se esta hablando
+  // talkback (ver audio/talkback.ts): abierto en la compu (lo saben todos; en el celular es un fader mas de "Mi mezcla")
+  const [talkbackActivo, setTalkbackActivoState] = useState(false)
+  // compu: si lo prendio (queda asi hasta que lo apague), de donde sale la voz (microfono o interface, que entrada, si se mejora)
   const [talkback, setTalkback] = useState<{
-    hablando: boolean
+    /** prendido en esta compu (se recuerda: al volver a abrir el programa sigue prendido) */
+    activo: boolean
     error: string | null
     entrada: string | null
     /** que entrada de la interface (0 = la 1…); null = todas juntas */
@@ -210,7 +208,7 @@ export function useAppController() {
     /** cuantas entradas tiene lo abierto (una interface: 2 o mas; 0 = todavia cerrado) */
     canales: number
   }>(() => ({
-    hablando: false,
+    activo: false,
     error: null,
     entrada: origen === 'compu' ? leerPref<string | null>('talkback-entrada', null) : null,
     canal: origen === 'compu' ? leerPref<number | null>('talkback-canal', null) : null,
@@ -393,10 +391,6 @@ export function useAppController() {
     engine.setSalidaSonido(sonido ? rolRef.current.salida : null)
     // (se activo el audio con la cancion apagandose: entra con la curva)
     if (fundidoRef.current && socketRef.current) engine.setFundido(fundidoRef.current, socketRef.current.clockOffsetMs)
-    engine.onTalkback((v) => {
-      setTalkbackSonando(v)
-      if (v) setTalkbackRecibido(true)
-    })
     engine.onRequiereResync(() => {
       const socket = socketRef.current
       const actual = estadoRef.current
@@ -560,10 +554,7 @@ export function useAppController() {
       }),
       // talkback: la compu le habla a la banda (20 ms por mensaje)
       socket.on<PedazoTalkback>('talkback:audio', (p) => engineRef.current?.recibirTalkback(p, socket.clockOffsetMs)),
-      socket.on<{ hablando: boolean }>('talkback:estado', (p) => {
-        setTalkbackHablando(!!p?.hablando)
-        if (p?.hablando) setTalkbackRecibido(true)
-      }),
+      socket.on<{ activo: boolean }>('talkback:estado', (p) => setTalkbackActivoState(p?.activo === true)),
       // "Terminar con fundido": empieza a apagarse (o se cancelo a mitad y vuelve)
       socket.on<AvisoFundido>('transport:fundido', (p) => {
         const actual = estadoRef.current
@@ -792,6 +783,20 @@ export function useAppController() {
       return p ? calcularSecciones(p.marcadores, p.duracionTotalMs) : []
     }
 
+    /** El que toma la voz del talkback en la compu (uno solo, se crea la primera vez). */
+    function emisorTalkback(): EmisorTalkback {
+      if (!talkbackRef.current) {
+        const emisor = new EmisorTalkback(
+          (p) => socket.socket.volatile.emit('talkback:audio', p),
+          () => socket.serverNow()
+        )
+        emisor.onNivel = (v) => {
+          nivelTalkbackRef.current = v
+        }
+        talkbackRef.current = emisor
+      }
+      return talkbackRef.current
+    }
     /** De donde y como se toma la voz del talkback (lo elegido en ⚙ Ajustes → Talkback). */
     function opcionesTalkback(): OpcionesEntrada {
       return {
@@ -901,43 +906,37 @@ export function useAppController() {
         return socket.emitAck<{ ok: boolean }>('dispositivo:ajuste', { id, ms }).catch(() => ({ ok: false }))
       },
       /**
-       * Compu: talkback. true = empieza a hablar (la primera vez pide el
-       * microfono), false = deja de hablar. Lo escuchan los oidos de la banda
-       * (no la consola ni multimedia).
+       * Compu: prender o apagar el talkback. Prendido, lo que entra por el
+       * microfono va todo el tiempo a los oidos de la banda (no a la consola
+       * ni a multimedia), como un fader mas; queda asi hasta que alguien lo
+       * apague (tambien si se cierra y se vuelve a abrir el programa).
        */
-      async hablarTalkback(si: boolean): Promise<void> {
-        let emisor = talkbackRef.current
-        if (!emisor) {
-          emisor = new EmisorTalkback(
-            (p) => socket.socket.volatile.emit('talkback:audio', p),
-            () => socket.serverNow()
-          )
-          emisor.onNivel = (v) => {
-            nivelTalkbackRef.current = v
-          }
-          talkbackRef.current = emisor
-        }
-        if (!si) {
-          emisor.hablando = false
-          emit('talkback:hablando', { hablando: false })
-          setTalkback((t) => ({ ...t, hablando: false }))
+      async setTalkbackActivo(activo: boolean): Promise<void> {
+        guardarPref('talkback-activo', activo)
+        const emisor = emisorTalkback()
+        if (!activo) {
+          emisor.enviando = false
+          emit('talkback:activo', { activo: false })
+          setTalkback((t) => ({ ...t, activo: false, error: null }))
           return
         }
-        setTalkback((t) => ({ ...t, hablando: true, error: null }))
+        setTalkback((t) => ({ ...t, activo: true, error: null }))
         try {
           await emisor.abrir(opcionesTalkback())
-          setTalkback((t) => ({ ...t, canales: emisor!.canales() }))
+          setTalkback((t) => ({ ...t, canales: emisor.canales() }))
         } catch (e) {
           const nombre = (e as { name?: string })?.name
+          // sigue prendido (si se arregla el microfono, vuelve solo al tocarlo o al reabrir el programa)
           setTalkback((t) => ({
             ...t,
-            hablando: false,
-            error: nombre === 'NotAllowedError' ? 'Windows no dejó usar el micrófono' : nombre === 'NotFoundError' || nombre === 'OverconstrainedError' ? 'No se encontró esa entrada de audio' : 'No se pudo abrir el micrófono'
+            error: nombre === 'NotAllowedError' ? 'Windows no dejó usar el micrófono' : nombre === 'NotFoundError' || nombre === 'OverconstrainedError' ? 'No se encontró ese micrófono' : 'No se pudo abrir el micrófono'
           }))
+          emit('talkback:activo', { activo: false })
           return
         }
-        emisor.hablando = true
-        emit('talkback:hablando', { hablando: true })
+        if (!leerPref<boolean>('talkback-activo', false)) return // lo apagaron mientras se abria
+        emisor.enviando = true
+        emit('talkback:activo', { activo: true })
       },
       /** Compu: lo que entra por el microfono del talkback (0 a 1), para el vumetro. */
       nivelTalkback(): number {
@@ -973,20 +972,11 @@ export function useAppController() {
         setTalkback((t) => ({ ...t, procesar, canal: procesar ? null : t.canal, error: null }))
         reabrirTalkback()
       },
-      /** Compu: abrir la entrada sin hablar (para ver el nivel en el vumetro). */
+      /** Compu: abrir la entrada sin mandarla (para ver el nivel en el vumetro). */
       async probarEntradaTalkback(): Promise<boolean> {
-        if (!talkbackRef.current) {
-          const emisor = new EmisorTalkback(
-            (p) => socket.socket.volatile.emit('talkback:audio', p),
-            () => socket.serverNow()
-          )
-          emisor.onNivel = (v) => {
-            nivelTalkbackRef.current = v
-          }
-          talkbackRef.current = emisor
-        }
+        const emisor = emisorTalkback()
         try {
-          await talkbackRef.current.abrir(opcionesTalkback())
+          await emisor.abrir(opcionesTalkback())
           setTalkback((t) => ({ ...t, canales: talkbackRef.current?.canales() ?? 0 }))
           return true
         } catch {
@@ -1415,6 +1405,16 @@ export function useAppController() {
 
   ajusteFinoRef.current = acciones.setAjusteManualMs
 
+  // talkback: si quedo prendido, al abrir el programa vuelve prendido; y si se corta la conexion, al volver se le recuerda al servidor
+  useEffect(() => {
+    const socket = socketRef.current
+    if (origen !== 'compu' || !socket) return
+    if (leerPref<boolean>('talkback-activo', false)) void acciones.setTalkbackActivo(true)
+    return socket.onConexionCambia((conectado) => {
+      if (conectado && talkbackRef.current?.enviando) socket.emit('talkback:activo', { activo: true })
+    })
+  }, [acciones, origen])
+
   const siguienteProyecto = useMemo(() => {
     if (!estado) return null
     const i = estado.tabs.findIndex((t) => t.tabId === estado.activeTabId)
@@ -1459,9 +1459,7 @@ export function useAppController() {
     salidaSonido,
     escucharMultimedia,
     talkback,
-    talkbackSonando,
-    talkbackRecibido,
-    talkbackHablando,
+    talkbackActivo,
     /** este celular maneja la cancion: director (o todavia sin rol, como antes) y sin el control bloqueado */
     puedeControlar: origen === 'compu' || (!(estado?.locked ?? false) && (rol === null || rol === 'director')),
     ...acciones

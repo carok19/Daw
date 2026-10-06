@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Download, Laptop, LoaderCircle, Megaphone, Mic, Play, Settings, Trash2, Volume2, VolumeX, Waves } from 'lucide-react'
+import { CircleCheck, Laptop, LoaderCircle, Megaphone, Mic, Play, Settings, Trash2, Volume2, VolumeX, Waves } from 'lucide-react'
 import { DURACIONES_FUNDIDO, type InfoVoces, type ModoSalto } from '@shared/types'
 import type { AppController } from '../app/useAppController'
 import { guardarPref, leerPref } from '../app/preferencias'
@@ -37,30 +37,32 @@ export function VozDelSalto(p: { voces: InfoVoces | null; onImportar: () => Prom
     return (
       <div className="voz-salto">
         <Megaphone size={14} />
-        <span>Avisar el salto con voz</span>
+        <span>No se encontraron las voces que trae el programa (reinstalarlo las repone).</span>
         <button
-          className="btn-chico"
+          className="btn-enlace"
           onClick={() => void importar()}
           title="Elegí un .zip o .rar con un audio por sección (Coro, Verso 1, Puente…) y los números 1 a 7. Si trae varios idiomas se usa el español."
         >
-          Importar voces…
+          Usar un pack…
         </button>
       </div>
     )
   }
   const v = p.voces
+  // las del programa vienen incluidas y listas (no hay que cargar nada): otro pack es un extra
   return (
-    <div className={`voz-salto ${v.activo ? 'activa' : ''}`}>
+    <div className={`voz-salto incluido ${v.activo ? 'activa' : ''}`}>
       <label title="En el último compás antes del salto se escucha la sección elegida y la cuenta, con el volumen y el lado de la guía (la guía de la canción se calla en ese compás)">
         <input type="checkbox" checked={v.activo} onChange={(e) => p.onActivar(e.target.checked)} />
         <Megaphone size={14} /> Avisar con voz <em>“Coro… 3, 4”</em>
       </label>
       <small className="num" title={v.deFabrica ? 'Las voces que trae el programa (Secuencias.com)' : v.numeros ? undefined : 'El pack no trae los números: se avisa solo el nombre'}>
-        {v.deFabrica ? `voces del programa ${IDIOMA_VOCES[v.idioma]}` : `${v.cantidad} voces ${IDIOMA_VOCES[v.idioma]}`}
+        <CircleCheck size={12} className="texto-verde" />{' '}
+        {v.deFabrica ? `Incluidas: voces del programa ${IDIOMA_VOCES[v.idioma]}` : `Tu pack: ${v.cantidad} voces ${IDIOMA_VOCES[v.idioma]}`}
         {!v.numeros && ' · sin números'}
       </small>
-      <button className="btn-icono" onClick={() => void importar()} title={v.deFabrica ? 'Usar otro pack de voces (.zip o .rar)' : 'Cambiar el pack de voces'} aria-label="Usar otro pack de voces">
-        <Download size={13} />
+      <button className="btn-enlace" onClick={() => void importar()} title="Otro pack de voces (.zip o .rar con un audio por sección y los números)" aria-label="Usar otro pack de voces">
+        {v.deFabrica ? 'Usar otras (opcional)…' : 'Cambiar…'}
       </button>
       {!v.deFabrica && (
         <button className="btn-icono" onClick={p.onBorrar} title="Quitar este pack (vuelven las voces del programa)" aria-label="Quitar este pack de voces">
@@ -170,6 +172,7 @@ function Sonidos({ controller }: { controller: AppController }) {
   const e = controller.estado
   return (
     <>
+      <p className="ayuda ajustes-ayuda">Vienen incluidos con el programa y listos para usar: no hace falta cargar nada. Usar los tuyos es opcional.</p>
       <h3 className="ajustes-titulo">
         <Megaphone size={15} /> Voz que avisa el salto
       </h3>
@@ -179,7 +182,7 @@ function Sonidos({ controller }: { controller: AppController }) {
       <h3 className="ajustes-titulo">
         <Waves size={15} /> Pad del colchón
       </h3>
-      <p className="ayuda ajustes-ayuda">El colchón de ambiente en el tono de la canción: el de AirTracks o los tuyos.</p>
+      <p className="ayuda ajustes-ayuda">El colchón de ambiente en el tono de la canción.</p>
       <PadsDelColchon controller={controller} />
     </>
   )

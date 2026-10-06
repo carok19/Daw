@@ -24,6 +24,9 @@ const PARCIAL_CADA_MS = 2000
  * secciones (van apareciendo mientras tanto). De a una cancion por vez y
  * nunca mientras suena algo (no competir por CPU en vivo).
  */
+/** Cuanto se espera, al abrir, a saber si el reconocedor esta (antes de pedir descargarlo). */
+const ESPERA_MODELO_MS = 8000
+
 export class ReconocimientoGuia {
   private cola: PedidoVoz[] = []
   private trabajando = false
@@ -82,6 +85,10 @@ export class ReconocimientoGuia {
       while (this.cola.length) {
         const falso = this.falso()
         const pedido = this.cola[0]
+        // al abrir, el aviso de que el reconocedor esta (viene en el instalador) puede llegar un instante despues
+        // que los pedidos: se espera un poco antes de decir que falta (y pedir descargarlo)
+        const hasta = Date.now() + ESPERA_MODELO_MS
+        while (!falso && !this.modeloListo && Date.now() < hasta) await new Promise((r) => setTimeout(r, 200))
         if (!falso && !this.modeloListo) {
           this.socket.emit('analisis:fallo', { proyectoId: pedido.proyectoId, motivo: 'falta-modelo' })
           this.cola.shift()

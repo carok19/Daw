@@ -145,11 +145,6 @@ export function MobileApp({ controller }: { controller: AppController }) {
         </button>
       </div>
 
-      {controller.talkbackHablando && !consola && !(multimedia && !controller.escucharMultimedia) && (
-        <div className="m-talkback" role="status">
-          <Mic size={18} /> Te habla la compu
-        </div>
-      )}
       {!conectado && (
         <div className="m-alerta error">
           <WifiOff size={20} />
@@ -203,6 +198,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
             <span>Cuando la computadora elija una canción aparece acá.</span>
           </div>
           <CanalGeneral controller={controller} />
+          <CanalTalkback controller={controller} />
         </>
       )}
 
@@ -361,6 +357,32 @@ function CanalColchon({
   )
 }
 
+/**
+ * Talkback: un fader mas de "Mi mezcla" (la voz de la compu, abierta todo el
+ * tiempo mientras alguien no la cierre). Cada uno le da su volumen o la mutea.
+ */
+function CanalTalkback({ controller }: { controller: AppController }) {
+  const mezcla = controller.mezclaPersonal
+  const clave = clavePista('Talkback')
+  const cambiar = (patch: Partial<AjustePersonal>): void => {
+    const nuevo = { ...(mezcla[clave] ?? { ganancia: 1, mute: false }), ...patch }
+    const copia = { ...mezcla }
+    if (Math.abs(nuevo.ganancia - 1) < 0.001 && !nuevo.mute) delete copia[clave]
+    else copia[clave] = nuevo
+    controller.setMezclaPersonal(copia)
+  }
+  return (
+    <CanalColchon
+      nombre="Talkback"
+      etiquetaAviso={controller.talkbackActivo ? 'abierto' : 'cerrado en la compu'}
+      color="var(--danger)"
+      Icono={Mic}
+      ajuste={mezcla[clave]}
+      onCambio={cambiar}
+    />
+  )
+}
+
 function Mezcla({ controller, proyecto }: { controller: AppController; proyecto: Proyecto }) {
   const estado = controller.estado
   const mezcla = controller.mezclaPersonal
@@ -397,7 +419,7 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
       </div>
       <CanalGeneral controller={controller} />
       <MezclaRapida proyecto={proyecto} mezcla={mezcla} onCambio={set} />
-      {controller.talkbackRecibido && <CanalColchon nombre="Talkback" etiquetaAviso="la compu" color="var(--danger)" Icono={Mic} ajuste={mezcla[clavePista('Talkback')]} onCambio={(patch) => set('Talkback', patch)} />}
+      <CanalTalkback controller={controller} />
       {(proyecto.colchon || estado?.colchon) && (
         <>
           {proyecto.colchon && <CanalColchon nombre="Click" color="var(--text-2)" ajuste={mezcla[clavePista('Click')]} onCambio={(patch) => set('Click', patch)} />}

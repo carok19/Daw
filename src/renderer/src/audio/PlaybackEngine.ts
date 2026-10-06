@@ -31,12 +31,10 @@ export interface PlaybackEngine {
   nivelSalida(): { izq: number; der: number }
   /** "Probar el sync": un click en cada golpe (hora del servidor), igual en todos */
   probarSync(golpes: { t: number; n: number }[], clockOffsetMs: number): void
-  /** un pedazo de talkback (la compu habla a los oidos) */
+  /** un pedazo de talkback (la compu habla a los oidos; un fader mas de la mezcla) */
   recibirTalkback(p: PedazoTalkback, clockOffsetMs: number): void
   /** lo que mide del talkback (para la compu) */
   readonly esperaTalkback: EsperaTalkback
-  /** aviso de que el talkback empieza o termina de sonar */
-  onTalkback(cb: (sonando: boolean) => void): void
 
   activarProyecto(proyecto: Proyecto, posicionMs: number): void
   /** baja de a poco el arranque (desde `posicionMs`) de la proxima cancion del setlist (null = ninguna) */

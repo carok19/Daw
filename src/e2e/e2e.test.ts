@@ -2136,10 +2136,11 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
   assert.equal(await compu.locator('.secciones-herramientas .voz-salto').count(), 0, 'la barra de secciones queda limpia')
   await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
   await compu.getByRole('tab', { name: 'Sonidos' }).click()
-  await compu.locator('.voz-salto', { hasText: 'voces del programa en español' }).waitFor()
+  await compu.locator('.voz-salto', { hasText: 'Incluidas: voces del programa en español' }).waitFor()
   assert.equal(await compu.getByRole('button', { name: 'Quitar este pack de voces' }).count(), 0)
   // y el pad del colchon: el de la app, y se pueden importar los propios
-  await compu.locator('.voz-salto', { hasText: 'Pad del colchón: el de AirTracks' }).getByRole('button', { name: 'Importar mis pads…' }).waitFor()
+  // (vienen incluidos: no hay que cargar nada; los propios, opcionales)
+  await compu.locator('.voz-salto', { hasText: 'Pad incluido' }).getByRole('button', { name: 'Usar los míos (opcional)…' }).waitFor()
   await captura(compu, 'ajustes-voz-y-pads')
   await compu.keyboard.press('Escape')
   await compu.locator('.modal').waitFor({ state: 'detached' })
@@ -2469,6 +2470,30 @@ async function grabarSalida(pg: Page, segundos: number, final = false): Promise<
     const g = globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode; salidaFinal: AudioNode } } }; __grabadorCrudo?: boolean }
     const engine = g.__mt.engineRef.current
     const desde: AudioNode = alFinal ? engine.salidaFinal : engine.masterGain
+    if (!engine.ctx.audioWorklet) {
+      // un celular por la red (http:// sin "seguro"): sin AudioWorklet; se graba con un ScriptProcessor
+      const total = Math.round((seg as number) * engine.ctx.sampleRate)
+      const proc = engine.ctx.createScriptProcessor(4096, 2, 2)
+      const mudo = engine.ctx.createGain()
+      mudo.gain.value = 0
+      const L: number[] = []
+      const R: number[] = []
+      const datos = await new Promise<{ L: number[]; R: number[] }>((resolve) => {
+        proc.onaudioprocess = (e) => {
+          if (L.length >= total) return
+          L.push(...e.inputBuffer.getChannelData(0))
+          R.push(...e.inputBuffer.getChannelData(1))
+          if (L.length >= total) resolve({ L: L.slice(0, total), R: R.slice(0, total) })
+        }
+        desde.connect(proc)
+        proc.connect(mudo)
+        mudo.connect(engine.ctx.destination)
+      })
+      desde.disconnect(proc)
+      proc.disconnect()
+      mudo.disconnect()
+      return { sr: engine.ctx.sampleRate, ...datos }
+    }
     if (!g.__grabadorCrudo) {
       const codigo = `registerProcessor('grabador-crudo', class extends AudioWorkletProcessor {
         constructor() { super(); this.faltan = 0; this.L = []; this.R = []; this.port.onmessage = (e) => { this.faltan = e.data; this.L = []; this.R = [] } }
@@ -2775,7 +2800,7 @@ test('roles: cada celular elige lo suyo; la consola recibe la banda sola y en es
   })
 })
 
-test('talkback: la compu habla y la banda la escucha en los oídos (la consola no), con la música más baja; cada celular mide la demora', { timeout: 3 * 60 * 1000 }, async (t) => {
+test('talkback: abierto, la banda escucha la compu todo el tiempo como un fader más (la consola no), por la red como un celular real; cada celular mide la demora', { timeout: 3 * 60 * 1000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-talkback-'))
   process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
   // el "microfono" de la compu, como una interface de 2 entradas: en la 1 un tono de 1 kHz a pedazos
@@ -2821,17 +2846,30 @@ test('talkback: la compu habla y la banda la escucha en los oídos (la consola n
   await compu.getByRole('button', { name: /Importar \.zip/ }).click()
   await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
 
+  // los celulares entran por la IP de la compu en la red (http://192.168…), como los de verdad: ahi el
+  // navegador no es "seguro" (sin AudioWorklet, entre otras cosas), a diferencia de localhost
+  const ipRed = Object.values(os.networkInterfaces())
+    .flat()
+    .find((i) => i && i.family === 'IPv4' && !i.internal)?.address
+  const baseCelular = ipRed ? `http://${ipRed}:${port}` : base
   const celular = async (rol: string): Promise<Page> => {
     const ctx = await contextoCelular(browser, devices['Pixel 7'], rol)
     ctx.setDefaultTimeout(15000)
     const pg = await ctx.newPage()
     pg.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
-    await pg.goto(`${base}/?debug`)
+    await pg.goto(`${baseCelular}/?debug`)
     await pg.getByRole('button', { name: /Tocá para empezar/ }).click()
     return pg
   }
   const musico = await celular('musico')
   const consola = await celular('sonido')
+  if (baseCelular !== base) assert.equal(await musico.evaluate(() => isSecureContext), false, 'el celular entra como uno real (sin https)')
+  t.diagnostic(`celulares por ${baseCelular}`)
+  // prender y apagar el talkback (el interruptor de arriba, o la T)
+  const talkback = async (abierto: boolean): Promise<void> => {
+    await compu.getByRole('switch', { name: 'Talkback' }).click()
+    await compu.locator(abierto ? '.talkback.abierto' : '.talkback:not(.abierto)').waitFor()
+  }
   await compu.keyboard.press('Space')
   await esperar(5000)
   const medir = async (pg: Page): Promise<{ voz: number; bajo: number }> => {
@@ -2843,34 +2881,45 @@ test('talkback: la compu habla y la banda la escucha en los oídos (la consola n
   t.diagnostic(`antes de hablar: ${JSON.stringify(antes)}`)
   assert.ok(antes.voz < 0.004, 'sin hablar no suena nada')
 
-  await t.test('mantener la T: el músico escucha la voz y la música le baja; la consola no la recibe', async () => {
-    await compu.locator('body').click({ position: { x: 5, y: 5 } })
-    await compu.keyboard.down('t')
-    await compu.locator('.talkback.hablando').waitFor()
-    await musico.locator('.m-talkback').waitFor({ timeout: 10000 })
-    await esperar(1500)
-    const hablando = await medir(musico)
+  await t.test('abierto: el músico escucha la voz todo el tiempo (la música sigue igual: es un fader más); la consola no la recibe; cerrado, nada', async () => {
+    // en "Mi mezcla" del músico, el talkback es un fader más (y dice si está abierto)
+    await vistaCelular(musico, 'Mi mezcla')
+    await musico.locator('.m-canal', { hasText: 'Talkback' }).locator('.m-canal-aviso', { hasText: 'cerrado en la compu' }).waitFor()
+    await talkback(true)
+    await musico.locator('.m-canal', { hasText: 'Talkback' }).locator('.m-canal-aviso', { hasText: 'abierto' }).waitFor()
+    assert.equal(await musico.getByText('Te habla la compu').count(), 0, 'sin carteles')
+    await esperar(2000)
+    const abierto = await medir(musico)
     const enConsola = await medir(consola)
-    await compu.keyboard.up('t')
-    t.diagnostic(`hablando: músico ${JSON.stringify(hablando)} · consola ${JSON.stringify(enConsola)}`)
+    // queda abierto sin tocar nada: un rato después sigue llegando
+    await esperar(4000)
+    const sigue = await medir(musico)
+    await captura(compu, 'talkback-abierto')
+    await talkback(false)
+    t.diagnostic(`abierto: músico ${JSON.stringify(abierto)} · un rato después ${JSON.stringify(sigue)} · consola ${JSON.stringify(enConsola)}`)
     // el tono suena 200 de cada 500 ms: su amplitud promedio es ~0,4 de la del tono
     // (la voz entra solo por la entrada 1 de la "interface" y por defecto van todas juntas: llega a la mitad)
-    assert.ok(hablando.voz > 0.01, `el músico escucha la voz (${hablando.voz})`)
-    assert.ok(hablando.bajo < antes.bajo * 0.65 && hablando.bajo > antes.bajo * 0.35, `la música baja 6 dB mientras se habla (${hablando.bajo} de ${antes.bajo})`)
+    assert.ok(abierto.voz > 0.01, `el músico escucha la voz (${abierto.voz})`)
+    assert.ok(sigue.voz > 0.01, `sigue abierto sin tocar nada (${sigue.voz})`)
+    // (sin https la prueba graba con un ScriptProcessor, menos exacto: se mira que no baje los 6 dB de antes)
+    assert.ok(abierto.bajo > antes.bajo * 0.7, `la música no baja (${abierto.bajo} de ${antes.bajo})`)
     assert.ok(enConsola.voz < 0.002, `la consola no recibe el talkback (${enConsola.voz})`)
-    await compu.locator('.talkback.hablando').waitFor({ state: 'detached' })
-    await esperar(2500)
-    const despues = await medir(musico)
-    assert.ok(despues.voz < hablando.voz / 5 && despues.bajo > antes.bajo * 0.9, `al soltar: sin voz y la música vuelve (${JSON.stringify(despues)})`)
+    await esperar(2000)
+    const cerrado = await medir(musico)
+    assert.ok(cerrado.voz < abierto.voz / 5, `cerrado: sin voz (${JSON.stringify(cerrado)})`)
+    await musico.locator('.m-canal', { hasText: 'Talkback' }).locator('.m-canal-aviso', { hasText: 'cerrado en la compu' }).waitFor()
   })
 
   await t.test('cada celular mide cuánto tarda (y la compu lo muestra)', async () => {
     const etiqueta = await musico.evaluate(() => localStorage.getItem('multitrack:device-id')).then((id) => `celular:${JSON.parse(id!)}`)
-    // (grabar el audio en la prueba traba al celular medio segundo y la espera sube: hablando un rato
-    // sin grabar se ve como vuelve a lo que de verdad hace falta)
-    await compu.keyboard.down('t')
+    // (grabar el audio en la prueba traba al celular medio segundo y la espera sube: abierto un rato
+    // sin grabar se ve como vuelve a lo que de verdad hace falta). Con la tecla T: abre y cierra
+    await compu.locator('body').click({ position: { x: 5, y: 5 } })
+    await compu.keyboard.press('t')
+    await compu.locator('.talkback.abierto').waitFor()
     await esperar(7000)
-    await compu.keyboard.up('t')
+    await compu.keyboard.press('t')
+    await compu.locator('.talkback:not(.abierto)').waitFor()
     await esperar(2500)
     const tb = server.devices.listar().find((d) => d.id === etiqueta)!.diag?.talkback
     t.diagnostic(`talkback medido por el celular: ${JSON.stringify(tb)}`)
@@ -2903,13 +2952,10 @@ test('talkback: la compu habla y la banda la escucha en los oídos (la consola n
     const hablarYMedir = async (): Promise<number> => {
       await compu.keyboard.press('Escape')
       await compu.locator('.modal').waitFor({ state: 'detached' })
-      await compu.locator('body').click({ position: { x: 5, y: 5 } })
-      await compu.keyboard.down('t')
-      await compu.locator('.talkback.hablando').waitFor()
+      await talkback(true)
       await esperar(2000)
       const m = await medir(musico)
-      await compu.keyboard.up('t')
-      await compu.locator('.talkback.hablando').waitFor({ state: 'detached' })
+      await talkback(false)
       await esperar(1500)
       return m.voz
     }

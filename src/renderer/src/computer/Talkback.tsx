@@ -11,66 +11,68 @@ function escribiendo(): boolean {
 }
 
 /**
- * Talkback en la barra: mantener apretado (o la tecla T) para hablarle a la
- * banda. Lo escuchan los oidos de todos (no la consola ni multimedia) y la
- * musica les baja un poco mientras se habla.
+ * Talkback en la barra: un interruptor (o la tecla T). Prendido, lo que entra
+ * por el microfono va todo el tiempo a los oidos de la banda (no a la consola
+ * ni a multimedia), como un fader mas de su mezcla, y queda asi hasta que
+ * alguien lo apague. El medidor muestra que esta entrando voz.
  */
 export function BotonTalkback({ controller }: { controller: AppController }) {
-  const { hablando, error } = controller.talkback
-  const hablar = controller.hablarTalkback
-  const apretado = useRef(false)
-  const empezar = (): void => {
-    if (apretado.current) return
-    apretado.current = true
-    void hablar(true)
-  }
-  const terminar = (): void => {
-    if (!apretado.current) return
-    apretado.current = false
-    void hablar(false)
-  }
+  const { activo, error } = controller.talkback
+  const cambiar = controller.setTalkbackActivo
+  const prendido = useRef(activo)
+  prendido.current = activo
   useEffect(() => {
     const abajo = (e: KeyboardEvent): void => {
       if (e.code !== 'KeyT' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || escribiendo()) return
       e.preventDefault()
-      empezar()
+      void cambiar(!prendido.current)
     }
-    const arriba = (e: KeyboardEvent): void => {
-      if (e.code === 'KeyT') terminar()
-    }
-    // si la ventana pierde el foco con la T apretada, se corta (que no quede hablando)
-    const perdio = (): void => terminar()
     window.addEventListener('keydown', abajo)
-    window.addEventListener('keyup', arriba)
-    window.addEventListener('blur', perdio)
-    return () => {
-      window.removeEventListener('keydown', abajo)
-      window.removeEventListener('keyup', arriba)
-      window.removeEventListener('blur', perdio)
-    }
-    // (hablar es estable: viene de las acciones del controlador)
+    return () => window.removeEventListener('keydown', abajo)
+    // (cambiar es estable: viene de las acciones del controlador)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hablar])
+  }, [cambiar])
+  const abierto = activo && !error
   return (
-    <span className={`talkback ${hablando ? 'hablando' : ''} ${error ? 'con-error' : ''}`}>
+    <span className={`talkback ${abierto ? 'abierto' : ''} ${activo && error ? 'con-error' : ''}`}>
       <button
         className="talkback-boton"
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId)
-          empezar()
-        }}
-        onPointerUp={terminar}
-        onPointerCancel={terminar}
-        onContextMenu={(e) => e.preventDefault()}
-        title={error ? `${error} (el micrófono se elige en ⚙ Ajustes → Talkback)` : 'Talkback: mantené apretado (o la tecla T) para hablarle a la banda en los oídos'}
-        aria-label="Talkback: mantené apretado para hablarle a la banda"
-        aria-pressed={hablando}
+        role="switch"
+        aria-checked={activo}
+        onClick={() => void cambiar(!activo)}
+        title={
+          activo && error
+            ? `${error} (el micrófono se elige en ⚙ Ajustes → Talkback). Tocá para apagarlo.`
+            : activo
+              ? 'Talkback abierto: la banda te escucha en los oídos todo el tiempo. Tocá (o T) para cerrarlo.'
+              : 'Talkback: tocá (o T) para abrirlo; queda abierto, como un fader más en la mezcla de cada uno, hasta que lo cierres'
+        }
+        aria-label="Talkback"
       >
-        {error ? <MicOff size={15} /> : <Mic size={15} />}
-        <span className="texto-largo">{hablando ? 'Hablando…' : 'Talkback'}</span>
+        {activo && error ? <MicOff size={15} /> : <Mic size={15} />}
+        <span className="texto-largo">{abierto ? 'Talkback abierto' : 'Talkback'}</span>
+        {abierto && <MedidorTalkback leer={controller.nivelTalkback} />}
       </button>
     </span>
   )
+}
+
+/** Barrita dentro del boton: lo que entra por el microfono (se ve que esta mandando voz). */
+function MedidorTalkback({ leer }: { leer: () => number }) {
+  const barra = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    let raf = 0
+    let pico = 0
+    const pintar = (): void => {
+      pico = Math.max(leer(), pico * 0.9)
+      const db = pico > 0.001 ? 20 * Math.log10(pico) : -60
+      barra.current?.style.setProperty('--nivel', String(Math.min(1, Math.max(0, (db + 50) / 50))))
+      raf = requestAnimationFrame(pintar)
+    }
+    raf = requestAnimationFrame(pintar)
+    return () => cancelAnimationFrame(raf)
+  }, [leer])
+  return <span className="talkback-medidor" ref={barra} aria-hidden />
 }
 
 /** Vumetro del microfono del talkback (lo que entra, aunque no se este hablando). */
@@ -117,8 +119,9 @@ export function AjustesTalkback({ controller }: { controller: AppController }) {
   return (
     <>
       <p className="ayuda" style={{ marginTop: 0 }}>
-        Mantené apretado <b>Talkback</b> (arriba) o la tecla <b>T</b> y hablale a la banda: te escuchan en los oídos, y la música les baja un poco
-        mientras hablás. No va a la consola ni a multimedia. Viaja por el WiFi del router, no por internet.
+        Tocá <b>Talkback</b> (arriba) o la tecla <b>T</b>: queda abierto y la banda te escucha en los oídos todo el tiempo, como un fader más en
+        la mezcla de cada uno (cada músico le da el volumen que quiera en “Mi mezcla”), hasta que lo cierres. No va a la consola ni a multimedia.
+        Viaja por el WiFi del router, no por internet.
       </p>
       <h3 className="ajustes-titulo">Micrófono</h3>
       <label className="talkback-campo">
@@ -181,7 +184,7 @@ export function AjustesTalkback({ controller }: { controller: AppController }) {
                       : 'Multimedia: no lo recibe'
                     : tb
                       ? `llega en ${tb.redMs} ms por el WiFi · se escucha a los ${tb.objetivoMs} ms${tb.tardes ? ` · ${tb.tardes} pedazos tarde` : ''}`
-                      : 'todavía no le hablaste'}
+                      : 'todavía no recibió voz'}
                 </span>
               </div>
             </li>

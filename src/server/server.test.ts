@@ -2303,6 +2303,36 @@ test('terminar con fundido: al terminar la sección se apaga en todos y para; se
   await otraVez.cerrar()
 })
 
+test('talkback: abierto queda abierto (el celular que entra después lo sabe); va a los oídos, no a la consola; sin la compu se cierra', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const musico = await env.conectar({ origen: 'celular', deviceId: 'cel-tb-1', nombre: 'Bajo', rol: 'musico' })
+  const consola = await env.conectar({ origen: 'celular', deviceId: 'cel-tb-2', nombre: 'Consola', rol: 'sonido' })
+  // un celular no lo abre
+  musico.emit('talkback:activo', { activo: true })
+  await esperar(150)
+  const [estado] = await Promise.all([esperarEvento<{ activo: boolean }>(musico, 'talkback:estado'), compu.emit('talkback:activo', { activo: true })])
+  assert.equal(estado.activo, true)
+  // el que entra con el talkback abierto se entera al conectarse (se escucha desde antes de conectar)
+  const tarde = ioClient(`http://localhost:${env.port}`, { auth: { origen: 'celular', deviceId: 'cel-tb-3', nombre: 'Voz', rol: 'voz' }, reconnection: false })
+  t.after(() => {
+    tarde.close()
+  })
+  const alEntrar = await esperarEvento<{ activo: boolean }>(tarde, 'talkback:estado')
+  assert.equal(alEntrar.activo, true)
+  // la voz llega a los oidos, no a la consola
+  const llegaron: string[] = []
+  musico.on('talkback:audio', () => llegaron.push('musico'))
+  consola.on('talkback:audio', () => llegaron.push('consola'))
+  compu.emit('talkback:audio', { n: 1, t: Date.now(), pcm: Buffer.alloc(640) })
+  await esperar(300)
+  assert.deepEqual(llegaron, ['musico'])
+  // si la compu se va, se cierra
+  const [cerrado] = await Promise.all([esperarEvento<{ activo: boolean }>(musico, 'talkback:estado', (e) => !e.activo), compu.close()])
+  assert.equal(cerrado.activo, false)
+  await env.cerrar()
+})
+
 test('agregar una canción mientras otra suena no la interrumpe', async (t) => {
   const a = audiosDePrueba()
   const env = await entorno(t)

@@ -632,6 +632,14 @@ export function registerSocketHandlers(
     emitirEstado()
   }
 
+  // talkback abierto (lo prende y lo apaga la compu; queda asi hasta que alguien lo cambie)
+  let talkbackActivo = false
+  // (con la compu cerrada no hay talkback: los celulares muestran su fader apagado)
+  function hayCompu(): boolean {
+    for (const s of io.sockets.sockets.values()) if ((s.data as SocketData).origen === 'compu') return true
+    return false
+  }
+
   io.on('connection', (socket: Socket) => {
     const origen = origenDe(socket, compuToken)
     ;(socket.data as SocketData).origen = origen
@@ -644,11 +652,16 @@ export function registerSocketHandlers(
       socket.emit('biblioteca:estado', biblioteca.estado())
       socket.emit('analisis:pedidos', analizador.pedidos())
     }
+    socket.emit('talkback:estado', { activo: talkbackActivo })
 
     socket.on('disconnect', () => {
       entrega.olvidar(socket.id)
       devices.desconectar(socket.id)
       emitirDispositivos()
+      if (origen === 'compu' && talkbackActivo && !hayCompu()) {
+        talkbackActivo = false
+        io.emit('talkback:estado', { activo: false })
+      }
       if (origen === 'video' && state.pantallaVideo) {
         state.pantallaVideo = { ...state.pantallaVideo, conectada: false }
         emitirEstadoPronto()
@@ -802,7 +815,7 @@ export function registerSocketHandlers(
       ack?.({ ok })
     })
 
-    // ---- talkback: la compu habla a los oidos de la banda (nunca a la consola ni a multimedia) ----
+    // ---- talkback: la compu habla a los oidos de la banda (nunca a la consola ni a multimedia), como un fader mas ----
 
     socket.on('talkback:audio', (payload: { n?: unknown; t?: unknown; pcm?: unknown }) => {
       if (!soloCompu(socket) || typeof payload?.t !== 'number' || !Buffer.isBuffer(payload.pcm) || payload.pcm.length > 4096) return
@@ -816,9 +829,11 @@ export function registerSocketHandlers(
       }
     })
 
-    socket.on('talkback:hablando', (payload: { hablando?: unknown }) => {
+    // prendido o apagado (no "mantener apretado"): queda asi hasta que alguien lo cambie
+    socket.on('talkback:activo', (payload: { activo?: unknown }) => {
       if (!soloCompu(socket)) return
-      io.emit('talkback:estado', { hablando: payload?.hablando === true })
+      talkbackActivo = payload?.activo === true
+      io.emit('talkback:estado', { activo: talkbackActivo })
     })
 
     // ajuste fino de un celular desde la compu (p.ej. el de la consola), sin tocar el celular

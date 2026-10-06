@@ -1,13 +1,23 @@
 /**
- * Talkback: el que maneja la compu habla y lo escuchan los oidos de la banda
- * (nunca la consola ni multimedia). La compu toma el microfono (o cualquier
- * entrada: la salida de Reaper con un cable virtual, la consola por una placa
- * de sonido), lo pasa a 16 kHz mono y lo manda en pedacitos de 20 ms por el
- * WiFi, cada uno con la hora (del servidor) en que se capto. Cada celular lo
+ * Talkback: la compu le habla a los oidos de la banda (nunca a la consola ni
+ * a multimedia), como un fader mas de la mezcla: se prende y queda abierto
+ * (entrada constante) hasta que alguien lo apaga. La compu toma el microfono
+ * (o una interface, la salida de Reaper con un cable virtual, la consola por
+ * una placa de sonido), lo pasa a 16 kHz mono y lo manda en pedacitos de 20 ms
+ * por el WiFi, cada uno con la hora (del servidor) en que se capto; el
+ * silencio no viaja (ver UMBRAL_SILENCIO). Cada celular lo
  * reproduce `objetivoMs` despues de esa hora: asi el WiFi puede demorar un
  * pedazo y otro no, y igual se escucha parejo. El objetivo se ajusta solo: si
  * algo llega tarde sube, si todo llega holgado baja (de 80 a 600 ms).
  */
+
+/**
+ * Por debajo de esto (-55 dBFS) el pedazo es silencio y no se manda, pasado
+ * SILENCIO_MS del ultimo sonido: con el talkback abierto todo el tiempo, no
+ * se cargan el WiFi ni la bateria de los celulares mandando nada.
+ */
+export const UMBRAL_SILENCIO = 0.0018
+const SILENCIO_MS = 500
 
 /** Frecuencia del audio del talkback (voz: alcanza y sobra). */
 export const SR_TALKBACK = 16000
@@ -63,68 +73,22 @@ registerProcessor('captura-talkback', class extends AudioWorkletProcessor {
 })
 `
 
-/**
- * Reproduccion: una linea de tiempo de 16 kHz donde cada pedazo se escribe en
- * su lugar (segun la hora a la que tiene que sonar) y se lee al ritmo del
- * AudioContext, interpolando. Un pedazo que llega tarde pierde lo que ya paso.
- */
-const CODIGO_REPRODUCTOR = `
-registerProcessor('reproductor-talkback', class extends AudioWorkletProcessor {
-  constructor() {
-    super()
-    this.largo = ${SR_TALKBACK} * 4
-    this.buf = new Float32Array(this.largo)
-    this.paso = ${SR_TALKBACK} / sampleRate
-    // hasta donde hay algo escrito (muestra de 16 kHz contada desde currentTime = 0)
-    this.escritoHasta = -1
-    this.sonando = false
-    this.port.onmessage = (e) => {
-      const { t, muestras } = e.data
-      const desde = Math.round(t * ${SR_TALKBACK})
-      const ahora = Math.floor(currentTime * ${SR_TALKBACK})
-      for (let i = 0; i < muestras.length; i++) {
-        const j = desde + i
-        if (j < ahora || j > ahora + this.largo - 1) continue
-        this.buf[j % this.largo] = muestras[i]
-      }
-      this.escritoHasta = Math.max(this.escritoHasta, desde + muestras.length)
-    }
-  }
-  process(_inputs, outputs) {
-    const salida = outputs[0]
-    if (!salida || !salida[0]) return true
-    const canal = salida[0]
-    let suena = false
-    for (let i = 0; i < canal.length; i++) {
-      const pos = (currentTime + i / sampleRate) * ${SR_TALKBACK}
-      const a = Math.floor(pos)
-      const f = pos - a
-      const ia = a % this.largo
-      const ib = (a + 1) % this.largo
-      const v = this.escritoHasta >= 0 && a + 1 < this.escritoHasta ? this.buf[ia] * (1 - f) + this.buf[ib] * f : 0
-      canal[i] = v
-      if (v !== 0) suena = true
-      // lo leido se borra siempre: si un pedazo no llega, silencio (no lo de hace 4 s)
-      if (f + this.paso >= 1) this.buf[ia] = 0
-    }
-    for (let c = 1; c < salida.length; c++) salida[c].set(canal)
-    if (suena !== this.sonando) { this.sonando = suena; this.port.postMessage({ sonando: suena }) }
-    return true
-  }
-})
-`
-
 const cargados = new WeakMap<BaseAudioContext, Set<string>>()
 
-/** Carga (una vez por AudioContext) el procesador de talkback pedido. */
-export async function cargarProcesador(ctx: BaseAudioContext, cual: 'captura' | 'reproductor'): Promise<void> {
+/**
+ * Carga (una vez por AudioContext) el procesador que toma la voz en la compu
+ * (la compu abre su pagina en localhost: ahi el navegador si habilita los
+ * AudioWorklet; los celulares, por http:// en la red local, no: ellos
+ * reproducen sin worklet, ver StreamingEngine.recibirTalkback).
+ */
+export async function cargarProcesador(ctx: BaseAudioContext, cual: 'captura'): Promise<void> {
   let hechos = cargados.get(ctx)
   if (!hechos) {
     hechos = new Set()
     cargados.set(ctx, hechos)
   }
   if (hechos.has(cual)) return
-  const codigo = cual === 'captura' ? CODIGO_CAPTURA : CODIGO_REPRODUCTOR
+  const codigo = CODIGO_CAPTURA
   const url = URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' }))
   try {
     await ctx.audioWorklet.addModule(url)
@@ -260,8 +224,10 @@ export class EmisorTalkback {
   private clave: string | null = null
   private nCanales = 0
   private n = 0
-  hablando = false
-  /** pico de lo que entra (0 a 1), aunque no se este hablando: para el vumetro */
+  /** abierto: lo que entra va a los celulares (si no, solo se mide para el vumetro) */
+  enviando = false
+  private ultimoSonido = -Infinity
+  /** pico de lo que entra (0 a 1), aunque no se este mandando: para el vumetro */
   onNivel: ((pico: number) => void) | null = null
 
   constructor(
@@ -290,7 +256,7 @@ export class EmisorTalkback {
   abrir(op: OpcionesEntrada): Promise<void> {
     const clave = JSON.stringify(op)
     if (this.abriendo && clave === this.clave) return this.abriendo
-    const hablaba = this.hablando
+    const enviaba = this.enviando
     this.cerrar()
     this.clave = clave
     this.abriendo = (async () => {
@@ -328,10 +294,15 @@ export class EmisorTalkback {
       } else fuente.connect(nodo)
       nodo.port.onmessage = (e: MessageEvent<{ t: number; muestras: Float32Array; pico: number }>) => {
         this.onNivel?.(e.data.pico)
-        if (!this.hablando) return
+        // cada pedazo lleva su numero aunque no viaje: el celular sabe que hubo un hueco
+        const n = this.n++
+        if (!this.enviando) return
+        const ahora = performance.now()
+        if (e.data.pico >= UMBRAL_SILENCIO) this.ultimoSonido = ahora
+        else if (ahora - this.ultimoSonido > SILENCIO_MS) return
         // hora del servidor en que se capto la primera muestra del pedazo
         const t = this.horaServidor() - (ctx.currentTime - e.data.t) * 1000 - (ctx.baseLatency || 0) * 1000
-        this.enviar({ n: this.n++, t, pcm: aInt16(e.data.muestras).buffer as ArrayBuffer })
+        this.enviar({ n, t, pcm: aInt16(e.data.muestras).buffer as ArrayBuffer })
       }
       if (ctx.state === 'suspended') await ctx.resume()
       this.ctx = ctx
@@ -340,7 +311,7 @@ export class EmisorTalkback {
       this.nodos = nodos
       this.nodo = nodo
       this.nCanales = canales
-      this.hablando = hablaba
+      this.enviando = enviaba
     })()
     this.abriendo.catch(() => {
       this.abriendo = null
@@ -358,7 +329,7 @@ export class EmisorTalkback {
   }
 
   cerrar(): void {
-    this.hablando = false
+    this.enviando = false
     this.nodo?.disconnect()
     for (const n of this.nodos) n.disconnect()
     this.fuente?.disconnect()

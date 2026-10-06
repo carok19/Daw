@@ -410,11 +410,16 @@ cambian a propósito.
       acompaña bajando y se va cuando entra la canción. Así se pasa de un
       momento de oración a la próxima canción sin silencio.
 
-14. **Talkback: hablarle a la banda en los oídos.** En la compu, mantené
-    apretado **Talkback** (arriba) o la tecla **T** y hablá: lo escuchan
-    todos en los auriculares (no la consola ni multimedia) y la música les
-    baja un poco mientras hablás. En el celular aparece **“Te habla la
-    compu”**, y en *Mi mezcla* cada uno tiene su volumen de talkback. **Va
+14. **Talkback: la compu en los oídos de la banda, como un fader más.** En
+    la compu, **Talkback** (arriba) o la tecla **T** lo **abren**: la
+    entrada queda abierta todo el tiempo y la banda la escucha en los
+    auriculares (no la consola ni multimedia) hasta que alguien lo cierra
+    (otro toque o T); si se cierra el programa con el talkback abierto, al
+    volver a abrirlo sigue abierto. La música no baja: en *Mi mezcla* de
+    cada celular el **Talkback** es un fader más (dice si está abierto o
+    cerrado en la compu) y cada uno le da su volumen o lo mutea. Sin
+    carteles en la pantalla. Abierto, el botón se pone rojo con una barrita
+    que muestra que entra voz; el silencio no viaja (no carga el WiFi). **Va
     por el WiFi del router, no por internet** (anda igual sin internet): la
     voz sale de la compu y llega directo a los celulares de la misma red. El
     micrófono se elige en **⚙ Ajustes → Talkback**: el de la compu, uno USB,
@@ -930,25 +935,33 @@ estado. **Nada de su audio viaja por la red mientras suena:**
 ### Talkback
 
 La compu toma la entrada elegida (`audio/talkback.ts`, `EmisorTalkback`:
-micrófono, placa de sonido o un cable virtual desde Reaper), la filtra y la
-baja a 16 kHz mono en un AudioWorklet y, mientras se mantiene apretado
-**Talkback** (o la **T**), manda pedacitos de 20 ms (640 bytes, 256 kbps)
+micrófono, interface (la entrada elegida), placa de sonido o un cable
+virtual desde Reaper), la filtra y la baja a 16 kHz mono en un AudioWorklet
+(la compu abre su página en `localhost`, donde el navegador lo permite) y,
+con **Talkback** abierto, manda pedacitos de 20 ms (640 bytes, 256 kbps)
 con la hora del servidor en que se captaron (`talkback:audio`, `volatile`:
-si un celular viene atrasado se descarta en vez de acumularse). El servidor
-los reenvía solo a los celulares que no son consola ni multimedia. Cada
-celular los escribe en una línea de tiempo dentro de otro AudioWorklet, en el
-lugar que les toca: `hora de captura + espera`, con el mismo reloj que la
-música. La **espera se ajusta sola** (`EsperaTalkback`): lo que tardan casi
+si un celular viene atrasado se descarta en vez de acumularse). Lo que está
+por debajo de −55 dBFS por más de 0,5 s no se manda (`UMBRAL_SILENCIO`). El
+servidor guarda si está abierto (`talkback:activo` → `talkback:estado`, se lo
+dice a cada celular que entra) y reenvía los pedazos solo a los celulares que
+no son consola ni multimedia. **Cada celular los programa como cualquier
+audio** (`recibirTalkback`: un `AudioBufferSource` por pedazo, pasado a su
+frecuencia, a la `hora de captura + espera` con el mismo reloj que la
+música; los seguidos se pegan uno detrás del otro). Sin AudioWorklet a
+propósito: los celulares entran por `http://` en la red local, y ahí el
+navegador no lo habilita (era la causa de que el talkback no sonara en
+celulares reales; la prueba e2e ahora conecta los celulares por la IP de la
+red, como uno de verdad). La **espera se ajusta sola** (`EsperaTalkback`): lo que tardan casi
 todos los pedazos de los últimos 3 s (el 98 %) más 40 ms; tres pedazos tarde
 en un segundo (el WiFi se puso lento) la suben enseguida, de a 100 ms como
 mucho (un tirón del celular no la deja en medio segundo); un tropezón suelto
 no; con todo a tiempo, cada 2 s baja la mitad de lo que sobra (de 80 a 600
-ms). Mientras suena,
-la música baja 6 dB (`atenuador`, vuelve despacio). Cada celular informa a
+ms). La música no baja (es un fader más). Cada celular informa a
 la compu cuánto tarda la red (el 95 % de los pedazos) y a cuántos ms se
 escucha; se ve en el panel del talkback. Medido en la prueba e2e (compu y
-celulares en la misma máquina, cargada): la red ~44 ms y, hablando un rato,
-se escucha a los **90–100 ms**; la consola no recibe nada (−90 dB).
+celulares en la misma máquina, cargada): la red ~49 ms y, abierto un rato,
+se escucha a los **~90 ms**; la consola no recibe nada (−90 dB) y la música
+del músico sigue igual con el talkback abierto.
 
 ### Roles y consola
 
@@ -1167,7 +1180,7 @@ habitual de los programas que se venden sin conexión.
    probar; mientras está prendido, arriba se ve **Compu** con un parlante, y
    tocándolo se apaga).
 1b. **La barra de arriba es para el vivo; lo que se elige una vez va en ⚙.**
-   Arriba: listas y canciones, celulares, talkback (mantener para hablar),
+   Arriba: listas y canciones, celulares, talkback (abrir y cerrar),
    consola, el candado de los celulares, ⚙ y ayuda. En **⚙ Ajustes**, en
    pestañas: **En vivo** (cómo salta, Terminar con fundido), **Sonidos**
    (voz del salto, pad del colchón), **Esta compu** (sonido en la compu y
