@@ -419,9 +419,9 @@ cambian a propósito.
     cada celular el **Talkback** es un fader más (dice si está abierto o
     cerrado en la compu) y cada uno le da su volumen o lo mutea. Sin
     carteles en la pantalla. Abierto, el botón se pone rojo con una barrita
-    que muestra que entra voz; el silencio no viaja (no carga el WiFi). **Va
-    por el WiFi del router, no por internet** (anda igual sin internet): la
-    voz sale de la compu y llega directo a los celulares de la misma red. El
+    que muestra que entra voz. **Va por el WiFi del router, no por
+    internet** (anda igual sin internet): la voz sale de la compu y llega
+    directo a los celulares de la misma red. El
     micrófono se elige en **⚙ Ajustes → Talkback**: el de la compu, uno USB,
     una **interface de audio**, la consola por una placa de sonido, o un canal
     de **Reaper** con un cable virtual (VB-Cable). La lista se actualiza sola
@@ -430,13 +430,18 @@ cambian a propósito.
     una manda esa entrada directa. **Mejorar la voz** (prendido por defecto)
     saca ruido de fondo y empareja el volumen: con el micrófono de la compu
     conviene; con una interface o la consola, mejor apagado y la ganancia en
-    la interface (el vúmetro muestra cuánto entra). **¿Y la demora del WiFi?** Cada celular espera lo
-    justo para que la voz no se corte y lo mide: en ese mismo panel se ve,
-    celular por celular, “llega en 35 ms por el WiFi · se escucha a los 120
-    ms”. Con un router normal anda entre 0,1 y 0,25 s (como un handy): para
-    indicaciones (“vamos al coro”, “una vez más”) sobra; para cantar en vivo
-    no. Hablar desde un celular no se puede todavía: los navegadores no dejan
-    usar el micrófono en una página sin https.
+    la interface (el vúmetro muestra cuánto entra). **¿Y la demora?** Cada
+    celular espera lo justo para que la voz no se corte (lo que tarda el WiFi
+    más lo que tarda ese celular en sacar el audio) y lo muestra en ese mismo
+    panel, celular por celular: “se escucha a los 92 ms: WiFi 36 ms + salida
+    del celular 41 ms”. Va en pedacitos de 10 ms y viaja todo el tiempo (así
+    el WiFi del celular no se duerme). Para que tarde lo menos posible:
+    **auriculares con cable** (los Bluetooth suman 150 a 250 ms, y el panel
+    avisa), la **app de Android** (pide el WiFi de baja demora mientras está
+    abierta) y el **router cerca**. Con un router normal y auriculares con
+    cable queda entre 0,1 y 0,2 s según el celular: para indicaciones
+    (“vamos al coro”, “una vez más”) no molesta. Hablar desde un celular no se puede todavía: los
+    navegadores no dejan usar el micrófono en una página sin https.
 15. **Sincronización a prueba:** en el panel de la **Consola**, **Probar el
     sync** hace sonar un click en todos los dispositivos a la vez durante 8 s
     (con la música parada): con dos celulares juntos, o la consola y un
@@ -938,10 +943,15 @@ La compu toma la entrada elegida (`audio/talkback.ts`, `EmisorTalkback`:
 micrófono, interface (la entrada elegida), placa de sonido o un cable
 virtual desde Reaper), la filtra y la baja a 16 kHz mono en un AudioWorklet
 (la compu abre su página en `localhost`, donde el navegador lo permite) y,
-con **Talkback** abierto, manda pedacitos de 20 ms (640 bytes, 256 kbps)
-con la hora del servidor en que se captaron (`talkback:audio`, `volatile`:
-si un celular viene atrasado se descarta en vez de acumularse). Lo que está
-por debajo de −55 dBFS por más de 0,5 s no se manda (`UMBRAL_SILENCIO`). El
+con **Talkback** abierto, manda pedacitos de 10 ms (320 bytes, 256 kbps:
+la mitad de espera para juntar cada uno que con 20 ms) con la hora del
+servidor en que se captaron (`talkback:audio`, `volatile`: si un celular
+viene atrasado se descarta en vez de acumularse). Manda **siempre, también
+el silencio**: con ahorro de energía, el WiFi del celular se duerme entre
+paquete y paquete, y al despertar los primeros llegan tarde (la espera
+tendría que ser más larga). La **app de Android** además pide el WiFi de
+baja demora mientras está abierta (`WifiLock` `WIFI_MODE_FULL_LOW_LATENCY`,
+o de alto rendimiento antes de Android 10; permiso `WAKE_LOCK`). El
 servidor guarda si está abierto (`talkback:activo` → `talkback:estado`, se lo
 dice a cada celular que entra) y reenvía los pedazos solo a los celulares que
 no son consola ni multimedia. **Cada celular los programa como cualquier
@@ -951,17 +961,26 @@ música; los seguidos se pegan uno detrás del otro). Sin AudioWorklet a
 propósito: los celulares entran por `http://` en la red local, y ahí el
 navegador no lo habilita (era la causa de que el talkback no sonara en
 celulares reales; la prueba e2e ahora conecta los celulares por la IP de la
-red, como uno de verdad). La **espera se ajusta sola** (`EsperaTalkback`): lo que tardan casi
-todos los pedazos de los últimos 3 s (el 98 %) más 40 ms; tres pedazos tarde
-en un segundo (el WiFi se puso lento) la suben enseguida, de a 100 ms como
+red, como uno de verdad). La **espera se ajusta sola** (`EsperaTalkback`):
+cada pedazo necesita lo que tardó por el WiFi **más lo que tarda ese celular
+en sacar el audio** (su salida, la misma que se descuenta para la música:
+así la espera es la demora real hasta el oído). Va a lo que necesitan casi
+todos los pedazos de los últimos 2 s (el 98 %) más 15 ms; tres pedazos tarde
+en un segundo (el WiFi se puso lento) la suben enseguida, de a 60 ms como
 mucho (un tirón del celular no la deja en medio segundo); un tropezón suelto
-no; con todo a tiempo, cada 2 s baja la mitad de lo que sobra (de 80 a 600
-ms). La música no baja (es un fader más). Cada celular informa a
-la compu cuánto tarda la red (el 95 % de los pedazos) y a cuántos ms se
-escucha; se ve en el panel del talkback. Medido en la prueba e2e (compu y
-celulares en la misma máquina, cargada): la red ~49 ms y, abierto un rato,
-se escucha a los **~90 ms**; la consola no recibe nada (−90 dB) y la música
-del músico sigue igual con el talkback abierto.
+no (se pierden esos 10 ms); con todo a tiempo, cada segundo se acerca la
+mitad de lo que sobra (de 30 a 600 ms). La música no baja (es un fader
+más). Cada celular informa a la compu a cuántos ms se escucha, cuánto tarda
+la red (el 95 % de los pedazos) y su salida; se ve en ⚙ Ajustes →
+Talkback (*se escucha a los 92 ms: WiFi 36 ms + salida del celular 41 ms*;
+si la salida pasa de 120 ms avisa que pueden ser auriculares Bluetooth).
+Medido en la prueba e2e (compu y celulares en la misma máquina, cargada):
+la red ~36 ms (antes ~49) y, abierto un rato, se escucha a los **~92 ms
+hasta el oído, salida del celular incluida** (antes ~90 ms sin contarla, y
+algunos pedazos llegaban tarde); ningún pedazo tarde. La consola no recibe
+nada (−90 dB) y la música del músico sigue igual con el talkback abierto.
+En un WiFi real se suma lo que tarde el router (con la app y el router
+cerca, unos 10 a 40 ms más).
 
 ### Roles y consola
 

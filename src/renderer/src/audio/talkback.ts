@@ -3,28 +3,21 @@
  * a multimedia), como un fader mas de la mezcla: se prende y queda abierto
  * (entrada constante) hasta que alguien lo apaga. La compu toma el microfono
  * (o una interface, la salida de Reaper con un cable virtual, la consola por
- * una placa de sonido), lo pasa a 16 kHz mono y lo manda en pedacitos de 20 ms
- * por el WiFi, cada uno con la hora (del servidor) en que se capto; el
- * silencio no viaja (ver UMBRAL_SILENCIO). Cada celular lo
+ * una placa de sonido), lo pasa a 16 kHz mono y lo manda en pedacitos de 10 ms
+ * por el WiFi, cada uno con la hora (del servidor) en que se capto. Viaja
+ * siempre, tambien el silencio: asi el WiFi del celular no se "duerme" (al
+ * despertar, los primeros pedazos llegan tarde y la espera sube). Cada celular lo
  * reproduce `objetivoMs` despues de esa hora: asi el WiFi puede demorar un
  * pedazo y otro no, y igual se escucha parejo. El objetivo se ajusta solo: si
- * algo llega tarde sube, si todo llega holgado baja (de 80 a 600 ms).
+ * algo llega tarde sube, si todo llega holgado baja (de 30 a 600 ms).
  */
-
-/**
- * Por debajo de esto (-55 dBFS) el pedazo es silencio y no se manda, pasado
- * SILENCIO_MS del ultimo sonido: con el talkback abierto todo el tiempo, no
- * se cargan el WiFi ni la bateria de los celulares mandando nada.
- */
-export const UMBRAL_SILENCIO = 0.0018
-const SILENCIO_MS = 500
 
 /** Frecuencia del audio del talkback (voz: alcanza y sobra). */
 export const SR_TALKBACK = 16000
-/** Muestras por pedazo (20 ms). */
-export const MUESTRAS_PEDAZO = 320
+/** Muestras por pedazo (10 ms: lo que se espera a juntar antes de mandar). */
+export const MUESTRAS_PEDAZO = 160
 
-/** Captura: junta lo que entra, lo filtra y lo baja a 16 kHz; manda pedazos de 20 ms con su hora (del AudioContext). */
+/** Captura: junta lo que entra, lo filtra y lo baja a 16 kHz; manda pedazos de 10 ms con su hora (del AudioContext). */
 const CODIGO_CAPTURA = `
 registerProcessor('captura-talkback', class extends AudioWorkletProcessor {
   constructor() {
@@ -117,58 +110,72 @@ export interface PedazoTalkback {
   n: number
   /** hora del servidor en que se capto la primera muestra */
   t: number
-  /** 320 muestras Int16 (16 kHz mono) */
+  /** 160 muestras Int16 (16 kHz mono: 10 ms) */
   pcm: ArrayBuffer
 }
 
 import type { MedicionTalkback } from '@shared/types'
 
 /**
- * Ajuste solo de la espera. Lo que manda es lo que tardan casi todos los
- * pedazos de los ultimos 3 s (el 98 %) mas un margen: si llegan tarde tres en
- * un segundo (el WiFi se puso lento) se espera mas enseguida; un tropezon
- * suelto (un pico del router, el celular ocupado un momento) no la sube (se
- * pierde ese pedacito), y un tiron la sube de a 100 ms como mucho. Con todo a
- * tiempo, cada 2 s se acerca la mitad de lo que sobra.
+ * La espera del celular, que se ajusta sola para que la voz llegue lo antes
+ * posible sin cortarse. Cada pedazo tiene que sonar `objetivoMs` despues de
+ * captado; para eso hace falta lo que tardo en llegar por el WiFi mas lo que
+ * tarda el celular en sacar el audio (su salida). La espera va a lo que
+ * necesitan casi todos los pedazos de los ultimos 2 s (el 98 %) mas 15 ms: si
+ * llegan tarde tres en un segundo se sube enseguida (de a 60 ms como mucho);
+ * un tropezon suelto no (se pierden esos 10 ms); con todo a tiempo, cada
+ * segundo se acerca la mitad de lo que sobra.
  */
 export class EsperaTalkback {
-  objetivoMs = 150
-  /** demoras de los ultimos 3 s (para el objetivo) */
+  objetivoMs = 120
+  /** lo que necesito cada pedazo (red + salida) en los ultimos 2 s */
   private recientes: { t: number; ms: number }[] = []
-  /** demoras y tardes de los ultimos 500 pedazos (para el diagnostico) */
+  /** demoras de red y si llego tarde, de los ultimos 500 pedazos (para el diagnostico) */
   private demoras: number[] = []
   private tardes: boolean[] = []
+  /** cuando llegaron tarde los ultimos (para ver si fueron 3 en un segundo) */
+  private tardesRecientes: number[] = []
   private ultimoTarde = 0
   private ultimaBaja = 0
+  private salidaMs = 0
 
-  static readonly MIN_MS = 80
+  static readonly MIN_MS = 30
   static readonly MAX_MS = 600
-  /** margen sobre lo que tardan casi todos (lo que dura el pedazo y un poco mas) */
-  static readonly MARGEN_MS = 40
+  /** margen sobre lo que necesitan casi todos */
+  static readonly MARGEN_MS = 15
+  /** antes de esto ya no se puede programar (el motor necesita unos ms por delante) */
+  static readonly HOLGURA_MS = 3
 
-  /** Un pedazo llego: `demoraMs` = cuanto tardo desde que se capto (con el reloj del servidor). */
-  registrar(demoraMs: number, ahora = Date.now()): void {
-    this.demoras.push(demoraMs)
+  /**
+   * Un pedazo llego: `redMs` = cuanto tardo desde que se capto (reloj del
+   * servidor); `salidaMs` = cuanto tarda este celular en sacar el audio por el
+   * parlante o los auriculares.
+   */
+  registrar(redMs: number, salidaMs = 0, ahora = Date.now()): void {
+    this.salidaMs = salidaMs
+    const necesita = redMs + salidaMs
+    this.demoras.push(redMs)
     if (this.demoras.length > 500) this.demoras.shift()
-    this.recientes.push({ t: ahora, ms: demoraMs })
-    while (this.recientes.length && ahora - this.recientes[0].t > 3000) this.recientes.shift()
-    // tarde: no llega a sonar entero
-    const tarde = demoraMs > this.objetivoMs - 25
+    this.recientes.push({ t: ahora, ms: necesita })
+    while (this.recientes.length && ahora - this.recientes[0].t > 2000) this.recientes.shift()
+    const tarde = necesita > this.objetivoMs - EsperaTalkback.HOLGURA_MS
     this.tardes.push(tarde)
     if (this.tardes.length > 500) this.tardes.shift()
     if (tarde) {
       this.ultimoTarde = ahora
-      // 3 de los ultimos 50 (1 s): el WiFi viene lento. Un tropezon suelto (un corte de 300 ms, el celular
-      // ocupado) no la sube: esperar 300 ms de mas siempre por algo que pasa una vez no conviene
-      if (this.tardes.slice(-50).filter(Boolean).length >= 3) {
-        // de a lo sumo 100 ms por vez: si fue un tiron (el celular trabado medio segundo), no queda 500 ms atrasado
-        const necesita = this.percentil(this.recientes.map((r) => r.ms), 0.98) + EsperaTalkback.MARGEN_MS
-        this.objetivoMs = this.acotar(Math.min(this.objetivoMs + 100, Math.max(this.objetivoMs + 20, necesita)))
+      this.tardesRecientes.push(ahora)
+      while (this.tardesRecientes.length && ahora - this.tardesRecientes[0] > 1000) this.tardesRecientes.shift()
+      // 3 en un segundo: el WiFi viene lento. Uno suelto no la sube (esperar de mas siempre por algo que pasa una vez no conviene)
+      if (this.tardesRecientes.length >= 3) {
+        const meta = this.percentil(this.recientes.map((r) => r.ms), 0.98) + EsperaTalkback.MARGEN_MS
+        // de a lo sumo 60 ms por vez: si fue un tiron (el celular trabado un momento), no queda muy atrasado
+        this.objetivoMs = this.acotar(Math.min(this.objetivoMs + 60, Math.max(this.objetivoMs + 10, meta)))
+        this.tardesRecientes = []
       }
       return
     }
-    // 2 s con todo a tiempo: se acerca a lo que hace falta (la mitad de lo que sobra cada vez)
-    if (ahora - this.ultimoTarde > 2000 && ahora - this.ultimaBaja > 2000 && this.recientes.length >= 50) {
+    // 1,5 s con todo a tiempo: cada segundo se acerca a lo justo (la mitad de lo que sobra)
+    if (ahora - this.ultimoTarde > 1500 && ahora - this.ultimaBaja > 1000 && this.recientes.length >= 50) {
       const meta = this.acotar(this.percentil(this.recientes.map((r) => r.ms), 0.98) + EsperaTalkback.MARGEN_MS)
       if (meta < this.objetivoMs) {
         this.objetivoMs = Math.max(meta, Math.round((this.objetivoMs + meta) / 2))
@@ -191,6 +198,7 @@ export class EsperaTalkback {
     return {
       objetivoMs: Math.round(this.objetivoMs),
       redMs: this.demoras.length ? Math.round(this.percentil(this.demoras, 0.95)) : null,
+      salidaMs: Math.round(this.salidaMs),
       tardes: this.tardes.filter(Boolean).length
     }
   }
@@ -198,8 +206,8 @@ export class EsperaTalkback {
 
 /**
  * Compu: toma la entrada elegida (microfono, o un cable virtual desde Reaper)
- * y, mientras se habla, manda los pedazos con su hora. La entrada queda
- * abierta despues del primer uso (asi apretar y hablar es instantaneo).
+ * y, mientras el talkback esta abierto, manda los pedazos con su hora. La
+ * entrada queda abierta despues del primer uso (asi abrirlo es instantaneo).
  */
 /** De donde y como se toma la voz del talkback. */
 export interface OpcionesEntrada {
@@ -226,7 +234,6 @@ export class EmisorTalkback {
   private n = 0
   /** abierto: lo que entra va a los celulares (si no, solo se mide para el vumetro) */
   enviando = false
-  private ultimoSonido = -Infinity
   /** pico de lo que entra (0 a 1), aunque no se este mandando: para el vumetro */
   onNivel: ((pico: number) => void) | null = null
 
@@ -297,9 +304,6 @@ export class EmisorTalkback {
         // cada pedazo lleva su numero aunque no viaje: el celular sabe que hubo un hueco
         const n = this.n++
         if (!this.enviando) return
-        const ahora = performance.now()
-        if (e.data.pico >= UMBRAL_SILENCIO) this.ultimoSonido = ahora
-        else if (ahora - this.ultimoSonido > SILENCIO_MS) return
         // hora del servidor en que se capto la primera muestra del pedazo
         const t = this.horaServidor() - (ctx.currentTime - e.data.t) * 1000 - (ctx.baseLatency || 0) * 1000
         this.enviar({ n, t, pcm: aInt16(e.data.muestras).buffer as ArrayBuffer })

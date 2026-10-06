@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- WiFi de baja demora mientras la app esta abierta (talkback y ordenes mas rapidas y parejas) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- para recibir los anuncios mDNS de la compu (airtracks.local / _multitrack._tcp) -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- para escanear el QR de la compu (opcional: sin camara se busca solo o se escribe la direccion) -->

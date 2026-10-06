@@ -183,7 +183,7 @@ export function AjustesTalkback({ controller }: { controller: AppController }) {
                       ? 'Consola: no lo recibe'
                       : 'Multimedia: no lo recibe'
                     : tb
-                      ? `llega en ${tb.redMs} ms por el WiFi · se escucha a los ${tb.objetivoMs} ms${tb.tardes ? ` · ${tb.tardes} pedazos tarde` : ''}`
+                      ? `se escucha a los ${tb.objetivoMs} ms: WiFi ${tb.redMs} ms${tb.salidaMs !== undefined ? ` + salida del celular ${tb.salidaMs} ms${tb.salidaMs >= 120 ? ' (¿auriculares Bluetooth? con cable es mucho menos)' : ''}` : ''}${tb.tardes ? ` · ${tb.tardes} pedazos tarde` : ''}`
                       : 'todavía no recibió voz'}
                 </span>
               </div>
@@ -192,8 +192,9 @@ export function AjustesTalkback({ controller }: { controller: AppController }) {
         })}
       </ul>
       <p className="ayuda">
-        Cada celular espera lo justo para que la voz no se corte: si el WiFi se pone lento espera un poco más, y cuando anda bien se acerca solo
-        (entre 80 y 600 ms).
+        Cada celular espera lo justo para que la voz no se corte: lo que tarda el WiFi más lo que tarda el celular en sacar el audio. Si el WiFi
+        se pone lento espera un poco más, y cuando anda bien se acerca solo. Para que tarde lo menos posible: auriculares con cable (los
+        Bluetooth suman 150 a 250 ms), la app de Android (pide al celular el WiFi de baja demora) y el router cerca.
       </p>
     </>
   )

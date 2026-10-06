@@ -5,6 +5,8 @@ import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -40,6 +42,8 @@ public final class WebActivity extends Activity {
     private String idCompu = "";
     private boolean conectado = true;
     private Buscador reBusqueda;
+    /** el WiFi sin ahorro de energia mientras la app esta abierta (ver pedirWifiRapido) */
+    private WifiManager.WifiLock wifiRapido;
 
     private final Runnable buscarDeNuevo = this::iniciarReBusqueda;
 
@@ -55,6 +59,29 @@ public final class WebActivity extends Activity {
         web = crearWebView();
         setContentView(web);
         web.loadUrl(urlInicial);
+        pedirWifiRapido();
+    }
+
+    /**
+     * Le pide al celular el WiFi de baja demora (sin "ahorro de energia")
+     * mientras la app esta abierta: con ahorro, el WiFi se duerme entre
+     * paquete y paquete y el talkback llega con saltos (y hay que esperarlo
+     * mas). Android 10 en adelante tiene el modo de baja latencia; antes, el
+     * de alto rendimiento.
+     */
+    @SuppressWarnings("deprecation")
+    private void pedirWifiRapido() {
+        try {
+            WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+            if (wifi == null) return;
+            int modo = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+            wifiRapido = wifi.createWifiLock(modo, "airtracks:baja-demora");
+            wifiRapido.setReferenceCounted(false);
+            wifiRapido.acquire();
+        } catch (RuntimeException e) {
+            // sin el permiso o sin WiFi: sigue andando igual, con el WiFi normal
+            wifiRapido = null;
+        }
     }
 
     @Override
@@ -241,6 +268,8 @@ public final class WebActivity extends Activity {
     @Override
     protected void onDestroy() {
         principal.removeCallbacks(buscarDeNuevo);
+        if (wifiRapido != null && wifiRapido.isHeld()) wifiRapido.release();
+        wifiRapido = null;
         detenerReBusqueda();
         if (web != null) {
             web.removeJavascriptInterface("AlabanzaApp");

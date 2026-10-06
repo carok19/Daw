@@ -44,7 +44,13 @@ function limpiarTalkback(t: unknown): MedicionTalkback | null {
   const x = t as Record<string, unknown>
   const objetivo = num(x.objetivoMs, 0, 5000)
   if (objetivo === null) return null
-  return { objetivoMs: Math.round(objetivo), redMs: x.redMs === null ? null : Math.round(num(x.redMs, 0, 60000) ?? 0), tardes: Math.round(num(x.tardes, 0, 1000) ?? 0) }
+  const salida = num(x.salidaMs, 0, 5000)
+  return {
+    objetivoMs: Math.round(objetivo),
+    redMs: x.redMs === null ? null : Math.round(num(x.redMs, 0, 60000) ?? 0),
+    ...(salida !== null ? { salidaMs: Math.round(salida) } : {}),
+    tardes: Math.round(num(x.tardes, 0, 1000) ?? 0)
+  }
 }
 
 export function esRol(r: unknown): r is RolDispositivo {

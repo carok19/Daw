@@ -2927,11 +2927,11 @@ test('talkback: abierto, la banda escucha la compu todo el tiempo como un fader 
       `demoras: ${JSON.stringify(await musico.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { esperaTalkback: { demoras: number[] } } } } }).__mt.engineRef.current.esperaTalkback.demoras.map(Math.round)))}`
     )
     assert.ok(tb && tb.redMs !== null && tb.redMs < 150, `llega rápido por la red de prueba (${JSON.stringify(tb)})`)
-    assert.ok(tb!.objetivoMs >= 80 && tb!.objetivoMs <= 200, `se escucha a los ${tb!.objetivoMs} ms`)
+    assert.ok(tb!.objetivoMs >= 30 && tb!.objetivoMs <= 200, `se escucha a los ${tb!.objetivoMs} ms`)
     // el microfono y las demoras: en ⚙ Ajustes → Talkback (un solo engranaje arriba)
     await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
     await compu.getByRole('tab', { name: 'Talkback' }).click()
-    await compu.getByText(/llega en \d+ ms por el WiFi · se escucha a los \d+ ms/).waitFor()
+    await compu.getByText(/se escucha a los \d+ ms: WiFi \d+ ms \+ salida del celular \d+ ms/).waitFor()
     await compu.getByText('Consola: no lo recibe').waitFor()
     await compu.keyboard.press('Escape')
   })

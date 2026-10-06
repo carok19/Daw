@@ -352,7 +352,7 @@ export class StreamingEngine implements PlaybackEngine {
   }
 
   /**
-   * Un pedazo de talkback (20 ms): suena `objetivo` ms despues de cuando se
+   * Un pedazo de talkback (10 ms): suena `objetivo` ms despues de cuando se
    * capto, con la misma hora del servidor que la musica. Se programa como
    * cualquier audio (un AudioBufferSource a su hora), sin AudioWorklet: el
    * navegador no lo habilita en http:// por la red local, que es como entran
@@ -360,7 +360,8 @@ export class StreamingEngine implements PlaybackEngine {
    */
   recibirTalkback(p: PedazoTalkback, clockOffsetMs: number): void {
     if (this.salidaSonido || !(p?.pcm instanceof ArrayBuffer) || typeof p.t !== 'number') return
-    this.esperaTalkback.registrar(Date.now() + clockOffsetMs - p.t)
+    // lo que hace falta esperar: lo que tardo por el WiFi y lo que tarda este celular en sacar el audio
+    this.esperaTalkback.registrar(Date.now() + clockOffsetMs - p.t, (this.ctx.currentTime - this.ctxEscuchadoAhora()) * 1000)
     const pcm = deInt16(new Int16Array(p.pcm))
     if (pcm.length === 0) return
     const sr = this.ctx.sampleRate

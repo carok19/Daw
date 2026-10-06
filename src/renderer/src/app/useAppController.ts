@@ -552,7 +552,7 @@ export function useAppController() {
       socket.on<{ ms: number }>('ajuste:fino', (p) => {
         if (typeof p?.ms === 'number') ajusteFinoRef.current?.(p.ms)
       }),
-      // talkback: la compu le habla a la banda (20 ms por mensaje)
+      // talkback: la compu le habla a la banda (10 ms por mensaje)
       socket.on<PedazoTalkback>('talkback:audio', (p) => engineRef.current?.recibirTalkback(p, socket.clockOffsetMs)),
       socket.on<{ activo: boolean }>('talkback:estado', (p) => setTalkbackActivoState(p?.activo === true)),
       // "Terminar con fundido": empieza a apagarse (o se cancelo a mitad y vuelve)

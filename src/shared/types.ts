@@ -779,6 +779,8 @@ export interface MedicionTalkback {
   objetivoMs: number
   /** cuanto tarda en llegar por el WiFi (el 95 % de los pedazos llega en menos); null = todavia no llego nada */
   redMs: number | null
+  /** cuanto tarda el celular en sacar el audio (parlante o auriculares; con Bluetooth, mucho mas) */
+  salidaMs?: number
   /** pedazos que llegaron tarde (de los ultimos 500) */
   tardes: number
 }
