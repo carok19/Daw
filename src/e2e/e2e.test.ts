@@ -26,6 +26,7 @@ import { crearRar5 } from '../server/__fixtures__/rar'
 import { verificarLicencia } from '../server/licencia'
 import { deBase64Url } from '../shared/licencia'
 import { SEGMENTO_SEC } from '../shared/mezcla'
+import type { DispositivoInfo } from '../shared/types'
 
 const RENDERER = path.resolve(__dirname, '../renderer')
 const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -162,6 +163,24 @@ async function seccionesEnCelular(cel: Page): Promise<{ cantidad: number; deshab
   return { cantidad, deshabilitadas }
 }
 
+/**
+ * Un celular de la banda que ya eligio su rol (director, salvo que se pida
+ * otro; null = como recien instalado: pregunta "¿Que haces en la banda?").
+ */
+async function contextoCelular(browser: Browser, dispositivo: (typeof devices)[string], rol: string | null = 'director'): Promise<BrowserContext> {
+  const ctx = await browser.newContext({ ...dispositivo })
+  if (rol) {
+    await ctx.addInitScript((r: string) => {
+      try {
+        if (!localStorage.getItem('multitrack:rol')) localStorage.setItem('multitrack:rol', JSON.stringify(r))
+      } catch {
+        // sin almacenamiento
+      }
+    }, rol)
+  }
+  return ctx
+}
+
 /** Deslizar el dedo (eventos tactiles reales de Chromium: el navegador decide si scrollea). */
 async function deslizar(cel: Page, desde: { x: number; y: number }, dx: number, dy: number): Promise<void> {
   const cdp = await cel.context().newCDPSession(cel)
@@ -248,7 +267,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   // ---- celulares ----
   const celulares: Page[] = []
   for (const dispositivo of [devices['Pixel 7'], devices['iPhone 13']]) {
-    const ctx = await browser.newContext({ ...dispositivo })
+    const ctx = await contextoCelular(browser, dispositivo)
     ctx.setDefaultTimeout(15000)
     await ctx.addInitScript(espiaAudio)
     const p = await ctx.newPage()
@@ -794,7 +813,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
 
     type Resumen = { cortes: number; colchonSeg: number; mbpsNecesarios: number; mbpsCapacidad: number | null }
     async function probar(modo: 'mezcla' | 'pistas'): Promise<{ r: Resumen; sono: boolean; ctx: BrowserContext; p: Page }> {
-      const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+      const ctx = await contextoCelular(browser, devices['Pixel 7'])
       ctx.setDefaultTimeout(15000)
       await ctx.addInitScript(espiaAudio)
       const p = await ctx.newPage()
@@ -876,7 +895,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     for (const cel of celulares) assert.equal(await cel.locator('.pantalla-codigo').count(), 0)
 
     // un celular nuevo: le pide el codigo; uno mal avisa; el bueno entra y queda guardado
-    const ctxNuevo = await browser.newContext({ ...devices['Pixel 7'] })
+    const ctxNuevo = await contextoCelular(browser, devices['Pixel 7'])
     ctxNuevo.setDefaultTimeout(15000)
     const nuevo = await ctxNuevo.newPage()
     await nuevo.goto(base)
@@ -909,7 +928,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await cel.getByRole('button', { name: 'Cerrar' }).click()
 
     // el que llega tarde abre ese enlace: entra sin escribir nada y el codigo no queda a la vista
-    const ctxTarde = await browser.newContext({ ...devices['iPhone 13'] })
+    const ctxTarde = await contextoCelular(browser, devices['iPhone 13'])
     ctxTarde.setDefaultTimeout(15000)
     const tarde = await ctxTarde.newPage()
     await tarde.goto(`${base}/${new URL(enlace).hash}`)
@@ -931,7 +950,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
   })
 
   await t.test('dentro de la app Android (puente simulado): arranca solo y guarda todo en la app', async () => {
-    const ctxApp = await browser.newContext({ ...devices['Pixel 7'] })
+    const ctxApp = await contextoCelular(browser, devices['Pixel 7'])
     ctxApp.setDefaultTimeout(15000)
     await ctxApp.addInitScript(espiaAudio)
     // lo que expone WebActivity.java como window.AlabanzaApp (las prefs en un objeto que sobrevive a recargas)
@@ -1044,7 +1063,7 @@ test('licencias: el generador (sin internet) hace licencias que la app acepta; s
 
   const celulares: Page[] = []
   for (let i = 0; i < 3; i++) {
-    const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+    const ctx = await contextoCelular(browser, devices['Pixel 7'])
     ctx.setDefaultTimeout(15000)
     const p = await ctx.newPage()
     await p.goto(base)
@@ -1205,7 +1224,7 @@ test('listas por día: al abrir aparecen las listas; se arma la del sábado en u
   })
 
   await t.test('el celular ve el nombre de la lista y su orden', async () => {
-    const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+    const ctx = await contextoCelular(browser, devices['Pixel 7'])
     ctx.setDefaultTimeout(15000)
     const cel = await ctx.newPage()
     await cel.goto(base)
@@ -1298,7 +1317,7 @@ test('cambiar de canción y pausa → play: la compu (con sonido) y los celulare
 
   const dispositivos: { nombre: string; p: Page }[] = [{ nombre: 'compu', p: compu }]
   for (const [i, d] of [devices['Pixel 7'], devices['iPhone 13']].entries()) {
-    const ctx = await browser.newContext({ ...d })
+    const ctx = await contextoCelular(browser, d)
     ctx.setDefaultTimeout(15000)
     const p = await ctx.newPage()
     await p.goto(`${base}/?debug`)
@@ -1441,7 +1460,7 @@ test('tono: − / + en la compu prepara la canción en el tono nuevo; los celula
   await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
   await compu.waitForFunction(() => document.querySelector('.cancion-titulo')?.textContent === 'Digno - A')
 
-  const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
+  const ctxCel = await contextoCelular(browser, devices['Pixel 7'])
   ctxCel.setDefaultTimeout(15000)
   await ctxCel.addInitScript(espiaAudio)
   const cel = await ctxCel.newPage()
@@ -1656,7 +1675,7 @@ test('cuenta: al dar play suena "1 2 3 4, 1 2 3 4" a la vez en la compu y el cel
   await compu.getByLabel('Cuenta antes de la canción').selectOption('2')
   await compu.waitForFunction(() => (document.querySelector('.chip-cuenta') as HTMLSelectElement | null)?.value === '2')
 
-  const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
+  const ctxCel = await contextoCelular(browser, devices['Pixel 7'])
   ctxCel.setDefaultTimeout(15000)
   const cel = await ctxCel.newPage()
   cel.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
@@ -1793,7 +1812,7 @@ test('Android con el navegador: "Abrir en la app" lleva a la app con la misma di
     await server.close()
     fs.rmSync(tmp, { recursive: true, force: true })
   })
-  const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+  const ctx = await contextoCelular(browser, devices['Pixel 7'])
   ctx.setDefaultTimeout(15000)
   const cel = await ctx.newPage()
   await cel.goto(`http://localhost:${port}/?c=1234`)
@@ -1808,7 +1827,7 @@ test('Android con el navegador: "Abrir en la app" lleva a la app con la misma di
   await cel.getByText('Parece que no tenés la app AirTracks').waitFor()
   assert.equal(await cel.getByRole('link', { name: /Bajar la app para Android/ }).first().getAttribute('href'), '/app/airtracks.apk')
   // en un iPhone no aparece
-  const ctxIos = await browser.newContext({ ...devices['iPhone 13'] })
+  const ctxIos = await contextoCelular(browser, devices['iPhone 13'])
   const ios = await ctxIos.newPage()
   await ios.goto(`http://localhost:${port}/`)
   await ios.getByRole('button', { name: /Tocá para empezar/ }).waitFor()
@@ -1851,7 +1870,7 @@ test('mute desde la compu y mute/solo en el celular: esa pista deja de escuchars
   server.state.actualizarMixer(server.state.getActiveTab()!.tabId, idBanda, { pan: 100 })
   server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
 
-  const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+  const ctx = await contextoCelular(browser, devices['Pixel 7'])
   ctx.setDefaultTimeout(15000)
   const cel = await ctx.newPage()
   await cel.goto(`${base}/?debug`)
@@ -1983,7 +2002,7 @@ test('voz del salto con audio real: en el último compás se calla la guía y se
   // un celular con la mezcla de la compu y otro con las pistas sueltas (como suena la compu)
   const paginas: Page[] = []
   for (const modo of ['', '&modo=pistas']) {
-    const ctx = await browser.newContext({ ...devices['Pixel 7'] })
+    const ctx = await contextoCelular(browser, devices['Pixel 7'])
     ctx.setDefaultTimeout(15000)
     const cel = await ctx.newPage()
     await cel.goto(`${base}/?debug${modo}`)
@@ -2118,7 +2137,7 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
   await compu.locator('.voz-salto', { hasText: 'Pad del colchón: el de AirTracks' }).getByRole('button', { name: 'Importar mis pads…' }).waitFor()
   await captura(compu, 'secciones-voz-y-pads')
 
-  const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
+  const ctxCel = await contextoCelular(browser, devices['Pixel 7'])
   ctxCel.setDefaultTimeout(15000)
   const cel = await ctxCel.newPage()
   cel.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
@@ -2319,7 +2338,7 @@ test('colchón de la lista con audio real: Empezar suena en todos (click a la iz
   const errores: string[] = []
   compu.on('pageerror', (e) => errores.push(e.message))
   await compu.goto(`${base}/?debug`)
-  const ctxCel = await browser.newContext({ ...devices['Pixel 7'] })
+  const ctxCel = await contextoCelular(browser, devices['Pixel 7'])
   ctxCel.setDefaultTimeout(15000)
   const cel = await ctxCel.newPage()
   cel.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
@@ -2431,4 +2450,430 @@ test('colchón de la lista con audio real: Empezar suena en todos (click a la iz
   await cel.locator('.m-colchon').waitFor({ state: 'detached' })
   assert.equal(server.state.colchon, null)
   assert.deepEqual(errores, [])
+})
+
+/**
+ * Graba lo que sale del motor de un celular (con ?debug) durante `segundos`:
+ * las muestras de cada lado. `final`: lo que va al parlante (con el talkback
+ * y la musica atenuada); si no, la mezcla antes del atenuador.
+ */
+async function grabarSalida(pg: Page, segundos: number, final = false): Promise<{ sr: number; L: number[]; R: number[] }> {
+  return pg.evaluate(async ([seg, alFinal]) => {
+    const g = globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; masterGain: GainNode; salidaFinal: AudioNode } } }; __grabadorCrudo?: boolean }
+    const engine = g.__mt.engineRef.current
+    const desde: AudioNode = alFinal ? engine.salidaFinal : engine.masterGain
+    if (!g.__grabadorCrudo) {
+      const codigo = `registerProcessor('grabador-crudo', class extends AudioWorkletProcessor {
+        constructor() { super(); this.faltan = 0; this.L = []; this.R = []; this.port.onmessage = (e) => { this.faltan = e.data; this.L = []; this.R = [] } }
+        process(inputs) {
+          const [L, R] = inputs[0] || []
+          if (this.faltan > 0 && L && R) {
+            this.L.push(...L); this.R.push(...R); this.faltan -= L.length
+            if (this.faltan <= 0) this.port.postMessage({ L: this.L, R: this.R })
+          }
+          return true
+        }
+      })`
+      await engine.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' })))
+      g.__grabadorCrudo = true
+    }
+    const nodo = new AudioWorkletNode(engine.ctx, 'grabador-crudo', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' })
+    desde.connect(nodo)
+    const datos = await new Promise<{ L: number[]; R: number[] }>((resolve) => {
+      nodo.port.onmessage = (e: MessageEvent<{ L: number[]; R: number[] }>) => resolve(e.data)
+      nodo.port.postMessage(Math.round((seg as number) * engine.ctx.sampleRate))
+    })
+    desde.disconnect(nodo)
+    return { sr: engine.ctx.sampleRate, ...datos }
+  }, [segundos, final] as const)
+}
+
+/**
+ * Amplitud (aprox. la mitad de la de un seno) de la frecuencia `f` en `x`
+ * (Goertzel). Se mira un poco alrededor (±0,6 %): mientras corrige el sync,
+ * el celular toca un 0,4 % mas rapido o mas lento y el seno se corre.
+ */
+function amplitudEn(x: number[], f: number, sr: number): number {
+  let mejor = 0
+  for (let k = -6; k <= 6; k++) {
+    const c = 2 * Math.cos((2 * Math.PI * f * (1 + k * 0.001)) / sr)
+    let s1 = 0
+    let s2 = 0
+    for (const v of x) {
+      const s0 = v + c * s1 - s2
+      s2 = s1
+      s1 = s0
+    }
+    mejor = Math.max(mejor, Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - c * s1 * s2)) / x.length)
+  }
+  return mejor
+}
+
+test('roles: cada celular elige lo suyo; la consola recibe la banda sola y en estéreo (audio real), la maneja el director y se cambia desde la compu', { timeout: 4 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-roles-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  // cada pista en su frecuencia: guia 2500 Hz, bajo 110 Hz, teclas 440 Hz; el click (1000/1600 Hz) a 120 BPM
+  const SEG = 40
+  const seno = (f: number, a: number): Float32Array => {
+    const x = new Float32Array(SEG * SR)
+    for (let i = 0; i < x.length; i++) x[i] = a * Math.sin((2 * Math.PI * f * i) / SR)
+    return x
+  }
+  const z = new AdmZip()
+  z.addFile('Click.wav', wav16(generarClick(120, 4, SEG), SR))
+  z.addFile('Guia.wav', wav16(seno(2500, 0.3), SR))
+  z.addFile('Bajo.wav', wav16(seno(110, 0.3), SR))
+  z.addFile('Teclas.wav', wav16(seno(440, 0.2), SR))
+  z.addFile('marcas.txt', Buffer.from('0:04.5 Verso\n0:12.5 Coro\n0:20.5 Final\n'))
+  const zip = path.join(tmp, 'Roles.zip')
+  z.writeZip(zip)
+
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+    g.__zip = null
+    g.electronAPI = { isElectron: true, compuToken: 'e2e', pickZipFile: async () => g.__zip, getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }) }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(base)
+  await compu.evaluate((zz) => ((globalThis as unknown as { __zip: string }).__zip = zz), zip)
+  await compu.getByRole('button', { name: /Importar o abrir canción/ }).click()
+  await compu.getByRole('button', { name: /Importar \.zip/ }).click()
+  await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
+  const p = server.state.getActiveTab()!.proyecto
+  p.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 19 }, (_, k) => 500 + 2000 * k), clickPistaId: p.pistas.find((x) => x.nombre === 'Click')!.id, acentoClaro: true }
+  server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
+
+  /** Un celular recien instalado: pregunta "¿Que haces en la banda?" y el toque elige y arranca. */
+  const mezclasPedidas = new Map<Page, string[]>()
+  async function celularNuevo(boton: RegExp): Promise<Page> {
+    const ctx = await contextoCelular(browser, devices['Pixel 7'], null)
+    ctx.setDefaultTimeout(15000)
+    const pg = await ctx.newPage()
+    pg.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
+    const pedidas: string[] = []
+    mezclasPedidas.set(pg, pedidas)
+    pg.on('request', (r) => r.url().includes('/mezcla/') && pedidas.push(r.url()))
+    await pg.goto(`${base}/?debug`)
+    await pg.getByRole('heading', { name: '¿Qué hacés en la banda?' }).waitFor()
+    assert.equal(await pg.getByRole('button', { name: /Tocá para empezar/ }).count(), 0, 'primero se elige el rol')
+    await pg.getByRole('button', { name: boton }).click()
+    return pg
+  }
+  const director = await celularNuevo(/Dirijo/)
+  const consola = await celularNuevo(/Consola/)
+  const musico = await celularNuevo(/Toco/)
+  const multimedia = await celularNuevo(/Pantallas/)
+  const fila = (pg: Page): Promise<DispositivoInfo | undefined> =>
+    pg.evaluate(() => localStorage.getItem('multitrack:device-id')).then((id) => server.devices.listar().find((d) => d.id === `celular:${JSON.parse(id!)}`))
+  const rolDe = async (pg: Page): Promise<string | null | undefined> => (await fila(pg))?.rol
+
+  await t.test('el toque en el rol ya arranca: cada uno ve lo suyo y la compu sabe quién es quién', async () => {
+    await director.locator('.m-barra .m-play').waitFor()
+    await consola.getByRole('heading', { name: 'A la consola' }).waitFor()
+    await musico.locator('.m-vista-cancion').waitFor()
+    await multimedia.locator('.mm-ahora').waitFor()
+    for (const pg of [director, consola, musico]) await pg.waitForFunction(() => !document.querySelector('.activar') && !document.querySelector('.roles'))
+    assert.deepEqual([await rolDe(director), await rolDe(consola), await rolDe(musico), await rolDe(multimedia)], ['director', 'sonido', 'musico', 'multimedia'])
+    assert.equal((await fila(multimedia))!.audio, false, 'multimedia no baja audio')
+    // el musico mira las secciones (no las toca) y no tiene el transporte
+    assert.ok(await musico.locator('.m-vista-cancion .m-marcador').first().isDisabled())
+    assert.equal(await musico.locator('.m-barra').count(), 0)
+    // la compu: el chip de la consola dice cual es
+    const etiqueta = (await fila(consola))!.etiqueta
+    await compu.waitForFunction((e) => document.querySelector('.chip-consola')?.textContent?.includes(e), etiqueta)
+  })
+
+  await t.test('solo el director maneja la canción (el servidor rechaza al músico)', async () => {
+    const rechazo = musico.evaluate(
+      () =>
+        new Promise<string>((resolve) => {
+          const s = (globalThis as unknown as { __mt: { socketRef: { current: { socket: { once(ev: string, cb: (p: { mensaje: string }) => void): void; emit(ev: string, p: unknown): void } } } } }).__mt.socketRef.current.socket
+          s.once('accion:rechazada', (pl) => resolve(pl.mensaje))
+          s.emit('transport:play', {})
+        })
+    )
+    assert.match(await rechazo, /director/)
+    assert.equal(server.state.getActiveTab()!.playback.estado, 'stopped')
+    await director.getByRole('button', { name: 'Reproducir' }).click()
+    await esperar(5000)
+    assert.equal(server.state.getActiveTab()!.playback.estado, 'playing')
+  })
+
+  const medir = async (pg: Page): Promise<Record<string, [number, number]>> => {
+    // lo que queda por sonar ya es la mezcla de ahora (despues de un cambio)
+    await pg.waitForFunction(
+      () => {
+        const e = (globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; claveMezcla: string; claveDeseada: string; tramos: { inicioCtx: number; duracionCtx: number; clave: string }[] } } } }).__mt.engineRef.current
+        const porSonar = e.tramos.filter((tr) => tr.inicioCtx + tr.duracionCtx > e.ctx.currentTime + 0.05)
+        return e.claveMezcla === e.claveDeseada && porSonar.length > 0 && porSonar.every((tr) => tr.clave.startsWith(e.claveMezcla))
+      },
+      undefined,
+      { timeout: 8000, polling: 50 }
+    )
+    const { sr, L, R } = await grabarSalida(pg, 1.5)
+    const par = (f: number): [number, number] => [amplitudEn(L, f, sr), amplitudEn(R, f, sr)]
+    return { guia: par(2500), bajo: par(110), teclas: par(440), click: par(1000), acento: par(1600) }
+  }
+  const presente = 0.02
+  const ausente = 0.002
+
+  await t.test('la consola: la banda sola, al centro (sin click ni guía); el músico: click y guía a la izquierda, banda a la derecha', async () => {
+    const c = await medir(consola)
+    t.diagnostic(`consola: ${JSON.stringify(c)}`)
+    for (const lado of [0, 1]) {
+      assert.ok(c.guia[lado] < ausente, `la guía no va a la consola (${c.guia[lado]})`)
+      assert.ok(c.click[lado] < ausente && c.acento[lado] < ausente, `el click no va a la consola (${c.click[lado]}, ${c.acento[lado]})`)
+      assert.ok(c.bajo[lado] > presente && c.teclas[lado] > presente, `la banda suena en los dos lados (${c.bajo}, ${c.teclas})`)
+    }
+    assert.ok(Math.abs(c.bajo[0] - c.bajo[1]) < 0.1 * c.bajo[0], `la banda al centro (${c.bajo})`)
+    const m = await medir(musico)
+    t.diagnostic(`músico: ${JSON.stringify(m)}`)
+    assert.ok(m.guia[0] > presente && m.guia[1] < ausente, `guía a la izquierda (${m.guia})`)
+    assert.ok(m.bajo[1] > presente && m.bajo[0] < ausente, `banda a la derecha (${m.bajo})`)
+    // y en ningun momento la consola pidio el click o la guia, ni la voz de los saltos
+    const idsNoBanda = p.pistas.filter((x) => x.nombre === 'Click' || x.nombre === 'Guia').map((x) => x.id)
+    for (const u of mezclasPedidas.get(consola)!) {
+      const mm = new URL(u).searchParams.get('m') ?? ''
+      assert.ok(!idsNoBanda.some((id) => mm.includes(id)), `la consola pidió click o guía: ${u}`)
+      assert.ok(!new URL(u).searchParams.has('a'), 'la consola no lleva la voz del salto')
+    }
+    assert.equal(mezclasPedidas.get(multimedia)!.length, 0, 'multimedia no bajó audio')
+  })
+
+  await t.test('para ensayar: "Guía en los parlantes" la suma (al centro) y se apaga igual de fácil', async () => {
+    await consola.getByRole('switch', { name: 'Guía en los parlantes' }).click()
+    await esperar(2500)
+    const c = await medir(consola)
+    assert.ok(c.guia[0] > presente && c.guia[1] > presente && Math.abs(c.guia[0] - c.guia[1]) < 0.1 * c.guia[0], `la guía al centro (${c.guia})`)
+    assert.ok(c.click[0] < ausente, 'el click sigue afuera')
+    assert.deepEqual((await fila(consola))!.salida, { click: false, guia: true }, 'la compu lo ve')
+    await compu.waitForFunction(() => document.querySelector('.chip-consola')?.textContent?.includes('guía'))
+    await consola.getByRole('switch', { name: 'Guía en los parlantes' }).click()
+    await esperar(2500)
+    assert.ok((await medir(consola)).guia[0] < ausente, 'la guía se fue')
+  })
+
+  await t.test('bloqueada, la pantalla de la consola no cambia con un toque (se desbloquea manteniendo apretado)', async () => {
+    await consola.getByRole('button', { name: /Bloquear la pantalla/ }).click()
+    assert.ok(await consola.getByRole('switch', { name: 'Guía en los parlantes' }).isDisabled())
+    assert.ok(await consola.getByRole('button', { name: /^Rol: Sonido/ }).isDisabled())
+    const boton = consola.getByRole('button', { name: 'Mantené apretado para desbloquear' })
+    await boton.click() // un toque: nada
+    assert.ok(await consola.getByRole('switch', { name: 'Guía en los parlantes' }).isDisabled())
+    const caja = (await boton.boundingBox())!
+    await consola.mouse.move(caja.x + caja.width / 2, caja.y + caja.height / 2)
+    await consola.mouse.down()
+    await esperar(1500)
+    await consola.mouse.up()
+    assert.ok(await consola.getByRole('switch', { name: 'Guía en los parlantes' }).isEnabled())
+  })
+
+  await t.test('la compu pasa la consola a otro celular en un toque: el nuevo manda la banda sola y el anterior vuelve a tener click y guía', async () => {
+    await compu.locator('.chip-consola').click()
+    const etiquetaMusico = (await fila(musico))!.etiqueta
+    const guiaId = p.pistas.find((x) => x.nombre === 'Guia')!.id
+    t.diagnostic(
+      `descargas solas del anterior (ms): ${JSON.stringify(await consola.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { diag: { solos: number[] } } } } }).__mt.engineRef.current.diag.solos.map(Math.round)))}`
+    )
+    const t0 = Date.now()
+    await compu.locator('.lista-fila', { hasText: etiquetaMusico }).getByRole('button', { name: 'Usar para la consola' }).click()
+    // el anterior: cuanto tarda en sonar la mezcla nueva (con la guia): lo que queda por sonar ya es la nueva
+    await consola.waitForFunction(
+      (id) => {
+        const e = (globalThis as unknown as { __mt: { engineRef: { current: { ctx: AudioContext; claveMezcla: string; tramos: { inicioCtx: number; duracionCtx: number; clave: string }[] } } } }).__mt.engineRef.current
+        const ahora = e.ctx.currentTime
+        const porSonar = e.tramos.filter((tr) => tr.inicioCtx + tr.duracionCtx > ahora + 0.05)
+        return e.claveMezcla.includes(id) && porSonar.length > 0 && porSonar.every((tr) => tr.clave.startsWith(e.claveMezcla))
+      },
+      guiaId,
+      { timeout: 8000, polling: 20 }
+    )
+    t.diagnostic(`al anterior le suena la mezcla con la guía a los ${Date.now() - t0} ms`)
+    await musico.getByRole('heading', { name: 'A la consola' }).waitFor()
+    await consola.locator('.m-vista-cancion').waitFor()
+    assert.deepEqual([await rolDe(musico), await rolDe(consola)], ['sonido', 'musico'])
+    await esperar(2500)
+    const nueva = await medir(musico)
+    assert.ok(nueva.guia[0] < ausente && nueva.click[0] < ausente && nueva.bajo[0] > presente, `la consola nueva: banda sola (${JSON.stringify(nueva)})`)
+    const anterior = await medir(consola)
+    t.diagnostic(`anterior: ${JSON.stringify(anterior)}`)
+    if (anterior.guia[0] <= presente) {
+      const d = await consola.evaluate(() => {
+        const e = (globalThis as unknown as { __mt: { engineRef: { current: { diagnostico(): { clave: string; clavesProgramadas: string[] } } } } }).__mt.engineRef.current.diagnostico()
+        return { clave: e.clave, programadas: e.clavesProgramadas }
+      })
+      t.diagnostic(`anterior: ${JSON.stringify(anterior)} · ${JSON.stringify(d)} · pidio ${mezclasPedidas.get(consola)!.slice(-3).join(' | ')}`)
+    }
+    assert.ok(anterior.guia[0] > presente, `el anterior vuelve a escuchar la guía (${anterior.guia})`)
+    await compu.keyboard.press('Escape')
+  })
+
+  await t.test('la compu recuerda los roles: al reconectar (o recargar) cada uno sigue siendo lo que era', async () => {
+    const guardado = JSON.parse(fs.readFileSync(path.join(tmp, 'app', 'dispositivos.json'), 'utf-8')) as Record<string, { rol: string }>
+    assert.ok(Object.values(guardado).some((r) => r.rol === 'sonido'))
+    // el celular de la consola recarga: sigue en la consola, sin preguntar
+    await musico.reload()
+    await musico.getByRole('button', { name: /Tocá para empezar/ }).click()
+    await musico.getByRole('heading', { name: 'A la consola' }).waitFor()
+    assert.equal(await rolDe(musico), 'sonido')
+  })
+
+  await t.test('multimedia: lo que sigue y en cuántos segundos', async () => {
+    await multimedia.locator('.mm-sigue .mm-cuenta').waitFor()
+    assert.match((await multimedia.locator('.mm-sigue .mm-cuenta').textContent()) ?? '', /en \d+ s|ya/)
+    assert.equal(mezclasPedidas.get(multimedia)!.length, 0)
+  })
+
+  await t.test('desde la compu: ajuste fino de la consola sin tocarla, y "Probar el sync" (un click en todos a la vez)', async () => {
+    // la consola es ahora el celular que era del musico
+    await compu.locator('.chip-consola').click()
+    const panel = compu.locator('.consola-panel')
+    await panel.getByRole('button', { name: 'Sumar 5 ms' }).click()
+    await panel.getByRole('button', { name: 'Sumar 5 ms' }).click()
+    await musico.waitForFunction(() => localStorage.getItem('multitrack:ajuste-fino-ms') === '10')
+    await compu.waitForFunction(() => document.querySelector('.consola-ajuste b')?.textContent === '+10 ms')
+    for (let i = 0; i < 30 && (await fila(musico))!.ajusteMs !== 10; i++) await esperar(100)
+    assert.equal((await fila(musico))!.ajusteMs, 10, 'la compu sabe el ajuste del celular')
+    await panel.getByRole('button', { name: /^0$/ }).click()
+    await musico.waitForFunction(() => localStorage.getItem('multitrack:ajuste-fino-ms') === '0')
+    // sonando no se puede: hay que parar
+    await compu.getByRole('button', { name: 'Probar el sync' }).click()
+    await compu.getByText('Pará la música para probar el sync').waitFor()
+    await director.getByRole('button', { name: 'Pausa' }).click()
+    await esperar(1500)
+    await compu.getByRole('button', { name: 'Probar el sync' }).click()
+    await compu.getByText('Sonando el click en todos…').waitFor()
+    await esperar(1500)
+    // el click de la prueba (1760 Hz el "1", 1320 Hz los demas) suena en todos, tambien en la consola
+    for (const pg of [musico, consola, director]) {
+      const { sr, L, R } = await grabarSalida(pg, 2)
+      const golpe = Math.max(amplitudEn(L, 1320, sr), amplitudEn(R, 1320, sr), amplitudEn(L, 1760, sr), amplitudEn(R, 1760, sr))
+      assert.ok(golpe > 0.002, `suena el click de la prueba (${golpe})`)
+    }
+    await compu.keyboard.press('Escape')
+    assert.deepEqual(errores, [])
+  })
+})
+
+test('talkback: la compu habla y la banda la escucha en los oídos (la consola no), con la música más baja; cada celular mide la demora', { timeout: 3 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-talkback-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  // el "microfono" de la compu: un tono de 1 kHz a pedazos (200 ms si, 300 ms no), como una voz
+  const srVoz = 48000
+  const voz = new Float32Array(10 * srVoz)
+  for (let i = 0; i < voz.length; i++) voz[i] = (i / srVoz) % 0.5 < 0.2 ? 0.5 * Math.sin((2 * Math.PI * 1000 * i) / srVoz) : 0
+  const microfono = path.join(tmp, 'microfono.wav')
+  fs.writeFileSync(microfono, wav16(voz, srVoz))
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({
+    args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${microfono}`]
+  })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  const SEG = 40
+  const bajo = new Float32Array(SEG * SR)
+  for (let i = 0; i < bajo.length; i++) bajo[i] = 0.3 * Math.sin((2 * Math.PI * 110 * i) / SR)
+  const z = new AdmZip()
+  z.addFile('Bajo.wav', wav16(bajo, SR))
+  z.addFile('Click.wav', wav16(generarClick(120, 4, SEG), SR))
+  const zip = path.join(tmp, 'Talkback.zip')
+  z.writeZip(zip)
+
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+    g.__zip = null
+    g.electronAPI = { isElectron: true, compuToken: 'e2e', pickZipFile: async () => g.__zip, getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }) }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(base)
+  await compu.evaluate((zz) => ((globalThis as unknown as { __zip: string }).__zip = zz), zip)
+  await compu.getByRole('button', { name: /Importar o abrir canción/ }).click()
+  await compu.getByRole('button', { name: /Importar \.zip/ }).click()
+  await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
+
+  const celular = async (rol: string): Promise<Page> => {
+    const ctx = await contextoCelular(browser, devices['Pixel 7'], rol)
+    ctx.setDefaultTimeout(15000)
+    const pg = await ctx.newPage()
+    pg.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
+    await pg.goto(`${base}/?debug`)
+    await pg.getByRole('button', { name: /Tocá para empezar/ }).click()
+    return pg
+  }
+  const musico = await celular('musico')
+  const consola = await celular('sonido')
+  await compu.keyboard.press('Space')
+  await esperar(5000)
+  const medir = async (pg: Page): Promise<{ voz: number; bajo: number }> => {
+    const { sr, L, R } = await grabarSalida(pg, 1.5, true)
+    return { voz: Math.max(amplitudEn(L, 1000, sr), amplitudEn(R, 1000, sr)), bajo: Math.max(amplitudEn(L, 110, sr), amplitudEn(R, 110, sr)) }
+  }
+  // (el click de la cancion tambien tiene golpes en 1 kHz: de fondo queda un poquito)
+  const antes = await medir(musico)
+  t.diagnostic(`antes de hablar: ${JSON.stringify(antes)}`)
+  assert.ok(antes.voz < 0.004, 'sin hablar no suena nada')
+
+  await t.test('mantener la T: el músico escucha la voz y la música le baja; la consola no la recibe', async () => {
+    await compu.locator('body').click({ position: { x: 5, y: 5 } })
+    await compu.keyboard.down('t')
+    await compu.locator('.talkback.hablando').waitFor()
+    await musico.locator('.m-talkback').waitFor({ timeout: 10000 })
+    await esperar(1500)
+    const hablando = await medir(musico)
+    const enConsola = await medir(consola)
+    await compu.keyboard.up('t')
+    t.diagnostic(`hablando: músico ${JSON.stringify(hablando)} · consola ${JSON.stringify(enConsola)}`)
+    // el tono suena 200 de cada 500 ms: su amplitud promedio es ~0,4 de la del tono
+    assert.ok(hablando.voz > 0.02, `el músico escucha la voz (${hablando.voz})`)
+    assert.ok(hablando.bajo < antes.bajo * 0.65 && hablando.bajo > antes.bajo * 0.35, `la música baja 6 dB mientras se habla (${hablando.bajo} de ${antes.bajo})`)
+    assert.ok(enConsola.voz < 0.002, `la consola no recibe el talkback (${enConsola.voz})`)
+    await compu.locator('.talkback.hablando').waitFor({ state: 'detached' })
+    await esperar(2500)
+    const despues = await medir(musico)
+    assert.ok(despues.voz < hablando.voz / 5 && despues.bajo > antes.bajo * 0.9, `al soltar: sin voz y la música vuelve (${JSON.stringify(despues)})`)
+  })
+
+  await t.test('cada celular mide cuánto tarda (y la compu lo muestra)', async () => {
+    const etiqueta = await musico.evaluate(() => localStorage.getItem('multitrack:device-id')).then((id) => `celular:${JSON.parse(id!)}`)
+    // (grabar el audio en la prueba traba al celular medio segundo y la espera sube: hablando un rato
+    // sin grabar se ve como vuelve a lo que de verdad hace falta)
+    await compu.keyboard.down('t')
+    await esperar(7000)
+    await compu.keyboard.up('t')
+    await esperar(2500)
+    const tb = server.devices.listar().find((d) => d.id === etiqueta)!.diag?.talkback
+    t.diagnostic(`talkback medido por el celular: ${JSON.stringify(tb)}`)
+    t.diagnostic(
+      `demoras: ${JSON.stringify(await musico.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { esperaTalkback: { demoras: number[] } } } } }).__mt.engineRef.current.esperaTalkback.demoras.map(Math.round)))}`
+    )
+    assert.ok(tb && tb.redMs !== null && tb.redMs < 150, `llega rápido por la red de prueba (${JSON.stringify(tb)})`)
+    assert.ok(tb!.objetivoMs >= 80 && tb!.objetivoMs <= 200, `se escucha a los ${tb!.objetivoMs} ms`)
+    await compu.locator('.talkback-ajustes').click()
+    await compu.getByText(/llega en \d+ ms por el WiFi · se escucha a los \d+ ms/).waitFor()
+    await compu.getByText('Consola: no lo recibe').waitFor()
+    await compu.keyboard.press('Escape')
+    assert.deepEqual(errores, [])
+  })
 })

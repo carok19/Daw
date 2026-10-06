@@ -12,13 +12,15 @@ import { Mixer } from './Mixer'
 import { MarkersPanel } from './MarkersPanel'
 import { PadsDelColchon } from './PadsDelColchon'
 import { ConnectionPanel } from './ConnectionPanel'
+import { PanelConsola } from './Consola'
+import { BotonTalkback, PanelTalkback } from './Talkback'
 import { LicenciaPanel } from './LicenciaPanel'
 import { ProjectsScreen } from './ProjectsScreen'
 import { ShortcutsModal } from './ShortcutsModal'
 import { ListaEditor, ListasScreen } from './Listas'
 import { BannerColchon, PantallaColchon } from './Colchon'
 
-type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' }
+type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' } | { tipo: 'consola' } | { tipo: 'talkback' }
 /** escenario = la cancion (mixer, secciones); listas = las listas por dia; editar = armar una lista */
 type Vista = { tipo: 'escenario' } | { tipo: 'listas' } | { tipo: 'editar'; listaId: string }
 /** En el escenario: el recorrido de la cancion con sus secciones, o la mezcla (el mixer a pantalla completa). */
@@ -206,6 +208,8 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         onNueva={() => setVentana({ tipo: 'canciones' })}
         dispositivos={controller.dispositivos}
         onDispositivos={() => setVentana({ tipo: 'conexion' })}
+        onConsola={() => setVentana({ tipo: 'consola' })}
+        talkback={<BotonTalkback controller={controller} onAjustes={() => setVentana({ tipo: 'talkback' })} />}
         locked={estado?.locked ?? false}
         onLocked={controller.setLocked}
         sonidoLocal={controller.sonidoLocal}
@@ -364,6 +368,8 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         />
       )}
       {ventana?.tipo === 'licencia' && <LicenciaPanel controller={controller} onCerrar={() => setVentana(null)} />}
+      {ventana?.tipo === 'consola' && <PanelConsola controller={controller} onCerrar={() => setVentana(null)} />}
+      {ventana?.tipo === 'talkback' && <PanelTalkback controller={controller} onCerrar={() => setVentana(null)} />}
       {ventana?.tipo === 'atajos' && <ShortcutsModal onCerrar={() => setVentana(null)} />}
 
       <Avisos avisos={controller.avisos} onCerrar={controller.cerrarAviso} />

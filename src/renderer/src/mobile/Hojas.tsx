@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { INFO_ROL } from './Roles'
 import { RotateCcw, X } from 'lucide-react'
 import type { AppController } from '../app/useAppController'
 import { explicacion, nivelDiagnostico } from '../diagnostico'
@@ -25,6 +26,7 @@ export function HojaAjustes({
   etiqueta,
   pantallaEncendida,
   accesoFijo,
+  onCambiarRol,
   onCerrar
 }: {
   controller: AppController
@@ -32,6 +34,8 @@ export function HojaAjustes({
   pantallaEncendida: boolean
   /** como entrar sin QR la proxima vez (segun el celular) */
   accesoFijo?: ReactNode
+  /** abrir "¿Que haces en la banda?" */
+  onCambiarRol?: () => void
   onCerrar: () => void
 }) {
   const [nombre, setNombre] = useState(controller.nombreDispositivo)
@@ -47,6 +51,22 @@ export function HojaAjustes({
 
   return (
     <Hoja titulo="Ajustes de este celular" onCerrar={onCerrar}>
+      {controller.rol && onCambiarRol && (
+        <div className="hoja-seccion">
+          <h3>Qué hacés en la banda</h3>
+          <button className="hoja-rol" onClick={onCambiarRol} style={{ '--color-rol': INFO_ROL[controller.rol].color } as React.CSSProperties}>
+            {(() => {
+              const I = INFO_ROL[controller.rol].Icono
+              return <I size={20} />
+            })()}
+            <span>
+              <b>{INFO_ROL[controller.rol].nombre}</b>
+              <small>{INFO_ROL[controller.rol].que}</small>
+            </span>
+            <u>Cambiar</u>
+          </button>
+        </div>
+      )}
       <div className="hoja-seccion">
         <h3>Nombre</h3>
         <div className="hoja-fila">

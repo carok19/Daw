@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ClipboardCopy, KeyRound, Laptop, MonitorPlay, Printer, ShieldAlert, ShieldCheck, Smartphone, Trash2, Wifi } from 'lucide-react'
-import type { AjustesConexion, DatosInvitacion, DispositivoInfo, EstadoFirewall } from '@shared/types'
+import { ROLES, type AjustesConexion, type DatosInvitacion, type DispositivoInfo, type EstadoFirewall, type RolDispositivo } from '@shared/types'
+import { INFO_ROL } from '../mobile/Roles'
 import type { AppController } from '../app/useAppController'
 import { copiarTexto, direccionVisible, enlaceConCodigo, textoQrWifi } from '../conexion'
 import { informeTexto, nivelDiagnostico, resumenCorto } from '../diagnostico'
@@ -18,7 +19,7 @@ function EstadoDispositivo({ d, sonando }: { d: DispositivoInfo; sonando: boolea
       </span>
     )
   }
-  if (d.origen === 'compu') return <span className="dispositivo-estado texto-gris">Director</span>
+  if (d.origen === 'compu') return <span className="dispositivo-estado texto-gris">Esta compu</span>
   if (d.origen === 'video')
     return (
       <span className="dispositivo-estado texto-gris" title="AirTracks Video: el video con la letra en el proyector, siguiendo la canción">
@@ -29,6 +30,13 @@ function EstadoDispositivo({ d, sonando }: { d: DispositivoInfo; sonando: boolea
     return (
       <span className="dispositivo-estado texto-rojo" title={d.error}>
         <span className="punto rojo" /> Error de audio
+      </span>
+    )
+  }
+  if (!d.audio && d.rol === 'multimedia') {
+    return (
+      <span className="dispositivo-estado texto-gris" title="Multimedia: mira lo que sigue, sin bajar audio">
+        <span className="punto verde" /> Sin audio (multimedia)
       </span>
     )
   }
@@ -221,7 +229,8 @@ export function ConnectionPanel({
             <br />
             2. Escaneá el código con la cámara y abrí el link.
             <br />
-            3. En el celular, tocá <b>“Tocá para empezar”</b> y conectá los auriculares.
+            3. En el celular, elegí qué hace cada uno (<b>Director</b>, <b>Músico</b>, <b>Voz</b>, <b>Consola</b> o <b>Multimedia</b>) y conectá los
+            auriculares.
             <br />
             Los que ya están conectados pueden sumar a otros desde <b>“Invitar”</b> en su celular.
             {datos?.apk && (
@@ -303,6 +312,23 @@ export function ConnectionPanel({
                     </span>
                   )}
                 </div>
+                {d.origen === 'celular' && (
+                  <select
+                    className="rol-select"
+                    value={d.rol ?? ''}
+                    onChange={(e) => void controller.setRolDe(d.id, e.target.value as RolDispositivo)}
+                    aria-label={`Rol de ${d.etiqueta}`}
+                    title="Para qué usa la app este celular (cada uno ve y escucha lo suyo)"
+                    style={{ '--color-rol': d.rol ? INFO_ROL[d.rol].color : 'var(--line-2)' } as React.CSSProperties}
+                  >
+                    {!d.rol && <option value="">Sin rol</option>}
+                    {ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {INFO_ROL[r].nombre}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <EstadoDispositivo d={d} sonando={sonando} />
                 {!d.conectado && (
                   <button
@@ -492,7 +518,7 @@ function HojaImpresa({ datos }: { datos: DatosInvitacion }) {
           </p>
         </section>
       </div>
-      <h2>{++n} · Tocá “Tocá para empezar” y poné los auriculares</h2>
+      <h2>{++n} · Elegí qué hacés en la banda y poné los auriculares</h2>
       <ul>
         <li>
           <b>iPhone:</b> abrí <b>{direccionVisible(datos.urlFija)}</b> y agregala a la pantalla de inicio (Compartir → Agregar a inicio): sirve para

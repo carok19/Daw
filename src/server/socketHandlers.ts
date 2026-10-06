@@ -633,7 +633,7 @@ export function registerSocketHandlers(
     ;(socket.data as SocketData).origen = origen
     const auth = (socket.handshake.auth ?? {}) as AuthHandshake
 
-    devices.conectar(socket.id, origen, auth.deviceId, auth.nombre)
+    devices.conectar(socket.id, origen, auth.deviceId, auth.nombre, auth.rol, auth.salida, auth.rolPendiente)
     emitirDispositivos()
     if (origen === 'compu') {
       socket.emit('modelo:estado', modelos.estado())
@@ -770,6 +770,72 @@ export function registerSocketHandlers(
       if (devices.renombrar(socket.id, payload?.nombre)) emitirDispositivos()
     })
 
+    // ---- roles: para que usa la app cada celular (director, musico, voz, sonido, multimedia) ----
+
+    // el propio celular elige su rol (o, si es el de Sonido, que mas va a la consola)
+    socket.on('rol:elegir', (payload: { rol?: unknown; salida?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      const id = devices.idDeSocket(socket.id)
+      if (origen !== 'celular' || !id) return ack?.({ ok: false })
+      const ok = devices.setRol(id, payload?.rol)
+      if (ok && payload?.rol === 'sonido' && payload.salida) devices.setSalida(id, payload.salida)
+      if (ok) emitirDispositivos()
+      ack?.({ ok })
+    })
+
+    socket.on('sonido:salida', (payload: { id?: unknown; click?: unknown; guia?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      // la compu cambia la de cualquier celular de Sonido; un celular, solo la suya
+      const id = soloCompu(socket) ? (typeof payload?.id === 'string' ? payload.id : null) : devices.idDeSocket(socket.id)
+      const ok = !!id && devices.setSalida(id, { click: payload?.click, guia: payload?.guia })
+      if (ok) emitirDispositivos()
+      ack?.({ ok })
+    })
+
+    // la compu le cambia el rol a un celular (p.ej. elige cual va a la consola)
+    socket.on('dispositivo:rol', (payload: { id?: unknown; rol?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket) || typeof payload?.id !== 'string') return ack?.({ ok: false })
+      const ok = devices.setRol(payload.id, payload.rol)
+      if (ok) emitirDispositivos()
+      ack?.({ ok })
+    })
+
+    // ---- talkback: la compu habla a los oidos de la banda (nunca a la consola ni a multimedia) ----
+
+    socket.on('talkback:audio', (payload: { n?: unknown; t?: unknown; pcm?: unknown }) => {
+      if (!soloCompu(socket) || typeof payload?.t !== 'number' || !Buffer.isBuffer(payload.pcm) || payload.pcm.length > 4096) return
+      const pedazo = { n: typeof payload.n === 'number' ? payload.n : 0, t: payload.t, pcm: payload.pcm }
+      for (const s of io.sockets.sockets.values()) {
+        if ((s.data as SocketData).origen !== 'celular') continue
+        const rol = devices.rolDeSocket(s.id)
+        if (rol === 'sonido' || rol === 'multimedia') continue
+        // si ese celular viene atrasado, el pedazo se descarta (mejor que llegue tarde todo lo que sigue)
+        s.volatile.emit('talkback:audio', pedazo)
+      }
+    })
+
+    socket.on('talkback:hablando', (payload: { hablando?: unknown }) => {
+      if (!soloCompu(socket)) return
+      io.emit('talkback:estado', { hablando: payload?.hablando === true })
+    })
+
+    // ajuste fino de un celular desde la compu (p.ej. el de la consola), sin tocar el celular
+    socket.on('dispositivo:ajuste', (payload: { id?: unknown; ms?: unknown }, ack?: Ack<{ ok: boolean }>) => {
+      if (!soloCompu(socket) || typeof payload?.id !== 'string' || typeof payload.ms !== 'number' || !Number.isFinite(payload.ms)) return ack?.({ ok: false })
+      const ms = Math.max(-500, Math.min(500, Math.round(payload.ms)))
+      const ids = devices.socketsDe(payload.id)
+      for (const id of ids) io.sockets.sockets.get(id)?.emit('ajuste:fino', { ms })
+      ack?.({ ok: ids.length > 0 })
+    })
+
+    // "Probar el sync": un click en todos a la vez (16 golpes, cada medio segundo), con la musica parada
+    socket.on('sync:prueba', (_payload: unknown, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!soloCompu(socket)) return ack?.({ ok: false })
+      if (algoSuena() || (state.colchon && state.colchon.hasta === null)) return ack?.({ ok: false, error: 'Pará la música para probar el sync' })
+      const inicio = Date.now() + transporte.margen() + 300
+      const golpes = Array.from({ length: 16 }, (_, k) => ({ t: inicio + k * 500, n: (k % 4) + 1 }))
+      io.emit('sync:prueba', { golpes })
+      ack?.({ ok: true })
+    })
+
     socket.on('devices:forget', (payload: { id?: string }) => {
       if (!soloCompu(socket)) return
       if (payload?.id === '*') devices.olvidarDesconectados()
@@ -789,9 +855,18 @@ export function registerSocketHandlers(
     // ---- Transporte (celulares tambien, salvo con el control bloqueado) ----
 
     function permitido(): boolean {
-      if (soloCompu(socket) || !state.locked) return true
-      rechazar(socket, 'Control bloqueado por la computadora')
-      return false
+      if (soloCompu(socket)) return true
+      if (state.locked) {
+        rechazar(socket, 'Control bloqueado por la computadora')
+        return false
+      }
+      // la cancion la maneja el director (un celular que todavia no eligio, tambien: como antes de los roles)
+      const rol = devices.rolDeSocket(socket.id)
+      if (rol && rol !== 'director') {
+        rechazar(socket, 'La canción la maneja el director (cambiá el rol de este celular en ⚙)')
+        return false
+      }
+      return true
     }
 
     socket.on('transport:play', (payload: TransportPlayPayload = {}) => {
@@ -835,7 +910,8 @@ export function registerSocketHandlers(
     })
 
     socket.on('salto:modo', (payload: { modo?: ModoSalto }) => {
-      if (!soloCompu(socket) || !payload || !['seccion', 'compas', 'inmediato'].includes(payload.modo ?? '')) return
+      // la compu o el director (desde su celular)
+      if (!payload || !['seccion', 'compas', 'inmediato'].includes(payload.modo ?? '') || !permitido()) return
       state.modoSalto = payload.modo!
       if (state.modoSalto === 'inmediato') transporte.cancelarSalto()
       emitirEstado()

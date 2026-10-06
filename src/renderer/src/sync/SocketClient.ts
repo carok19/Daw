@@ -13,7 +13,16 @@ import type {
 } from '@shared/types'
 
 const MUESTRAS_SYNC = 7
-const RESYNC_INTERVAL_MS = 2 * 60 * 1000
+/**
+ * Cada cuanto se vuelve a medir el reloj. Los relojes de los celulares se
+ * corren entre si (hasta ~50 ppm: ~6 ms cada 2 minutos); midiendo cada 30 s
+ * la diferencia nunca pasa de ~1,5 ms. Son 7 mensajes chiquitos.
+ */
+const RESYNC_INTERVAL_MS = 30 * 1000
+/** Cada cuanto se mira si la hora del sistema salto (el celular la corrigio por internet, o la cambiaron). */
+const VIGILANCIA_RELOJ_MS = 1000
+/** Un salto de la hora del sistema mas grande que esto se compensa al instante (y se vuelve a medir). */
+const SALTO_RELOJ_MS = 15
 
 export type Desuscribir = () => void
 
@@ -28,6 +37,11 @@ export class SocketClient {
 
   private syncEnCurso: Promise<void> | null = null
   private intervalo: ReturnType<typeof setInterval>
+  private vigilancia: ReturnType<typeof setInterval>
+  /** el mejor RTT de las ultimas mediciones (para descartar una medicion hecha con la red cargada) */
+  private rttsRecientes: number[] = []
+  /** cuantos saltos de la hora del sistema se compensaron (diagnostico) */
+  saltosDeReloj = 0
 
   constructor(origen: OrigenCliente, auth: () => Omit<AuthHandshake, 'origen'>) {
     // `auth` como funcion: se re-evalua en cada reconexion (p.ej. si el celular cambio de nombre)
@@ -45,6 +59,29 @@ export class SocketClient {
     this.intervalo = setInterval(() => {
       if (this.conectado) void this.sincronizarReloj()
     }, RESYNC_INTERVAL_MS)
+    this.vigilancia = setInterval(() => this.revisarReloj(), VIGILANCIA_RELOJ_MS)
+  }
+
+  private muro = Date.now()
+  private mono = performance.now()
+
+  /**
+   * La hora del sistema (Date.now) puede saltar: el celular la corrige por
+   * internet o alguien la cambia. El reloj monotono (performance.now) no
+   * salta: si se separan, se compensa ya (sin esperar la proxima medicion) y
+   * se vuelve a medir. Se llama sola cada segundo, y antes de medir el sync.
+   */
+  revisarReloj(): void {
+    const m = Date.now()
+    const n = performance.now()
+    const salto = m - this.muro - (n - this.mono)
+    this.muro = m
+    this.mono = n
+    if (Math.abs(salto) < SALTO_RELOJ_MS) return
+    // la hora local se adelanto `salto` ms: la del servidor, vista desde aca, quedo `salto` ms mas cerca
+    this.clockOffsetMs -= salto
+    this.saltosDeReloj++
+    if (this.conectado) void this.sincronizarReloj()
   }
 
   /** Tiempo estimado del servidor ahora mismo, segun el offset calculado. */
@@ -83,6 +120,12 @@ export class SocketClient {
         // se ignora una muestra fallida, se sigue con las demas
       }
     }
+    if (!Number.isFinite(mejorRtt)) return
+    // con la red cargada hasta la mejor muestra viene demorada (y de un solo lado): si es mucho peor que
+    // las de las ultimas mediciones, el reloj de antes es mas confiable (se vuelve a medir en 30 s)
+    const referencia = this.rttsRecientes.length >= 3 ? Math.min(...this.rttsRecientes) : Infinity
+    this.rttsRecientes = [...this.rttsRecientes.slice(-4), mejorRtt]
+    if (mejorRtt > Math.max(3 * referencia, referencia + 40)) return
     this.clockOffsetMs = mejorOffset
   }
 
@@ -170,6 +213,7 @@ export class SocketClient {
 
   close(): void {
     clearInterval(this.intervalo)
+    clearInterval(this.vigilancia)
     this.socket.close()
   }
 }

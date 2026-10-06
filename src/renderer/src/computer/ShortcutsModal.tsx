@@ -10,6 +10,7 @@ const ATAJOS: [string[], string][] = [
   [['M'], 'Marcar una sección en la posición actual'],
   [['L'], 'Repetir la sección actual (activar / desactivar)'],
   [['C'], 'Colchón: al terminar la sección (o en el próximo compás, según el modo de salto) se va la banda y siguen el click y un pad; con la canción parada, empiezan ya (otra vez C: terminar)'],
+  [['T'], 'Talkback: mantener apretada para hablarle a la banda en los oídos'],
   [['Re Pág', 'Av Pág'], 'Canción anterior / siguiente del setlist'],
   [['?'], 'Mostrar esta ayuda'],
   [['Esc'], 'Cerrar ventanas']

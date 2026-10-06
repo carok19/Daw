@@ -8,7 +8,7 @@ import { Server as SocketIOServer } from 'socket.io'
 import { AppState } from './state'
 import { DeviceRegistry } from './devices'
 import { registerSocketHandlers, restaurarSesion } from './socketHandlers'
-import { ensureBaseDir, esIdValido, leerSesion, listProyectos, loadProyecto, projectDir, projectsBaseDir } from './projects'
+import { ensureBaseDir, esIdValido, leerSesion, listProyectos, loadProyecto, projectDir, projectsBaseDir, appBaseDir } from './projects'
 import type { Transporte } from './transport'
 import { tempoDesactualizado, type Analizador } from './analisis'
 import type { Biblioteca } from './biblioteca'
@@ -105,7 +105,8 @@ export function createServer(rendererDir: string, opciones: OpcionesServidor = {
     if (state.listaTabs().length) state.guardarSesionAhora()
   }, 60_000)
   latido.unref()
-  const devices = new DeviceRegistry()
+  // el rol de cada celular se recuerda en la compu (el de la consola sigue siendo el de la consola)
+  const devices = new DeviceRegistry(path.join(appBaseDir(), 'dispositivos.json'))
   const ajustes = leerAjustes()
   const licencias = new Licencias(opciones.clavePublicaLicencias)
   const version = opciones.version ?? '0.0.0'

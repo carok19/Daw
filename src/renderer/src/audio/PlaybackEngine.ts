@@ -1,8 +1,9 @@
-import type { AnuncioSalto, ColchonActivo, ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import type { AnuncioSalto, ColchonActivo, ComandoProgramado, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto, SalidaSonido } from '@shared/types'
 
 export { clavePista } from '@shared/mezcla'
 export type { AjustePersonal, MezclaPersonal } from '@shared/mezcla'
 import type { MezclaPersonal } from '@shared/mezcla'
+import type { EsperaTalkback, PedazoTalkback } from './talkback'
 
 /** Superficie del motor de audio que usa `useAppController`. */
 export interface PlaybackEngine {
@@ -14,6 +15,18 @@ export interface PlaybackEngine {
   setVolumenGeneral(volumen0a100: number): void
   setAjusteManualMs(ms: number): void
   setMezclaPersonal(mezcla: MezclaPersonal): void
+  /** celular de Sonido (va a la consola): la banda sola al centro, y lo que se pida ademas; null = un celular comun */
+  setSalidaSonido(salida: SalidaSonido | null): void
+  /** pico de lo que sale ahora por cada lado (0 a 1): el vumetro de la consola */
+  nivelSalida(): { izq: number; der: number }
+  /** "Probar el sync": un click en cada golpe (hora del servidor), igual en todos */
+  probarSync(golpes: { t: number; n: number }[], clockOffsetMs: number): void
+  /** un pedazo de talkback (la compu habla a los oidos) */
+  recibirTalkback(p: PedazoTalkback, clockOffsetMs: number): void
+  /** lo que mide del talkback (para la compu) */
+  readonly esperaTalkback: EsperaTalkback
+  /** aviso de que el talkback empieza o termina de sonar */
+  onTalkback(cb: (sonando: boolean) => void): void
 
   activarProyecto(proyecto: Proyecto, posicionMs: number): void
   /** baja de a poco el arranque (desde `posicionMs`) de la proxima cancion del setlist (null = ninguna) */

@@ -1,9 +1,10 @@
-import type { AnuncioSalto, ColchonActivo, ComandoProgramado, CuentaProgramada, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto } from '@shared/types'
+import type { AnuncioSalto, ColchonActivo, ComandoProgramado, CuentaProgramada, DiagnosticoAudio, EstadoBuffer, Pista, Proyecto, SalidaSonido } from '@shared/types'
 import { WAV_HEADER_FETCH_BYTES, WavHeaderError, bytesPorFrame, decodePcmSegment, parseWavHeader, totalFrames, type WavInfo } from '@shared/wav'
 import { posicionActualMs } from '@shared/playback'
-import { clavePista, codificarMezcla, mezclaEfectiva } from '@shared/mezcla'
+import { aplicarGrupos, clavePista, codificarMezcla, mezclaDeSonido, mezclaEfectiva } from '@shared/mezcla'
 import { LARGO_SONIDO_CUENTA_SEC } from '@shared/cuenta'
 import { ENTRADA_PAD_SOLO_MS, NOTAS_PAD, PAN_CLICK_COLCHON, PAN_PAD, golpesDeColchon } from '@shared/colchon'
+import { cargarProcesador, deInt16, EsperaTalkback, type PedazoTalkback } from './talkback'
 import type { MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
@@ -186,6 +187,23 @@ export class StreamingEngine implements PlaybackEngine {
   /** la cancion activa, tal como la mezcla la compu */
   private ultimoProyecto: Proyecto | null = null
   private mezclaPersonal: MezclaPersonal = {}
+  /** celular de Sonido (va a la consola): la banda sola, al centro; null = un celular comun */
+  private salidaSonido: SalidaSonido | null = null
+  /** "Probar el sync": los clicks de la prueba (al medio, volumen fijo) */
+  private pruebaGain: GainNode | null = null
+  /** la musica (todo menos el talkback): baja 6 dB mientras habla la compu */
+  private atenuador: GainNode
+  /** talkback: volumen del celular x el de "Mi mezcla" para el talkback */
+  private talkbackGain: GainNode
+  private talkbackNodo: AudioWorkletNode | null = null
+  private talkbackListo: Promise<void> | null = null
+  private volumenGeneral = 1
+  readonly esperaTalkback = new EsperaTalkback()
+  /** el talkback esta sonando ahora (para el aviso en pantalla) */
+  private onTalkbackCb: ((sonando: boolean) => void) | null = null
+  /** lo ultimo antes del parlante (el limitador): de ahi mide el vumetro */
+  private salidaFinal!: AudioNode
+  private medidor: { izq: AnalyserNode; der: AnalyserNode; buf: Float32Array<ArrayBuffer> } | null = null
   /** mezcla con la que se piden los segmentos (modo mezcla) */
   private claveMezcla = ''
   private claveDeseada = ''
@@ -269,8 +287,14 @@ export class StreamingEngine implements PlaybackEngine {
     limitador.ratio.value = 20
     limitador.attack.value = 0.003
     limitador.release.value = 0.15
-    this.masterGain.connect(limitador)
+    // la musica pasa por el atenuador (baja mientras habla el talkback); el talkback va directo al limitador
+    this.atenuador = this.ctx.createGain()
+    this.masterGain.connect(this.atenuador)
+    this.atenuador.connect(limitador)
+    this.talkbackGain = this.ctx.createGain()
+    this.talkbackGain.connect(limitador)
     limitador.connect(this.ctx.destination)
+    this.salidaFinal = limitador
     this.cuentaGain = this.ctx.createGain()
     this.cuentaPanner = this.ctx.createStereoPanner()
     this.cuentaGain.connect(this.cuentaPanner)
@@ -296,6 +320,48 @@ export class StreamingEngine implements PlaybackEngine {
     const v = clamp(volumen, 0, VOLUMEN_MAX)
     const g = v <= 100 ? (v / 100) ** 2 : 10 ** ((((v - 100) / 100) * 6) / 20)
     this.masterGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.02)
+    this.volumenGeneral = g
+    this.volumenTalkback()
+  }
+
+  // ---- talkback: la compu habla a los oidos de la banda (ver audio/talkback.ts) ----
+
+  onTalkback(cb: (sonando: boolean) => void): void {
+    this.onTalkbackCb = cb
+  }
+
+  /** Volumen del talkback: el del celular por el "Talkback" de "Mi mezcla" (la consola no lo escucha nunca). */
+  private volumenTalkback(): void {
+    const g = this.salidaSonido ? 0 : this.volumenGeneral * this.factorPersonal('Talkback')
+    this.talkbackGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.02)
+  }
+
+  /**
+   * Un pedazo de talkback (20 ms): suena `objetivo` ms despues de cuando se
+   * capto, con la misma hora del servidor que la musica. Mientras suena, la
+   * musica baja 6 dB.
+   */
+  recibirTalkback(p: PedazoTalkback, clockOffsetMs: number): void {
+    if (this.salidaSonido || !(p?.pcm instanceof ArrayBuffer) || typeof p.t !== 'number') return
+    const ahoraServidor = Date.now() + clockOffsetMs
+    this.esperaTalkback.registrar(ahoraServidor - p.t)
+    const t = this.ctxDeServidor(p.t + this.esperaTalkback.objetivoMs, clockOffsetMs)
+    const muestras = deInt16(new Int16Array(p.pcm))
+    if (!this.talkbackListo) {
+      this.talkbackListo = cargarProcesador(this.ctx, 'reproductor').then(() => {
+        const nodo = new AudioWorkletNode(this.ctx, 'reproductor-talkback', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
+        nodo.connect(this.talkbackGain)
+        nodo.port.onmessage = (e: MessageEvent<{ sonando: boolean }>) => {
+          const ahora = this.ctx.currentTime
+          // la musica baja enseguida y vuelve despacio (que no "respire" entre palabra y palabra)
+          this.atenuador.gain.setTargetAtTime(e.data.sonando ? 0.5 : 1, ahora, e.data.sonando ? 0.03 : 0.4)
+          this.onTalkbackCb?.(e.data.sonando)
+        }
+        this.talkbackNodo = nodo
+        this.volumenTalkback()
+      })
+    }
+    void this.talkbackListo.then(() => this.talkbackNodo?.port.postMessage({ t, muestras }, [muestras.buffer]))
   }
 
   setAjusteManualMs(ms: number): void {
@@ -305,17 +371,76 @@ export class StreamingEngine implements PlaybackEngine {
   setMezclaPersonal(mezcla: MezclaPersonal): void {
     this.mezclaPersonal = mezcla
     this.volumenesColchon()
+    this.volumenTalkback()
     if (this.ultimoProyecto) this.aplicarMezcla(this.ultimoProyecto)
     if (this.modo === 'mezcla' && this.precarga) this.reiniciarPrecarga()
+  }
+
+  /**
+   * Celular de Sonido (va a la consola): la mezcla del director sin click ni
+   * guia (salvo lo que se pida), todo al centro, sin la voz que avisa los
+   * saltos y con el pad del colchon al medio. null = un celular comun.
+   */
+  setSalidaSonido(salida: SalidaSonido | null): void {
+    const antes = this.salidaSonido
+    if ((antes?.click ?? null) === (salida?.click ?? null) && (antes?.guia ?? null) === (salida?.guia ?? null)) return
+    this.salidaSonido = salida ? { click: !!salida.click, guia: !!salida.guia } : null
+    this.padPanner.pan.setTargetAtTime(salida ? 0 : PAN_PAD, this.ctx.currentTime, 0.02)
+    this.volumenTalkback()
+    this.volumenesColchon()
+    if (this.ultimoProyecto) this.aplicarMezcla(this.ultimoProyecto)
+    // los pedazos con la voz del salto ahora van sin ella (o al reves)
+    this.descartarEnVueloViejos()
+    if (this.modo === 'mezcla' && this.precarga) this.reiniciarPrecarga()
+    this.tick()
+  }
+
+  /**
+   * Pico de lo que sale ahora por cada lado (0 a 1, los ultimos ~40 ms): el
+   * vumetro del celular de la consola. Se arma la primera vez que se pide.
+   */
+  nivelSalida(): { izq: number; der: number } {
+    if (!this.medidor) {
+      const division = this.ctx.createChannelSplitter(2)
+      const izq = this.ctx.createAnalyser()
+      const der = this.ctx.createAnalyser()
+      izq.fftSize = der.fftSize = 2048
+      this.salidaFinal.connect(division)
+      division.connect(izq, 0)
+      division.connect(der, 1)
+      this.medidor = { izq, der, buf: new Float32Array(new ArrayBuffer(2048 * 4)) }
+    }
+    const pico = (a: AnalyserNode): number => {
+      a.getFloatTimeDomainData(this.medidor!.buf)
+      let max = 0
+      for (const v of this.medidor!.buf) max = Math.max(max, Math.abs(v))
+      return Math.min(1, max)
+    }
+    return { izq: pico(this.medidor.izq), der: pico(this.medidor.der) }
+  }
+
+  /** Lo que se esta bajando con otra clave (otra mezcla, con o sin la voz del salto) ya no sirve. */
+  private descartarEnVueloViejos(): void {
+    if (this.modo !== 'mezcla') return
+    for (const c of this.canales.values()) {
+      for (const [i, v] of c.enVuelo) {
+        if (v.clave !== this.claveDeSegmento(i)) {
+          v.ctrl.abort()
+          c.enVuelo.delete(i)
+        }
+      }
+    }
   }
 
   onRequiereResync(cb: () => void): void {
     this.onResyncCb = cb
   }
 
-  /** Ganancia y paneo de cada pista en ESTE dispositivo (director + "Mi mezcla" + click y guia a un lado). */
+  /** Ganancia y paneo de cada pista en ESTE dispositivo (director + "Mi mezcla" + click y guia a un lado; la consola, la banda al centro). */
   private mezclaDe(proyecto: Proyecto) {
-    return mezclaEfectiva(proyecto.pistas, this.mezclaPersonal)
+    return this.salidaSonido
+      ? mezclaDeSonido(proyecto, this.salidaSonido)
+      : aplicarGrupos(proyecto, mezclaEfectiva(proyecto.pistas, this.mezclaPersonal), this.mezclaPersonal)
   }
 
   private claveDe(proyecto: Proyecto): string {
@@ -842,14 +967,7 @@ export class StreamingEngine implements PlaybackEngine {
     this.anuncio = anuncio
     if (this.modo === 'mezcla') {
       // lo que se estaba bajando con la clave de antes ya no sirve
-      for (const c of this.canales.values()) {
-        for (const [i, v] of c.enVuelo) {
-          if (v.clave !== this.claveDeSegmento(i)) {
-            v.ctrl.abort()
-            c.enVuelo.delete(i)
-          }
-        }
-      }
+      this.descartarEnVueloViejos()
       this.tick()
       return
     }
@@ -876,7 +994,8 @@ export class StreamingEngine implements PlaybackEngine {
   /** Clave con la que se pide el pedazo `indice` de la mezcla: los del compas del anuncio, con la voz. */
   private claveDeSegmento(indice: number): string {
     const a = this.anuncio
-    if (this.modo !== 'mezcla' || !a) return this.claveMezcla
+    // la consola no lleva la voz del salto (salvo con la guia en los parlantes)
+    if (this.modo !== 'mezcla' || !a || (this.salidaSonido && !this.salidaSonido.guia)) return this.claveMezcla
     const ini = indice * SEGMENT_DURATION_SEC * 1000
     const fin = ini + SEGMENT_DURATION_SEC * 1000
     // (la guia se calla con un fundido que empieza un poco antes)
@@ -888,7 +1007,7 @@ export class StreamingEngine implements PlaybackEngine {
     const a = this.anuncio
     const p = this.ultimoProyecto
     if (this.modo !== 'pistas' || !a || !p) return
-    const c = a.pistaId ? this.mezclaDe(p).find((x) => x.pistaId === a.pistaId) : { ganancia: 1, pan: 0 }
+    const c = this.salidaSonido && !this.salidaSonido.guia ? undefined : a.pistaId ? this.mezclaDe(p).find((x) => x.pistaId === a.pistaId) : { ganancia: 1, pan: 0 }
     const t = this.ctx.currentTime
     this.anuncioGain.gain.setTargetAtTime(c?.ganancia ?? 0, t, 0.015)
     this.anuncioPanner.pan.setTargetAtTime(c?.pan ?? 0, t, 0.015)
@@ -949,12 +1068,14 @@ export class StreamingEngine implements PlaybackEngine {
     const clickId = proyecto.tempo?.clickPistaId ?? null
     const c = clickId ? this.mezclaDe(proyecto).find((x) => x.pistaId === clickId) : undefined
     const t = this.ctx.currentTime
+    // la consola: el click (cuenta y colchon) solo si se pidio "Click en los parlantes", al centro
+    const sonido = this.salidaSonido
     if (proyecto.colchon) {
       // colchon de la lista (sin pistas): el click del lado del click, con el "Click" de "Mi mezcla"
-      this.cuentaGain.gain.setTargetAtTime(this.factorPersonal('Click'), t, 0.015)
-      this.cuentaPanner.pan.setTargetAtTime(PAN_CLICK_COLCHON, t, 0.015)
+      this.cuentaGain.gain.setTargetAtTime(sonido ? (sonido.click ? 1 : 0) : this.factorPersonal('Click'), t, 0.015)
+      this.cuentaPanner.pan.setTargetAtTime(sonido ? 0 : PAN_CLICK_COLCHON, t, 0.015)
     } else {
-      this.cuentaGain.gain.setTargetAtTime(clickId ? (c?.ganancia ?? 0) : 0.5, t, 0.015)
+      this.cuentaGain.gain.setTargetAtTime(clickId ? (c?.ganancia ?? 0) : sonido && !sonido.click ? 0 : 0.5, t, 0.015)
       this.cuentaPanner.pan.setTargetAtTime(c?.pan ?? 0, t, 0.015)
     }
     const de = `${proyecto.id}:${proyecto.revision ?? 0}:${clickId ?? ''}`
@@ -1009,6 +1130,31 @@ export class StreamingEngine implements PlaybackEngine {
         this.golpesCuenta = this.golpesCuenta.filter((x) => x !== golpe)
       }
       this.golpesCuenta.push(golpe)
+    }
+  }
+
+  /**
+   * "Probar el sync": un click en cada golpe, a la misma hora (del parlante)
+   * en todos los dispositivos, al medio y a volumen fijo (tambien en la
+   * consola): poniendo dos juntos se escucha si suenan como uno solo.
+   */
+  probarSync(golpes: { t: number; n: number }[], clockOffsetMs: number): void {
+    if (!this.pruebaGain) {
+      this.pruebaGain = this.ctx.createGain()
+      this.pruebaGain.gain.value = 0.7
+      this.pruebaGain.connect(this.masterGain)
+    }
+    const sonido = this.clickSintetico()
+    const ahora = Date.now()
+    const escuchado = this.ctxEscuchadoAhora()
+    for (const g of golpes) {
+      const t = escuchado + (g.t - clockOffsetMs - ahora) / 1000
+      if (t < this.ctx.currentTime + 0.005) continue
+      const source = this.ctx.createBufferSource()
+      source.buffer = sonido
+      source.connect(this.pruebaGain)
+      source.start(t, g.n === 1 ? 0 : LARGO_SONIDO_CUENTA_SEC, LARGO_SONIDO_CUENTA_SEC)
+      source.onended = () => source.disconnect()
     }
   }
 
@@ -1098,7 +1244,7 @@ export class StreamingEngine implements PlaybackEngine {
     const t = this.ctx.currentTime
     for (const v of this.vocesColchon) {
       v.clickVol.gain.setTargetAtTime((v.c.volumenClick / 100) ** 2, t, 0.02)
-      v.padVol.gain.setTargetAtTime((v.c.volumenPad / 100) ** 2 * this.factorPersonal('Pad'), t, 0.05)
+      v.padVol.gain.setTargetAtTime((v.c.volumenPad / 100) ** 2 * (this.salidaSonido ? 1 : this.factorPersonal('Pad')), t, 0.05)
     }
   }
 

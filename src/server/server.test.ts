@@ -15,7 +15,8 @@ import dgram from 'node:dgram'
 import dnsPacket from 'dns-packet'
 import { responderMdns } from './descubrimiento'
 import { decodePcmSegment, parseWavHeader } from '../shared/wav'
-import { aplicarPaneoAutomatico, codificarMezcla, coeficientesPaneo, mezclaEfectiva, SEGMENTO_SEC, type CanalMezcla } from '../shared/mezcla'
+import { aplicarGrupos, aplicarPaneoAutomatico, CLAVE_GRUPO, codificarMezcla, coeficientesPaneo, mezclaDeSonido, mezclaEfectiva, SEGMENTO_SEC, tipoDePista, type CanalMezcla } from '../shared/mezcla'
+import { DeviceRegistry } from './devices'
 import { migrarProyecto } from './projects'
 import { fichaDesdeProyecto, interpretarFicha } from './ficha'
 import { Mezclador } from './mezclador'
@@ -2869,4 +2870,140 @@ test('colchón con la canción parada: arranca ya (click y pad en su tono) y ▶
   assert.equal(seccion.positionMs, 8500)
   assert.equal((seccion.executeAtServerTime - c.inicio) % 2000, 0)
   await env.cerrar()
+})
+
+test('consola: la mezcla del celular de Sonido es la del director, sin click ni guía (salvo que se pidan) y todo al centro', () => {
+  const pista = (id: string, nombre: string, extra: Partial<Pista> = {}): Pista =>
+    ({ id, nombre, archivo: `${id}.wav`, volumen: 80, pan: 0, mute: false, solo: false, color: '#fff', ...extra }) as Pista
+  const proyecto = {
+    pistas: [
+      pista('c', 'Click', { pan: -100 }),
+      pista('g', 'Guia', { pan: -100 }),
+      pista('b', 'Bajo', { pan: 100 }),
+      pista('k', 'Keys L', { pan: -40 }),
+      pista('x', 'Pad', { pan: 100, mute: true }),
+      pista('h', 'Hablado', { rol: 'guia' }),
+      pista('n', 'Metro Click Loop', { rol: 'normal' })
+    ],
+    tempo: null,
+    analisis: null
+  } as unknown as Pick<Proyecto, 'pistas' | 'tempo' | 'analisis'>
+  assert.deepEqual(
+    proyecto.pistas.map((p) => tipoDePista(proyecto, p)),
+    ['click', 'guia', 'banda', 'banda', 'banda', 'guia', 'banda'],
+    'la marca de la pista manda sobre el nombre'
+  )
+  const ids = (c: CanalMezcla[]): string[] => c.map((x) => x.pistaId)
+  const sola = mezclaDeSonido(proyecto, { click: false, guia: false })
+  assert.deepEqual(ids(sola), ['b', 'k', 'n'], 'la banda (sin la pista muteada por el director)')
+  assert.ok(sola.every((c) => c.pan === 0), 'todo al centro: en estéreo de verdad')
+  assert.ok(Math.abs(sola[0].ganancia - 0.64) < 1e-9, 'con el fader del director')
+  assert.deepEqual(ids(mezclaDeSonido(proyecto, { click: false, guia: true })), ['g', 'b', 'k', 'h', 'n'])
+  assert.deepEqual(ids(mezclaDeSonido(proyecto, { click: true, guia: false })), ['c', 'b', 'k', 'n'])
+  // el solo del director tambien vale (si deja solo el click, a la consola no va nada)
+  const conSolo = { ...proyecto, pistas: proyecto.pistas.map((p) => (p.id === 'c' ? { ...p, solo: true } : p)) }
+  assert.deepEqual(ids(mezclaDeSonido(conSolo, { click: false, guia: false })), [])
+  // mezcla rapida del celular: todo el click a la mitad y la banda muda (encima de lo de cada pista)
+  const personal = { [CLAVE_GRUPO.click]: { ganancia: 0.5, mute: false }, [CLAVE_GRUPO.banda]: { ganancia: 1, mute: true }, bajo: { ganancia: 2, mute: false } }
+  const rapida = aplicarGrupos(proyecto, mezclaEfectiva(proyecto.pistas, personal), personal)
+  assert.deepEqual(ids(rapida), ['c', 'g', 'h'], 'la banda muda (con su ajuste propio igual)')
+  assert.ok(Math.abs(rapida[0].ganancia - 0.32) < 1e-9, 'el click a la mitad')
+  assert.ok(Math.abs(rapida[1].ganancia - 0.64) < 1e-9, 'la guia igual')
+  assert.deepEqual(aplicarGrupos(proyecto, sola, {}), sola, 'sin mezcla rapida no cambia nada')
+  // por lo detectado: la pista que habla es la guia aunque se llame de otra forma
+  const detectado = { ...proyecto, analisis: { guiaPistaId: 'k' } } as unknown as typeof proyecto
+  assert.equal(tipoDePista(detectado, proyecto.pistas[3]), 'guia')
+})
+
+test('roles: se recuerdan en la compu por celular; manda lo de la compu salvo un cambio hecho sin conexión', () => {
+  const dir = tmpDir('multitrack-roles-')
+  const archivo = path.join(dir, 'dispositivos.json')
+  const a = new DeviceRegistry(archivo)
+  a.conectar('s1', 'celular', 'celu-uno-123', 'Bajo', 'musico')
+  a.conectar('s2', 'celular', 'celu-dos-456', null, 'sonido', { guia: true })
+  a.conectar('s3', 'celular', 'celu-tres-789', null, 'jefe')
+  a.conectar('s4', 'compu', null, null, 'director')
+  const fila = (r: DeviceRegistry, id: string) => r.listar().find((d) => d.id === id)!
+  assert.equal(fila(a, 'celular:celu-uno-123').rol, 'musico')
+  assert.deepEqual(fila(a, 'celular:celu-dos-456').salida, { click: false, guia: true })
+  assert.equal(fila(a, 'celular:celu-tres-789').rol, null, 'un rol que no existe no se toma')
+  assert.equal(fila(a, 'compu').rol, null, 'la compu no tiene rol')
+  assert.equal(a.setSalida('celular:celu-uno-123', { guia: true }), false, 'solo la consola tiene salida')
+  assert.equal(a.setRol('compu', 'sonido'), false)
+  assert.ok(a.setRol('celular:celu-uno-123', 'sonido'))
+  assert.deepEqual(fila(a, 'celular:celu-uno-123').salida, { click: false, guia: false }, 'una consola nueva arranca con la banda sola')
+  assert.ok(a.setSalida('celular:celu-uno-123', { click: true }))
+  assert.deepEqual(fila(a, 'celular:celu-uno-123').salida, { click: true, guia: false }, 'cambia solo lo pedido')
+  a.desconectar('s1')
+  assert.equal(fila(a, 'celular:celu-uno-123').rol, 'sonido', 'desconectado sigue con su rol')
+
+  // otra vez la compu (se cerro y se abrio): recuerda los roles
+  const b = new DeviceRegistry(archivo)
+  // el celular dice "musico" (lo que tenia guardado), pero la compu lo paso a la consola: manda la compu
+  b.conectar('t1', 'celular', 'celu-uno-123', null, 'musico')
+  assert.equal(fila(b, 'celular:celu-uno-123').rol, 'sonido')
+  assert.deepEqual(fila(b, 'celular:celu-uno-123').salida, { click: true, guia: false })
+  // un cambio hecho en el celular sin conexion: manda el del celular
+  b.conectar('t2', 'celular', 'celu-dos-456', null, 'voz', undefined, true)
+  assert.equal(fila(b, 'celular:celu-dos-456').rol, 'voz')
+  assert.equal(fila(b, 'celular:celu-dos-456').salida, null)
+  // uno que la compu no conoce: el suyo
+  b.conectar('t3', 'celular', 'celu-nuevo-000', null, 'multimedia')
+  assert.equal(fila(b, 'celular:celu-nuevo-000').rol, 'multimedia')
+  const c = new DeviceRegistry(archivo)
+  c.conectar('u1', 'celular', 'celu-dos-456', null)
+  assert.equal(fila(c, 'celular:celu-dos-456').rol, 'voz')
+  // archivo roto: se empieza de cero sin romper nada
+  fs.writeFileSync(archivo, '{roto')
+  assert.equal(new DeviceRegistry(archivo).listar().length, 0)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('roles: solo el director maneja la canción desde un celular; la compu elige quién va a la consola', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  await cargarZip(compu, crearZip('Roles', { 'Click.wav': wav16(new Float32Array(44100 * 4), 44100), 'Bajo.wav': wav16(new Float32Array(44100 * 4), 44100) }))
+  const director = await env.conectar({ origen: 'celular', deviceId: 'celular-director-1', rol: 'director' })
+  const musico = await env.conectar({ origen: 'celular', deviceId: 'celular-musico-1', rol: 'musico' })
+  const sinRol = await env.conectar({ origen: 'celular', deviceId: 'celular-sinrol-1' })
+  const rechazo = esperarEvento<{ mensaje: string }>(musico, 'accion:rechazada')
+  musico.emit('transport:play', {})
+  assert.match((await rechazo).mensaje, /director/)
+  assert.equal(env.server.state.getActiveTab()!.playback.estado, 'stopped')
+  // el director si; un celular que todavia no eligio rol, tambien (como antes de los roles)
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), director.emit('transport:play', {})])
+  assert.equal(env.server.state.getActiveTab()!.playback.estado, 'playing')
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), sinRol.emit('transport:pause')])
+  assert.equal(env.server.state.getActiveTab()!.playback.estado, 'paused')
+  // el director elige como salta (desde su celular); el musico no
+  const rechazoModo = esperarEvento<{ mensaje: string }>(musico, 'accion:rechazada')
+  musico.emit('salto:modo', { modo: 'inmediato' })
+  await rechazoModo
+  assert.equal(env.server.state.modoSalto, 'seccion')
+  await Promise.all([esperarEvento(compu, 'estado:actualizado', (x: EstadoCompleto) => x.modoSalto === 'compas'), director.emit('salto:modo', { modo: 'compas' })])
+  // con el control bloqueado por la compu, ni el director
+  compu.emit('lock:set', { locked: true })
+  await esperar(50)
+  const rechazoDirector = esperarEvento<{ mensaje: string }>(director, 'accion:rechazada')
+  director.emit('transport:play', {})
+  assert.match((await rechazoDirector).mensaje, /bloqueado/)
+  compu.emit('lock:set', { locked: false })
+
+  // el musico se pasa a la consola solo; la salida la cambia el mismo o la compu, nadie mas
+  assert.equal((await emitAck<{ ok: boolean }>(musico, 'rol:elegir', { rol: 'sonido' })).ok, true)
+  const lista = (): DispositivoInfo[] => env.server.devices.listar()
+  const idMusico = 'celular:celular-musico-1'
+  assert.equal(lista().find((d) => d.id === idMusico)!.rol, 'sonido')
+  assert.equal((await emitAck<{ ok: boolean }>(director, 'sonido:salida', { id: idMusico, guia: true })).ok, false, 'otro celular no puede cambiarla')
+  assert.equal((await emitAck<{ ok: boolean }>(musico, 'sonido:salida', { guia: true })).ok, true)
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'sonido:salida', { id: idMusico, click: true })).ok, true)
+  assert.deepEqual(lista().find((d) => d.id === idMusico)!.salida, { click: true, guia: true })
+  assert.equal((await emitAck<{ ok: boolean }>(director, 'dispositivo:rol', { id: idMusico, rol: 'musico' })).ok, false, 'un celular no le cambia el rol a otro')
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'dispositivo:rol', { id: idMusico, rol: 'musico' })).ok, true)
+  assert.equal(lista().find((d) => d.id === idMusico)!.rol, 'musico')
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'dispositivo:rol', { id: idMusico, rol: 'cualquiera' })).ok, false)
+  // quedo guardado en la compu
+  const guardado = JSON.parse(fs.readFileSync(path.join(env.appDir, 'dispositivos.json'), 'utf-8')) as Record<string, { rol: string }>
+  assert.equal(guardado[idMusico].rol, 'musico')
+  assert.equal(guardado['celular:celular-director-1'].rol, 'director')
 })

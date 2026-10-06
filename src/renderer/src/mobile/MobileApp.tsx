@@ -7,6 +7,10 @@ import {
   LayoutGrid,
   ListMusic,
   Lock,
+  Megaphone,
+  Metronome,
+  Mic,
+  Music4,
   Pause,
   Play,
   Repeat,
@@ -23,14 +27,13 @@ import {
   WifiOff,
   X
 } from 'lucide-react'
-import type { ColchonActivo, OndaCancion, Proyecto, SaltoPendiente } from '@shared/types'
-import { bpmDistintoEnSeccion, compasesQueFaltan, seccionEn, textoQueFaltan, type Seccion } from '@shared/playback'
-import { textoSemitonos, tonalidadEn } from '@shared/tonalidad'
+import type { ColchonActivo, Proyecto, RolDispositivo } from '@shared/types'
+import { bpmDistintoEnSeccion, compasesQueFaltan, seccionEn, textoQueFaltan } from '@shared/playback'
 import type { AppController } from '../app/useAppController'
-import { useGolpeColchon, useGolpeCuenta, usePlayheadMs, usePlayheadPaso } from '../app/playheadStore'
+import { useGolpeColchon, useGolpeCuenta, usePlayheadPaso } from '../app/playheadStore'
 import { leerPref } from '../app/preferencias'
 import { clavePista, type AjustePersonal } from '../audio/PlaybackEngine'
-import { fueraDelSolo } from '@shared/mezcla'
+import { CLAVE_GRUPO, fueraDelSolo, tipoDePista, type MezclaPersonal } from '@shared/mezcla'
 import { VOLUMEN_MAX } from '../audio/streamConfig'
 import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
@@ -38,11 +41,15 @@ import { Avisos } from '../ui/Avisos'
 import { FaderTactil } from '../ui/FaderTactil'
 import { useConfirmar } from '../ui/Confirmar'
 import { useWakeLock } from './useWakeLock'
-import { OndaDibujo, useOnda } from '../ui/Onda'
+import { useOnda } from '../ui/Onda'
 import { textoPorcentaje, velocidadAplicada } from '@shared/velocidad'
 import { guardarPref } from '../app/preferencias'
 import { Hoja, HojaAjustes } from './Hojas'
 import { AbrirEnApp, AccesoFijo, HojaInvitar, PantallaCodigo, PantallaLicencia } from './Conectar'
+import { AvisoTono, avisoDeTono, cambioDeTono, colorClaro, faltaPara, largoDeSeccion, MiniTimeline, TonoQueSuena } from './Comunes'
+import { ChipRol, ElegirRol, INFO_ROL } from './Roles'
+import { VistaSonido } from './VistaSonido'
+import { VistaMultimedia, VistaVoz } from './VistasRol'
 import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion'
 import { PulsoColchon, textoColchon, textoCompasColchon } from '../ui/Colchon'
 import { SALIDA_PAD_VUELTA_MS } from '@shared/colchon'
@@ -52,12 +59,15 @@ type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones' | 'invitar'
 type VistaCelular = 'cancion' | 'mezcla'
 
 /**
- * Celular: la pantalla principal es la cancion (el recorrido con la forma de
- * onda y las secciones como tarjetas grandes: tocar = ir ahi) y "Mi mezcla"
- * es otra pantalla entera, a un toque. El transporte va siempre abajo.
+ * Celular: cada uno ve lo suyo segun su rol (ver Roles.tsx). Director y
+ * musico: la cancion (el recorrido con la forma de onda y las secciones como
+ * tarjetas grandes; el director las toca para ir ahi) y "Mi mezcla" en otra
+ * pantalla, a un toque. Voz: la seccion, lo que sigue y el tono, bien grandes.
+ * Sonido: la consola (banda sola, vumetro, bloqueo). Multimedia: que sigue y
+ * cuanto falta, sin audio.
  */
 export function MobileApp({ controller }: { controller: AppController }) {
-  const { estado, conectado } = controller
+  const { estado, conectado, rol } = controller
   const [hoja, setHoja] = useState<HojaAbierta>(null)
   const [vista, setVistaState] = useState<VistaCelular>(() => (leerPref<string>('vista-celular', 'cancion') === 'mezcla' ? 'mezcla' : 'cancion'))
   const setVista = (v: VistaCelular): void => {
@@ -71,13 +81,25 @@ export function MobileApp({ controller }: { controller: AppController }) {
   const app = puenteAndroid()
   const [mostrarActivar, setMostrarActivar] = useState(!app)
   const activarAudio = controller.activarAudio
+  const [cambiandoRol, setCambiandoRol] = useState(false)
+  const consola = rol === 'sonido'
+  const multimedia = rol === 'multimedia'
+  // multimedia: sin audio salvo que lo pida (igual hace falta un toque para que la pantalla no se apague)
+  const necesitaAudio = !multimedia || controller.escucharMultimedia
+  const [despierto, setDespierto] = useState(!!app)
+  const [consolaBloqueada, setConsolaBloqueadaState] = useState<boolean>(() => leerPref('consola-bloqueada', false))
+  const setConsolaBloqueada = (v: boolean): void => {
+    setConsolaBloqueadaState(v)
+    guardarPref('consola-bloqueada', v)
+  }
+  const bloqueada = consola && consolaBloqueada
   useEffect(() => {
-    if (!app) return
+    if (!app || !necesitaAudio || rol === null) return
     void activarAudio()
     // si el sistema igual pidio un toque, aparece el boton
     const t = setTimeout(() => setMostrarActivar(true), 1500)
     return () => clearTimeout(t)
-  }, [app, activarAudio])
+  }, [app, activarAudio, necesitaAudio, rol])
 
   const miEtiqueta = useMemo(() => {
     const id = `celular:${leerPref<string>('device-id', '')}`
@@ -86,24 +108,47 @@ export function MobileApp({ controller }: { controller: AppController }) {
 
   async function empezar(): Promise<void> {
     if (!app) wake.activar() // tiene que ser dentro del toque del usuario
-    await controller.activarAudio()
+    setDespierto(true)
+    if (necesitaAudio) await controller.activarAudio()
   }
 
+  async function elegirRol(r: RolDispositivo): Promise<void> {
+    controller.elegirRol(r)
+    setCambiandoRol(false)
+    window.scrollTo({ top: 0 })
+    // el mismo toque arranca (audio y pantalla encendida) si todavia no estaba
+    if (!app) wake.activar()
+    setDespierto(true)
+    if ((r !== 'multimedia' || controller.escucharMultimedia) && !controller.audioActivo) await controller.activarAudio()
+  }
+
+  const pedirInicio = rol !== null && !cambiandoRol && mostrarActivar && (necesitaAudio ? !controller.audioActivo : !despierto)
+  // barra de abajo: el transporte del director (los demas, solo en "Mi mezcla": la cancion y la seccion a la vista)
+  const conBarra = !!proyecto && !consola && !multimedia && (controller.puedeControlar || !!estado?.locked || vista === 'mezcla')
+
   return (
-    <div className={`mobile ${proyecto ? 'con-barra' : ''} vista-${vista}`}>
+    <div className={`mobile ${conBarra ? 'con-barra' : ''} vista-${vista} ${rol ? `rol-${rol}` : ''}`}>
       <div className="m-top">
         <span className="m-conexion">
           <span className={`punto ${conectado ? 'verde' : 'rojo'}`} />
           <strong>{miEtiqueta}</strong>
         </span>
-        <button onClick={() => setHoja('invitar')} disabled={!conectado} aria-label="Invitar a alguien">
-          <UserPlus size={18} /> Invitar
-        </button>
-        <button onClick={() => setHoja('ajustes')} aria-label="Ajustes">
+        <ChipRol rol={rol} onClick={() => setCambiandoRol(true)} deshabilitado={bloqueada} />
+        {!consola && (
+          <button onClick={() => setHoja('invitar')} disabled={!conectado} aria-label="Invitar a alguien">
+            <UserPlus size={18} /> <span className="m-top-texto">Invitar</span>
+          </button>
+        )}
+        <button onClick={() => setHoja('ajustes')} aria-label="Ajustes" disabled={bloqueada}>
           <Settings size={18} />
         </button>
       </div>
 
+      {controller.talkbackHablando && !consola && !(multimedia && !controller.escucharMultimedia) && (
+        <div className="m-talkback" role="status">
+          <Mic size={18} /> Te habla la compu
+        </div>
+      )}
       {!conectado && (
         <div className="m-alerta error">
           <WifiOff size={20} />
@@ -116,14 +161,18 @@ export function MobileApp({ controller }: { controller: AppController }) {
           <span>Problema de audio en {controller.errorAudio}. Avisale al que maneja la compu.</span>
         </div>
       )}
-      {controller.bufferEstado === 'critico' && !controller.errorAudio && (
+      {controller.bufferEstado === 'critico' && !controller.errorAudio && !consola && (
         <div className="m-alerta warn">
           <AlertTriangle size={20} />
           <span>El WiFi está lento: el audio puede cortarse. Acercate al router si podés.</span>
         </div>
       )}
 
-      {proyecto ? (
+      {consola ? (
+        <VistaSonido controller={controller} bloqueada={consolaBloqueada} onBloquear={setConsolaBloqueada} />
+      ) : multimedia ? (
+        <VistaMultimedia controller={controller} proyecto={proyecto} onHoja={setHoja} />
+      ) : proyecto ? (
         <>
           <div className="m-vistas segmentado" role="tablist" aria-label="Pantalla">
             <button role="tab" aria-selected={vista === 'cancion'} className={vista === 'cancion' ? 'activo' : ''} onClick={() => setVista('cancion')}>
@@ -136,6 +185,8 @@ export function MobileApp({ controller }: { controller: AppController }) {
           {vista === 'cancion' ? (
             proyecto.colchon ? (
               <VistaColchon controller={controller} proyecto={proyecto} />
+            ) : rol === 'voz' ? (
+              <VistaVoz controller={controller} proyecto={proyecto} onHoja={setHoja} />
             ) : (
               <VistaCancion controller={controller} proyecto={proyecto} onHoja={setHoja} />
             )
@@ -154,16 +205,27 @@ export function MobileApp({ controller }: { controller: AppController }) {
         </>
       )}
 
-      {proyecto && <BarraFlotante controller={controller} onHoja={setHoja} conInfo={vista === 'mezcla'} />}
+      {conBarra && <BarraFlotante controller={controller} onHoja={setHoja} conInfo={vista === 'mezcla'} />}
 
-      {!controller.audioActivo && mostrarActivar && (
+      {pedirInicio && (
         <div className="activar">
           <h1>{proyecto?.nombre ?? 'AirTracks'}</h1>
-          <p>Conectá los auriculares y tocá el botón. La pantalla va a quedar encendida mientras uses la app.</p>
+          <p>
+            {consola
+              ? 'Conectá el cable a la consola y tocá el botón. La pantalla va a quedar encendida.'
+              : multimedia
+                ? 'Tocá el botón: la pantalla va a quedar encendida mientras uses la app.'
+                : 'Conectá los auriculares y tocá el botón. La pantalla va a quedar encendida mientras uses la app.'}
+          </p>
           <button className="activar-boton" onClick={empezar}>
             <Headphones size={40} />
             Tocá para empezar
           </button>
+          {rol && (
+            <button className="activar-rol" onClick={() => setCambiandoRol(true)}>
+              {INFO_ROL[rol].nombre} · <u>cambiar</u>
+            </button>
+          )}
           <p style={{ fontSize: 13, color: 'var(--text-3)' }}>
             <span className={`punto ${conectado ? 'verde' : 'rojo'}`} /> {conectado ? 'Conectado a la computadora' : 'Conectando…'}
           </p>
@@ -172,12 +234,18 @@ export function MobileApp({ controller }: { controller: AppController }) {
         </div>
       )}
 
+      {(rol === null || cambiandoRol) && <ElegirRol actual={rol} onElegir={(r) => void elegirRol(r)} onCerrar={rol !== null ? () => setCambiandoRol(false) : undefined} />}
+
       {hoja === 'ajustes' && (
         <HojaAjustes
           controller={controller}
           etiqueta={miEtiqueta}
           pantallaEncendida={!!app || wake.activo}
           accesoFijo={<AccesoFijo controller={controller} />}
+          onCambiarRol={() => {
+            setHoja(null)
+            setCambiandoRol(true)
+          }}
           onCerrar={() => setHoja(null)}
         />
       )}
@@ -210,6 +278,11 @@ function ProximaVez({ controller }: { controller: AppController }) {
   )
 }
 
+/** Por que este celular no maneja la cancion. */
+function textoSinControl(controller: AppController): string {
+  return controller.estado?.locked ? 'El control lo tiene la computadora.' : 'La canción la maneja el director (en ⚙ se cambia el rol).'
+}
+
 // ---------- Mi mezcla (pantalla principal) ----------
 
 function textoGanancia(pct: number): string {
@@ -231,16 +304,34 @@ function CanalGeneral({ controller }: { controller: AppController }) {
   )
 }
 
-/** "Mi mezcla" del colchon: el pad (y, en un colchon de la lista, el click), solo en este celular. */
-function CanalColchon({ nombre, color, ajuste, onCambio }: { nombre: string; color: string; ajuste: AjustePersonal | undefined; onCambio: (patch: Partial<AjustePersonal>) => void }) {
+/** "Mi mezcla" de lo que no es una pista: el pad y el click del colchon, el talkback. Solo en este celular. */
+function CanalColchon({
+  nombre,
+  color,
+  ajuste,
+  onCambio,
+  etiquetaAviso = 'colchón',
+  Icono = Waves,
+  aria
+}: {
+  nombre: string
+  color: string
+  ajuste: AjustePersonal | undefined
+  onCambio: (patch: Partial<AjustePersonal>) => void
+  etiquetaAviso?: string
+  Icono?: typeof Waves
+  /** como lo nombran los lectores de pantalla ("todo el click"); por defecto, el nombre */
+  aria?: string
+}) {
+  const quien = aria ?? nombre
   const a = ajuste ?? { ganancia: 1, mute: false }
   const pct = Math.round(a.ganancia * 100)
   return (
     <div className={`m-canal m-canal-colchon ${a.mute ? 'muteado' : ''}`}>
       <div className="m-canal-cabeza">
-        <Waves size={15} color={color} />
+        <Icono size={15} color={color} />
         <span className="m-canal-nombre">{nombre}</span>
-        <span className="m-canal-aviso">colchón</span>
+        <span className="m-canal-aviso">{etiquetaAviso}</span>
         <small className="num">{a.mute ? 'muda' : textoGanancia(pct)}</small>
       </div>
       <div className="m-canal-control">
@@ -252,14 +343,14 @@ function CanalColchon({ nombre, color, ajuste, onCambio }: { nombre: string; col
           paso={5}
           color={color}
           deshabilitado={a.mute}
-          etiqueta={`Volumen de ${nombre} en este celular`}
+          etiqueta={`Volumen de ${quien} en este celular`}
           onCambio={(v) => onCambio({ ganancia: v / 100 })}
         />
         <button
           className={`m-ms m-mute ${a.mute ? 'activo' : ''}`}
           onClick={() => onCambio({ mute: !a.mute })}
           aria-pressed={a.mute}
-          aria-label={`Mute de ${nombre} en este celular`}
+          aria-label={`Mute de ${quien} en este celular`}
           title="Mute: no escucharlo (solo en este celular)"
         >
           M
@@ -272,6 +363,12 @@ function CanalColchon({ nombre, color, ajuste, onCambio }: { nombre: string; col
 function Mezcla({ controller, proyecto }: { controller: AppController; proyecto: Proyecto }) {
   const estado = controller.estado
   const mezcla = controller.mezclaPersonal
+  // la voz casi nunca necesita pista por pista: arranca plegado (se recuerda)
+  const [verPistas, setVerPistasState] = useState<boolean>(() => leerPref('ver-pistas', controller.rol !== 'voz'))
+  const setVerPistas = (v: boolean): void => {
+    setVerPistasState(v)
+    guardarPref('ver-pistas', v)
+  }
   const hayCambios = Object.keys(mezcla).length > 0
   const soloAca = proyecto.pistas.some((p) => mezcla[clavePista(p.nombre)]?.solo)
 
@@ -298,13 +395,18 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
         </button>
       </div>
       <CanalGeneral controller={controller} />
+      <MezclaRapida proyecto={proyecto} mezcla={mezcla} onCambio={set} />
+      {controller.talkbackRecibido && <CanalColchon nombre="Talkback" etiquetaAviso="la compu" color="var(--danger)" Icono={Mic} ajuste={mezcla[clavePista('Talkback')]} onCambio={(patch) => set('Talkback', patch)} />}
       {(proyecto.colchon || estado?.colchon) && (
         <>
           {proyecto.colchon && <CanalColchon nombre="Click" color="var(--text-2)" ajuste={mezcla[clavePista('Click')]} onCambio={(patch) => set('Click', patch)} />}
           <CanalColchon nombre="Pad" color="var(--colchon)" ajuste={mezcla[clavePista('Pad')]} onCambio={(patch) => set('Pad', patch)} />
         </>
       )}
-      {proyecto.pistas.map((p) => {
+      <button className="m-pistas-una-por-una" onClick={() => setVerPistas(!verPistas)} aria-expanded={verPistas}>
+        <ChevronDown size={16} style={{ transform: verPistas ? 'rotate(180deg)' : undefined }} /> Pistas una por una ({proyecto.pistas.length})
+      </button>
+      {verPistas && proyecto.pistas.map((p) => {
         const ajuste: AjustePersonal = mezcla[clavePista(p.nombre)] ?? { ganancia: 1, mute: false }
         const pct = Math.round(ajuste.ganancia * 100)
         const afueraDelSolo = fueraDelSolo(proyecto.pistas, mezcla, p)
@@ -362,73 +464,39 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
   )
 }
 
-// ---------- barra flotante: cancion, seccion y transporte ----------
-
-function faltaPara(salto: SaltoPendiente, pos: number): string {
-  const s = Math.max(0, Math.ceil((salto.limiteMs - pos) / 1000))
-  return s <= 0 ? 'ya' : `en ${s} s`
-}
-
-/** Tonalidad en la que suena la cancion ("B +2"): asi la banda sabe en que tono esta tocando. */
-/** La tonalidad que suena en `pos` (la de la seccion, si la cancion cambia de tono), con el tono cambiado. */
-function TonoQueSuena({ proyecto, pos }: { proyecto: Proyecto; pos: number }) {
-  const n = proyecto.tonoAplicado ?? 0
-  const tono = tonalidadEn(proyecto, pos)
-  if (!tono && !n) return null
-  return (
-    <span className={`m-barra-tono num ${n ? 'cambiado' : ''}`} title={n ? `Tono cambiado ${textoSemitonos(n)} semitonos` : 'Tonalidad'}>
-      {tono}
-      {n !== 0 && <small>{textoSemitonos(n)}</small>}
-    </span>
-  )
-}
-
-/** " · en E" si la seccion `s` suena en otro tono que el de ahora. */
-function cambioDeTono(p: Proyecto, pos: number, s: Seccion | null | undefined): string {
-  if (!s || !p.marcadores.some((m) => m.tonalidad)) return ''
-  const luego = tonalidadEn(p, s.inicioMs)
-  return luego && luego !== tonalidadEn(p, pos) ? ` · en ${luego}` : ''
-}
-
-/** Cuanto se muestra "Tono: E" despues de que la cancion cambio de tono. */
-const AVISO_TONO_MS = 8000
-
 /**
- * "Tono: E" grande cuando la cancion cambia de tono: los ultimos 2 compases
- * antes (lo que viene: la seccion siguiente o la elegida) y los primeros
- * segundos despues. null = no hay cambio cerca.
+ * Mezcla rapida: un fader para todo el click, toda la guia y toda la banda
+ * (lo mas comun: "mas click", "menos guia"). Encima de lo de cada pista.
  */
-function avisoDeTono(
-  p: Proyecto,
-  pos: number,
-  proxima: Seccion | null | undefined,
-  faltan: number | null,
-  finMs: number | null
-): { tono: string; ya: boolean } | null {
-  if (!p.marcadores.some((m) => m.tonalidad)) return null
-  const ahora = tonalidadEn(p, pos)
-  if (proxima) {
-    const luego = tonalidadEn(p, proxima.inicioMs)
-    const cerca = faltan !== null ? faltan <= 2 : finMs !== null && finMs - pos < 5000
-    if (luego && luego !== ahora && cerca) return { tono: luego, ya: false }
-  }
-  // donde empezo el tono que suena: si fue hace poco (y era otro), se sigue avisando
-  let desde = -Infinity
-  for (const m of p.marcadores) if (m.tonalidad && m.tiempoMs <= pos + 1 && m.tiempoMs > desde) desde = m.tiempoMs
-  if (ahora && desde > 0 && pos - desde < AVISO_TONO_MS && tonalidadEn(p, desde - 1) !== ahora) return { tono: ahora, ya: true }
-  return null
-}
-
-/** "Tono: E" (o "→ Tono: E" antes de que cambie). */
-function AvisoTono({ aviso }: { aviso: { tono: string; ya: boolean } | null }) {
-  if (!aviso) return null
+function MezclaRapida({ proyecto, mezcla, onCambio }: { proyecto: Proyecto; mezcla: MezclaPersonal; onCambio: (nombre: string, patch: Partial<AjustePersonal>) => void }) {
+  const hay = new Set(proyecto.pistas.map((p) => tipoDePista(proyecto, p)))
+  const grupos = (
+    [
+      ['click', 'Click', 'var(--text-2)', Metronome],
+      ['guia', 'Guía', 'var(--loop)', Megaphone],
+      ['banda', 'Banda', 'var(--play)', Music4]
+    ] as const
+  ).filter(([t]) => hay.has(t))
+  if (grupos.length < 2) return null
   return (
-    <span className={`m-aviso-tono num ${aviso.ya ? 'ya' : 'viene'}`} role="status" aria-label={aviso.ya ? `La canción pasó a ${aviso.tono}` : `La canción pasa a ${aviso.tono}`} data-testid="aviso-tono">
-      <small>{aviso.ya ? 'Tono' : 'Pasa a'}</small>
-      <b>{aviso.tono}</b>
-    </span>
+    <div className="m-mezcla-rapida" aria-label="Mezcla rápida">
+      {grupos.map(([t, nombre, color, Icono]) => (
+        <CanalColchon
+          key={t}
+          nombre={nombre}
+          etiquetaAviso={t === 'banda' ? 'todo lo demás' : 'todas sus pistas'}
+          color={color}
+          Icono={Icono}
+          ajuste={mezcla[CLAVE_GRUPO[t]]}
+          onCambio={(patch) => onCambio(CLAVE_GRUPO[t], patch)}
+          aria={t === 'click' ? 'todo el click' : t === 'guia' ? 'toda la guía' : 'toda la banda'}
+        />
+      ))}
+    </div>
   )
 }
+
+// ---------- barra flotante: cancion, seccion y transporte ----------
 
 /**
  * Abajo, siempre: el transporte. En "Mi mezcla" ademas la cancion y la
@@ -441,7 +509,8 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
   const golpe = useGolpeCuenta()
   const actual = seccionEn(secciones, pos)
   const siguiente = actual ? secciones[actual.indice + 1] : null
-  const locked = estado?.locked ?? false
+  // sin control: la compu lo bloqueo, o este celular no es el del director
+  const locked = !controller.puedeControlar
   const loop = estado?.loop ?? false
   const sonando = estado?.playbackActivo?.estado === 'playing'
   const salto = estado?.saltoPendiente ?? null
@@ -528,7 +597,7 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
       <div className="m-barra-botones">
         {locked ? (
           <span className="m-barra-bloqueado">
-            <Lock size={15} /> Control en la compu
+            <Lock size={15} /> {estado?.locked ? 'Control en la compu' : 'Maneja el director'}
           </span>
         ) : (
           <>
@@ -578,43 +647,6 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
   )
 }
 
-/** La cancion de punta a punta, dividida en secciones. Grande (el "recorrido"), con la forma de onda y los nombres. */
-function MiniTimeline({ controller, onda, grande }: { controller: AppController; onda?: OndaCancion | null; grande?: boolean }) {
-  const { secciones, estado } = controller
-  const dur = Math.max(estado?.proyectoActivo?.duracionTotalMs ?? 1, 1)
-  const pos = usePlayheadMs()
-  const actual = seccionEn(secciones, pos)
-  const salto = estado?.saltoPendiente ?? null
-  const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
-  const pct = (ms: number): string => `${Math.min(100, Math.max(0, (ms / dur) * 100))}%`
-  return (
-    <span className={`m-timeline ${grande ? 'm-recorrido' : ''} ${onda ? 'con-onda' : ''}`} aria-hidden>
-      {secciones.map((s) => (
-        <span
-          key={s.marcador?.id ?? 'inicio'}
-          className={`${actual?.indice === s.indice ? 'actual' : ''} ${destino?.indice === s.indice ? 'destino' : ''}`}
-          style={{ width: `${((s.finMs - s.inicioMs) / dur) * 100}%`, background: colorDeSeccion(s) }}
-        >
-          {grande && s.marcador && <em>{s.nombre}</em>}
-        </span>
-      ))}
-      {onda && <OndaDibujo onda={onda} duracionMs={dur} className="m-onda" />}
-      {grande && <span className="m-pasado" style={{ width: pct(pos) }} />}
-      {salto && <span className="m-salto-limite" style={{ left: pct(salto.limiteMs) }} />}
-      <span className="m-playhead" style={{ left: pct(pos) }} />
-    </span>
-  )
-}
-
-/** Cuantos compases (con tempo) o cuanto dura una seccion. */
-function largoDeSeccion(s: Seccion, compasesMs: number[] | null): string {
-  if (compasesMs && compasesMs.length > 1) {
-    const n = compasesMs.filter((c) => c >= s.inicioMs - 50 && c < s.finMs - 50).length
-    if (n > 0) return `${n} ${n === 1 ? 'compás' : 'compases'}`
-  }
-  return formatMmSs(s.finMs - s.inicioMs)
-}
-
 // ---------- la cancion: recorrido + secciones ----------
 
 function VistaCancion({ controller, proyecto, onHoja }: { controller: AppController; proyecto: Proyecto; onHoja: (h: HojaAbierta) => void }) {
@@ -624,7 +656,8 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
   const onda = useOnda(proyecto)
   const actual = seccionEn(secciones, pos)
   const siguiente = actual ? secciones[actual.indice + 1] : null
-  const locked = estado?.locked ?? false
+  // sin control: la compu lo bloqueo, o este celular no es el del director
+  const locked = !controller.puedeControlar
   const loop = estado?.loop ?? false
   const sonando = estado?.playbackActivo?.estado === 'playing'
   const salto = estado?.saltoPendiente ?? null
@@ -651,7 +684,7 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
         : 'Tocá una sección: la actual termina y sigue la que elijas, sin cortes.'
 
   return (
-    <section className="m-vista-cancion" aria-label="Canción">
+    <section className={`m-vista-cancion ${locked && !estado?.locked ? 'solo-mirar' : ''}`} aria-label="Canción">
       {estado?.colchon && <AvisoColchon controller={controller} colchon={estado.colchon} />}
       <div className="m-cancion-cabeza">
         <button className="m-cancion-nombre" onClick={() => onHoja('canciones')} aria-label={`${proyecto.nombre}: ver las canciones`}>
@@ -748,10 +781,26 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
           })}
       </div>
       {conMarcador.length === 0 && <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>}
+      {!locked && conMarcador.length > 0 && (
+        <div className="m-modo-salto" role="radiogroup" aria-label="Cómo salta al tocar una sección">
+          <span>Saltar</span>
+          {(
+            [
+              ['seccion', 'al terminar'],
+              ['compas', 'en el compás'],
+              ['inmediato', 'ya']
+            ] as const
+          ).map(([m, texto]) => (
+            <button key={m} role="radio" aria-checked={modo === m} className={modo === m ? 'activo' : ''} onClick={() => controller.setModoSalto(m)}>
+              {texto}
+            </button>
+          ))}
+        </div>
+      )}
       <p className="m-ayuda-salto">
         {locked ? (
           <>
-            <Lock size={14} /> El control lo tiene la computadora.
+            <Lock size={14} /> {textoSinControl(controller)}
           </>
         ) : (
           ayuda
@@ -766,7 +815,7 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
 /** Arriba de la cancion, mientras suena un colchon: que pasa y como se sale. */
 function AvisoColchon({ controller, colchon }: { controller: AppController; colchon: ColchonActivo }) {
   const e = controller.estado
-  const locked = e?.locked ?? false
+  const locked = !controller.puedeControlar
   const empezo = useGolpeColchon() !== null
   const terminando = colchon.hasta !== null
   const deEstaCancion = colchon.desdeCancion && colchon.tabId === e?.activeTabId
@@ -832,7 +881,8 @@ function VistaColchon({ controller, proyecto }: { controller: AppController; pro
 function HojaSecciones({ controller, onCerrar }: { controller: AppController; onCerrar: () => void }) {
   const pos = usePlayheadPaso(200)
   const { estado } = controller
-  const locked = estado?.locked ?? false
+  // sin control: la compu lo bloqueo, o este celular no es el del director
+  const locked = !controller.puedeControlar
   const salto = estado?.saltoPendiente ?? null
   const sonando = estado?.playbackActivo?.estado === 'playing'
   const modo = estado?.modoSalto ?? 'seccion'
@@ -851,7 +901,7 @@ function HojaSecciones({ controller, onCerrar }: { controller: AppController; on
     <Hoja titulo="Secciones" onCerrar={onCerrar}>
       {locked && (
         <p className="ayuda">
-          <Lock size={14} /> El control lo tiene la computadora.
+          <Lock size={14} /> {textoSinControl(controller)}
         </p>
       )}
       {!locked && sonando && <p className="ayuda" style={{ marginTop: 0 }}>{explicacion}</p>}
@@ -892,7 +942,8 @@ function HojaSecciones({ controller, onCerrar }: { controller: AppController; on
 function HojaCanciones({ controller, onCerrar }: { controller: AppController; onCerrar: () => void }) {
   const confirmar = useConfirmar()
   const { estado } = controller
-  const locked = estado?.locked ?? false
+  // sin control: la compu lo bloqueo, o este celular no es el del director
+  const locked = !controller.puedeControlar
   const tabs = estado?.tabs ?? []
   const iActiva = tabs.findIndex((t) => t.tabId === estado?.activeTabId)
 
@@ -919,7 +970,7 @@ function HojaCanciones({ controller, onCerrar }: { controller: AppController; on
     <Hoja titulo={estado?.lista ? `Canciones · ${estado.lista.nombre}` : 'Canciones'} onCerrar={onCerrar}>
       {locked && (
         <p className="ayuda">
-          <Lock size={14} /> El control lo tiene la computadora.
+          <Lock size={14} /> {textoSinControl(controller)}
         </p>
       )}
       <ol className="m-canciones">
@@ -935,11 +986,4 @@ function HojaCanciones({ controller, onCerrar }: { controller: AppController; on
       </ol>
     </Hoja>
   )
-}
-
-/** Version mas clara de un color de seccion, para texto sobre fondo oscuro. */
-function colorClaro(hex: string): string {
-  const n = parseInt(hex.slice(1), 16)
-  const mezclar = (c: number): number => Math.round(c + (255 - c) * 0.45)
-  return `rgb(${mezclar((n >> 16) & 255)}, ${mezclar((n >> 8) & 255)}, ${mezclar(n & 255)})`
 }

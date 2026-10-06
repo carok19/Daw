@@ -487,6 +487,24 @@ export interface ComandoProgramado {
 /** `video`: AirTracks Video, la compu del proyector (no cuenta como celular: no frena ni cambia nada de los celulares) */
 export type OrigenCliente = 'compu' | 'celular' | 'video'
 
+/**
+ * Para que usa la app cada celular: cada uno ve (y escucha) lo suyo.
+ * - director: maneja la cancion (play, secciones, repetir, colchon)
+ * - musico: su mezcla y por donde va la cancion (sin controles)
+ * - voz: la seccion bien grande, lo que sigue y el tono; mezcla simple
+ * - sonido: va a la consola: la banda sola, sin click ni guia (y sin voces de aviso ni talkback)
+ * - multimedia: lo que sigue y cuanto falta, para las pantallas (sin audio salvo que lo pida)
+ */
+export type RolDispositivo = 'director' | 'musico' | 'voz' | 'sonido' | 'multimedia'
+
+export const ROLES: RolDispositivo[] = ['director', 'musico', 'voz', 'sonido', 'multimedia']
+
+/** El celular de Sonido: ademas de la banda, que va a los parlantes (para un ensayo, por ejemplo). */
+export interface SalidaSonido {
+  click: boolean
+  guia: boolean
+}
+
 /** AirTracks Video (la compu del proyector): si esta conectada y para que canciones tiene video. */
 export interface EstadoPantallaVideo {
   conectada: boolean
@@ -508,6 +526,11 @@ export interface AuthHandshake {
   nombre?: string
   /** codigo de la banda, si la compu lo pide */
   codigo?: string
+  /** el rol que tenia guardado este celular (si la compu no lo conoce, se usa este) */
+  rol?: string
+  salida?: SalidaSonido
+  /** el celular cambio de rol sin conexion: manda el suyo (si no, manda lo que recuerda la compu) */
+  rolPendiente?: boolean
 }
 
 /** Por que la compu no dejo conectar a un celular (error de conexion con mensaje "codigo"). */
@@ -631,6 +654,12 @@ export interface DispositivoInfo {
   id: string
   origen: OrigenCliente
   etiqueta: string
+  /** para que lo usa (solo celulares; null = todavia no eligio: como Musico) */
+  rol: RolDispositivo | null
+  /** el celular de Sonido: que mas va a la consola ademas de la banda */
+  salida: SalidaSonido | null
+  /** ajuste fino de sincronizacion del dispositivo (ms; + = suena despues) */
+  ajusteMs: number
   conectado: boolean
   /** ultimo drift (ms) reportado; null = no esta reproduciendo o todavia no midio */
   driftMs: number | null
@@ -647,7 +676,10 @@ export interface DispositivoInfo {
 }
 
 export interface SyncReportPayload {
-  driftMs: number | null
+  /** (sin este campo: no cambia el desfase anotado; p.ej. un aviso de que cambio el ajuste fino) */
+  driftMs?: number | null
+  /** ajuste fino de este dispositivo (ms) */
+  ajusteMs?: number
   buffer?: EstadoBuffer | null
   error?: string | null
   audio?: boolean
@@ -715,9 +747,21 @@ export interface DiagnosticoServidor {
   arranque?: { margenMs: number; peorEntregaMs: number | null }
 }
 
+/** Lo que mide cada celular del talkback (la compu hablando a los oidos). */
+export interface MedicionTalkback {
+  /** cuanto despues de hablar se escucha (la espera que se ajusta sola) */
+  objetivoMs: number
+  /** cuanto tarda en llegar por el WiFi (el 95 % de los pedazos llega en menos); null = todavia no llego nada */
+  redMs: number | null
+  /** pedazos que llegaron tarde (de los ultimos 500) */
+  tardes: number
+}
+
 export interface DiagnosticoDispositivo extends DiagnosticoAudio {
   /** resincronizaciones duras (desfase grande o vuelta despues de un corte) */
   resyncs: number
+  /** talkback recibido (null = nunca le hablaron) */
+  talkback?: MedicionTalkback | null
   /** "Android · Chrome", "iPhone · Safari", "App Android"... */
   plataforma: string
 }

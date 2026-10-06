@@ -1,4 +1,4 @@
-import type { Pista, Proyecto } from './types'
+import type { Pista, Proyecto, SalidaSonido } from './types'
 
 /**
  * Mezcla hecha en la compu para cada celular: en vez de bajar todas las
@@ -53,16 +53,27 @@ export function pareceNombreDeGuia(nombre: string): boolean {
   return /(^|[^a-z])(guia|guias|guide|guides|cue|cues|cueing|guia hablada|voz guia|spoken)([^a-z]|$)/.test(sinAcentos(nombre))
 }
 
+/** Que es cada pista: el click, la guia (la voz que anuncia "Verso", "Coro"...) o la banda (todo lo demas). */
+export type TipoPista = 'click' | 'guia' | 'banda'
+
 /**
- * ¿Es click o guia? (lo que va al oido izquierdo en el paneo automatico).
  * Manda la marca de la pista, si tiene; si no, lo que detecto el analisis (la
- * pista del click por como suena, la de la guia) o el nombre de la pista.
+ * guia, porque habla; el click, por como suena) o el nombre de la pista. Una
+ * pista que habla es la guia aunque tambien traiga el click.
  */
+export function tipoDePista(proyecto: Pick<Proyecto, 'tempo' | 'analisis'>, pista: Pista): TipoPista {
+  if (pista.rol === 'normal') return 'banda'
+  if (pista.rol === 'click' || pista.rol === 'guia') return pista.rol
+  if (proyecto.analisis?.guiaPistaId === pista.id) return 'guia'
+  if (proyecto.tempo?.clickPistaId === pista.id) return 'click'
+  if (pareceNombreDeGuia(pista.nombre)) return 'guia'
+  if (pareceNombreDeClick(pista.nombre)) return 'click'
+  return 'banda'
+}
+
+/** ¿Es click o guia? (lo que va al oido izquierdo en el paneo automatico, y lo que no va a la consola). */
 export function esClickOGuia(proyecto: Pick<Proyecto, 'tempo' | 'analisis'>, pista: Pista): boolean {
-  if (pista.rol === 'normal') return false
-  if (pista.rol === 'click' || pista.rol === 'guia') return true
-  if (proyecto.tempo?.clickPistaId === pista.id || proyecto.analisis?.guiaPistaId === pista.id) return true
-  return pareceNombreDeClick(pista.nombre) || pareceNombreDeGuia(pista.nombre)
+  return tipoDePista(proyecto, pista) !== 'banda'
 }
 
 /** Paneo por defecto (como en los reproductores de multitracks para vivo): click y guia al oido izquierdo... */
@@ -128,6 +139,38 @@ export function mezclaEfectiva(pistas: Pista[], personal: MezclaPersonal = {}): 
     res.push({ pistaId: p.id, ganancia, pan: clamp(p.pan, -100, 100) / 100 })
   }
   return res
+}
+
+/**
+ * "Mezcla rapida" de "Mi mezcla": un volumen para todo el click, toda la guia
+ * y toda la banda, encima de lo de cada pista. Se guarda en la misma mezcla
+ * personal con estas claves (ningun nombre de pista empieza con "~").
+ */
+export const CLAVE_GRUPO: Record<TipoPista, string> = { click: '~click', guia: '~guia', banda: '~banda' }
+
+/** Aplica los volumenes de la mezcla rapida (click, guia, banda) a una mezcla ya calculada. */
+export function aplicarGrupos(proyecto: Pick<Proyecto, 'pistas' | 'tempo' | 'analisis'>, canales: CanalMezcla[], personal: MezclaPersonal): CanalMezcla[] {
+  const grupos = (Object.keys(CLAVE_GRUPO) as TipoPista[]).map((t) => [t, personal[CLAVE_GRUPO[t]]] as const).filter(([, a]) => a)
+  if (grupos.length === 0) return canales
+  const factor = new Map(grupos.map(([t, a]) => [t, a!.mute ? 0 : clamp(a!.ganancia, 0, 2)]))
+  const tipos = new Map(proyecto.pistas.map((p) => [p.id, tipoDePista(proyecto, p)]))
+  return canales.map((c) => ({ ...c, ganancia: c.ganancia * (factor.get(tipos.get(c.pistaId) ?? 'banda') ?? 1) })).filter((c) => c.ganancia > 0)
+}
+
+/**
+ * La mezcla del celular de Sonido (el que va a la consola): la del director
+ * (sus faders, mute y solo), sin el click ni la guia —salvo que se pidan, para
+ * un ensayo— y todo al centro: en estereo de verdad, no con la banda a un lado
+ * como en los oidos. Sin "Mi mezcla": lo fino se hace en la consola.
+ */
+export function mezclaDeSonido(proyecto: Pick<Proyecto, 'pistas' | 'tempo' | 'analisis'>, salida: SalidaSonido): CanalMezcla[] {
+  const tipos = new Map(proyecto.pistas.map((p) => [p.id, tipoDePista(proyecto, p)]))
+  return mezclaEfectiva(proyecto.pistas)
+    .filter((c) => {
+      const tipo = tipos.get(c.pistaId)
+      return tipo === 'banda' || (tipo === 'click' && salida.click) || (tipo === 'guia' && salida.guia)
+    })
+    .map((c) => ({ ...c, pan: 0 }))
 }
 
 /**

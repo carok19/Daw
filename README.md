@@ -150,7 +150,8 @@ cambian a propósito.
      la canción), y **Mezcla**, el mixer a pantalla completa con
      el recorrido finito arriba. La vista elegida se recuerda.
 4. **Celulares:** botón **Celulares** (arriba a la derecha) → escanear el QR →
-   **“Tocá para empezar”** → conectar auriculares. En ⚙ cada músico puede
+   elegir qué hace cada uno (**“¿Qué hacés en la banda?”**, ver el punto 5;
+   las veces siguientes, **“Tocá para empezar”**) → conectar auriculares. En ⚙ cada músico puede
    ponerle nombre a su celular (“Batería”, “Bajo”…). Para no escanear en cada
    ensayo:
    - **Android:** la app (`AirTracks.apk`, se baja desde la compu). Se abre y
@@ -175,16 +176,52 @@ cambian a propósito.
    - **Código de la banda** (opcional, en la ventana de Celulares): solo entra
      quien lo sabe. Se pone una vez por celular; va incluido en el QR y en las
      invitaciones. Cambiarlo no desconecta a los que ya están.
-5. Mirá el chip de celulares: **verde** = todos listos y sincronizados;
+5. **Cada celular, su rol.** La primera vez, el celular pregunta **“¿Qué
+   hacés en la banda?”** y el mismo toque ya arranca (no hay otro paso). Cada
+   uno ve, y escucha, lo suyo:
+   - **Dirijo (Director):** maneja la canción desde el celular (play,
+     secciones, repetir, colchón) y elige ahí mismo cómo salta al tocar una
+     sección: **al terminar** la que suena, **en el compás** o **ya**. Puede
+     haber más de uno.
+   - **Toco (Músico):** su mezcla y por dónde va la canción (secciones,
+     compases que faltan, tono), sin botones que se toquen sin querer.
+   - **Canto (Voz):** la sección que se canta, bien grande y con su color;
+     lo que sigue (para saber qué letra viene), los compases que faltan y el
+     tono.
+   - **Consola (Sonido):** el celular que va conectado a la consola. Manda
+     **la banda sola, en estéreo, sin click ni guía** (ni la voz que avisa
+     los saltos): no hay que mutear nada en cada canción. Para un ensayo,
+     **Guía en los parlantes** y **Click en los parlantes** los suman, al
+     centro. Muestra un vúmetro, “Sonando en sync”, un **bloqueo** contra
+     toques sin querer (se desbloquea manteniendo apretado) y cómo
+     conectarlo (cable a una entrada de línea, volumen del celular al
+     máximo, “No molestar” para que una llamada no salga por los
+     parlantes).
+   - **Pantallas (Multimedia):** para el que pasa la letra: **ahora**, lo que
+     **sigue** y **en cuántos segundos**, bien grande, con la lista de
+     secciones y la canción que sigue. No baja audio (se puede prender
+     *Escuchar también en este celular*).
+
+   El rol se cambia tocándolo arriba (o en ⚙). **En la compu**, el chip
+   **Consola** de la barra dice qué celular va a la consola y si está bien
+   (verde, amarillo o rojo; avisa si tiene la guía o el click en los
+   parlantes); tocándolo se elige otro en un toque (**Usar para la
+   consola**: el anterior vuelve a tener click y guía) y se prenden o apagan
+   la guía y el click en los parlantes. En la ventana de Celulares cada uno
+   muestra su rol y se le puede cambiar desde ahí. La compu recuerda el rol
+   de cada celular aunque se cierre: el de la consola sigue siendo el de la
+   consola.
+6. Mirá el chip de celulares: **verde** = todos listos y sincronizados;
    **amarillo** = alguien no activó el audio, tiene WiFi lento o está
    desfasado; **rojo** = alguien se desconectó o tiene un error de audio. El
    detalle está en la ventana de Celulares.
-6. Si no querés que nadie toque el transporte desde su celular, activá
-   **Celulares bloqueados**.
-7. La pantalla de los celulares queda encendida sola (conviene bajar el
+7. Desde un celular, la canción la maneja **el director** (los demás la
+   ven). Si no querés que nadie la maneje desde un celular (ni el
+   director), activá **Celulares bloqueados**.
+8. La pantalla de los celulares queda encendida sola (conviene bajar el
    brillo). Si alguien usa **auriculares Bluetooth** y lo escucha atrasado:
    ⚙ → *Ajuste fino* → sumar milisegundos hasta que coincida.
-8. En el celular hay dos pantallas, a un toque arriba: **Canción** (la
+9. En el celular hay dos pantallas, a un toque arriba: **Canción** (la
    principal) muestra la canción, la sección que suena en grande (y “→ Coro
    en 21 s” si se eligió un salto), el **recorrido** con la forma de onda y
    las secciones como **tarjetas grandes para tocar** (tocar = ir ahí, según
@@ -194,7 +231,9 @@ cambian a propósito.
    principio a tiempo (al terminar la sección o en el compás), en pausa va
    enseguida. **Mi mezcla** es la otra pantalla, entera: cada músico sube o
    baja cada pista (más click, menos pad…) sin cambiar lo que escuchan los
-   demás. El transporte va siempre abajo. Los faders se mueven **deslizando de costado**; deslizando para
+   demás. Arriba, la **mezcla rápida**: tres faders, **Click**, **Guía** y
+   **Banda** (todo lo demás), para lo más común sin buscar pista por pista;
+   abajo, las **pistas una por una** (plegadas para los que cantan). El transporte va siempre abajo. Los faders se mueven **deslizando de costado**; deslizando para
    arriba o abajo la pantalla scrollea sin tocar ningún volumen, y un toque
    suelto no cambia nada (doble toque: vuelve a “igual”). Cada pista tiene
    **M** (mute) y **S** (solo) propios del celular: con una o varias pistas
@@ -217,7 +256,7 @@ cambian a propósito.
    acomodar) y se guarda en la ficha de la canción. Las canciones que ya
    estaban importadas se acomodan al abrirlas, si nadie les había tocado el
    paneo.
-9. **Compases que faltan:** al lado de la sección que suena se ve cuántos
+10. **Compases que faltan:** al lado de la sección que suena se ve cuántos
    compases le quedan (en el celular, un número grande: “Verso 1 · **3**
    compases”; en la compu, “faltan 3” en el transporte y en su tarjeta),
    contando el que suena: en el último dice **“último compás”** y titila.
@@ -253,7 +292,7 @@ cambian a propósito.
    hablar cada archivo. Si el salto se elige tan encima que el “1” ya pasó,
    el nombre va en el primer pulso que llega; sin la voz de esa sección,
    solo la cuenta.
-10. **Cambiar el tono** (de −6 a +6 semitonos): en la compu, al lado del
+11. **Cambiar el tono** (de −6 a +6 semitonos): en la compu, al lado del
     nombre de la canción, **− A +**. Cada toque sube o baja medio tono y se
     ve “A → B +2”. La compu prepara las pistas en el tono nuevo (unos
     segundos por pista; se ve “Preparando 3/12”) y, cuando están todas, la
@@ -289,7 +328,7 @@ cambian a propósito.
     avisa y el recorrido; si estaba pausada, sigue en el mismo punto de la
     música. En el celular se ve “76 BPM”. Se combina con el tono, la canción
     recuerda su velocidad y tocar “+6 %” vuelve a la original.
-11. **Cuenta antes de la canción (opcional, apagada):** por defecto el play
+12. **Cuenta antes de la canción (opcional, apagada):** por defecto el play
     arranca la música **enseguida**, sin “ti ti ti”: desde el principio,
     desde una sección o después de una pausa. Si una canción la necesita, al
     lado del BPM se elige **“Cuenta: 1 compás”** o **“2 compases”**, y suena
@@ -301,7 +340,7 @@ cambian a propósito.
     la vez. En la compu el reloj muestra el número y en los celulares
     “Cuenta 3”. Las canciones que ya traen su cuenta (la guía dice “1, 2, 3,
     4” con la banda en silencio) la siguen teniendo: es parte del audio.
-12. **Colchón: pad y click, sin la banda.** Un **pad** de ambiente (un
+13. **Colchón: pad y click, sin la banda.** Un **pad** de ambiente (un
     colchón sostenido en el tono) y el **click**, sonando en todos a la vez.
     El pad lo hace la app (no hay que bajar nada): raíz, quinta y octava, sin
     tercera, así sirve igual en mayor y en menor. **Pads propios:** en
@@ -351,7 +390,31 @@ cambian a propósito.
       acompaña bajando y se va cuando entra la canción. Así se pasa de un
       momento de oración a la próxima canción sin silencio.
 
-13. **AirTracks Video: el video con la letra en el proyector.** Un
+14. **Talkback: hablarle a la banda en los oídos.** En la compu, mantené
+    apretado **Talkback** (arriba) o la tecla **T** y hablá: lo escuchan
+    todos en los auriculares (no la consola ni multimedia) y la música les
+    baja un poco mientras hablás. En el celular aparece **“Te habla la
+    compu”**, y en *Mi mezcla* cada uno tiene su volumen de talkback. La
+    entrada se elige en el ⚙ del botón: el micrófono de la compu, uno USB,
+    la consola por una placa de sonido, o un canal de **Reaper** con un cable
+    virtual (VB-Cable). **¿Y la demora del WiFi?** Cada celular espera lo
+    justo para que la voz no se corte y lo mide: en ese mismo panel se ve,
+    celular por celular, “llega en 35 ms por el WiFi · se escucha a los 120
+    ms”. Con un router normal anda entre 0,1 y 0,25 s (como un handy): para
+    indicaciones (“vamos al coro”, “una vez más”) sobra; para cantar en vivo
+    no. Hablar desde un celular no se puede todavía: los navegadores no dejan
+    usar el micrófono en una página sin https.
+15. **Sincronización a prueba:** en el panel de la **Consola**, **Probar el
+    sync** hace sonar un click en todos los dispositivos a la vez durante 8 s
+    (con la música parada): con dos celulares juntos, o la consola y un
+    celular, tienen que sonar como uno solo. Si la consola suena antes o
+    después que los oídos (algunas consolas o placas digitales demoran unos
+    ms), el **Ajuste fino** de la consola se corrige desde la compu, sin
+    tocar el celular. Ahí mismo está el ajuste del **sonido de la compu**:
+    si se usa la compu para la consola y se siente corrida (Windows a veces
+    informa mal la demora de su placa de sonido), se corrige de oído con la
+    prueba. En la ventana de Celulares cada uno muestra su desfase en vivo.
+16. **AirTracks Video: el video con la letra en el proyector.** Un
     programa aparte para la compu del data (la de Holyrics; corre desde
     **Windows 7**, en compus viejas). Ahí se cargan los videos con la letra
     (*lyric videos*) de las canciones que los tengan; las demás siguen con
@@ -835,11 +898,66 @@ estado. **Nada de su audio viaja por la red mientras suena:**
   próxima (con cuenta, el pad la acompaña). El servidor lo borra cuando el
   pad terminó de irse.
 
+### Talkback
+
+La compu toma la entrada elegida (`audio/talkback.ts`, `EmisorTalkback`:
+micrófono, placa de sonido o un cable virtual desde Reaper), la filtra y la
+baja a 16 kHz mono en un AudioWorklet y, mientras se mantiene apretado
+**Talkback** (o la **T**), manda pedacitos de 20 ms (640 bytes, 256 kbps)
+con la hora del servidor en que se captaron (`talkback:audio`, `volatile`:
+si un celular viene atrasado se descarta en vez de acumularse). El servidor
+los reenvía solo a los celulares que no son consola ni multimedia. Cada
+celular los escribe en una línea de tiempo dentro de otro AudioWorklet, en el
+lugar que les toca: `hora de captura + espera`, con el mismo reloj que la
+música. La **espera se ajusta sola** (`EsperaTalkback`): lo que tardan casi
+todos los pedazos de los últimos 3 s (el 98 %) más 40 ms; tres pedazos tarde
+en un segundo (el WiFi se puso lento) la suben enseguida, de a 100 ms como
+mucho (un tirón del celular no la deja en medio segundo); un tropezón suelto
+no; con todo a tiempo, cada 2 s baja la mitad de lo que sobra (de 80 a 600
+ms). Mientras suena,
+la música baja 6 dB (`atenuador`, vuelve despacio). Cada celular informa a
+la compu cuánto tarda la red (el 95 % de los pedazos) y a cuántos ms se
+escucha; se ve en el panel del talkback. Medido en la prueba e2e (compu y
+celulares en la misma máquina, cargada): la red ~44 ms y, hablando un rato,
+se escucha a los **90–100 ms**; la consola no recibe nada (−90 dB).
+
+### Roles y consola
+
+- **Roles** (`RolDispositivo` en `shared/types.ts`): director, músico, voz,
+  sonido y multimedia. El celular lo elige (`rol:elegir`) o la compu se lo
+  cambia (`dispositivo:rol`); el registro de dispositivos
+  (`server/devices.ts`) lo recuerda por celular en `dispositivos.json` (la
+  compu manda; un cambio hecho en el celular sin conexión —`rolPendiente`
+  en el handshake— manda el del celular). El servidor solo acepta el
+  transporte y los saltos de un celular director (o de uno sin rol todavía,
+  como antes); el bloqueo de la compu vale para todos.
+- **Consola** (`mezclaDeSonido` en `shared/mezcla.ts`): la mezcla del
+  director (faders, mute y solo) sin las pistas de click ni de guía —por su
+  marca, por lo que detectó el análisis o por el nombre: `tipoDePista`— y
+  todo al centro (paneo 0: las pistas estéreo quedan en estéreo, las mono al
+  medio). El celular la pide como cualquier mezcla (`/mezcla/…?m=`), así
+  que el servidor no cambia. En ese celular el motor no pide la voz de los
+  saltos (`&a=`), calla el click de la cuenta y del colchón, pone el pad al
+  centro y deja el volumen fijo en 100 %. “Guía/Click en los parlantes”
+  (`sonido:salida`) los suma. Medido con audio real en la prueba e2e: en la
+  consola la guía y el click quedan unos 80 dB por debajo de la banda y la
+  banda igual en los dos lados; al pasar la consola a otro celular, la
+  mezcla nueva suena en ~0,35 s.
+- **Multimedia** no prende el audio (no baja nada por el WiFi) salvo que
+  lo pida.
+
 ### Sincronización
 
 1. **Reloj:** cada dispositivo mide su diferencia con el reloj del servidor
-   (7 ping/pong, se queda con el de menor ida y vuelta; se repite cada 2 min y
-   al volver a primer plano).
+   (7 ping/pong, se queda con el de menor ida y vuelta) **cada 30 s** y al
+   volver a primer plano: los relojes de los celulares se corren entre sí
+   (hasta ~50 ppm, unos 6 ms cada 2 minutos) y así la diferencia nunca pasa de
+   ~1,5 ms. Una medición hecha con la red cargada (la mejor muestra mucho más
+   lenta que las de antes) se descarta. **Vigilante de la hora:** si la hora
+   del sistema salta (Android la corrige por internet, o alguien la cambia),
+   se detecta comparándola con el reloj monótono (`performance.now`) y se
+   compensa en el momento, antes de medir el sync (sino parecería que el
+   audio se corrió y se forzaría una corrección).
 2. **Comandos programados:** play, pausa, stop y saltos se programan un
    poco a futuro (el **margen**) y cada dispositivo los ejecuta con Web Audio
    en ese instante exacto. El margen se mide (`server/entrega.ts`): la compu
@@ -1076,8 +1194,12 @@ habitual de los programas que se venden sin conexión.
   navegadores automatizados (compu + varios celulares, WiFi lento simulado,
   reinicio del servidor, app de Electron real), pero el sonido real, la
   latencia de cada modelo y el Bluetooth solo se pueden medir con hardware.
-  Prueba sugerida: 2–3 celulares juntos reproduciendo solo el click; si se
-  oye "eco", usar el ajuste fino en el que suena atrasado.
+  Prueba sugerida: 2–3 celulares juntos con **Probar el sync** (panel de la
+  Consola); si se oye "eco", usar el ajuste fino en el que suena atrasado.
+- **Talkback:** probado de punta a punta con un micrófono simulado; la
+  demora real depende del router (el panel del talkback la mide en cada
+  celular). Hablar desde un celular necesitaría https (o que la app Android
+  capture el micrófono): por ahora habla solo la compu.
 - **Reconocimiento de la voz guía:** la cadena completa (frases, ajuste al
   compás, nombres de sección) está probada con voz sintética en español y un
   reconocedor simulado; el modelo Whisper real no se pudo probar en el
@@ -1096,5 +1218,5 @@ habitual de los programas que se venden sin conexión.
 - `airtracks.local` depende de que el router deje pasar mDNS (la mayoría lo
   hace); el celular lo prueba antes de ofrecerlo.
 - **Pads del colchón:** los sintetiza la app (sin samples ni licencias), con
-  un solo timbre (un pad suave, tipo cuerdas/sintetizador). Todavía no se
-  pueden importar pads propios.
+  un solo timbre (un pad suave, tipo cuerdas/sintetizador), o se importan
+  los propios (12 tonos o uno solo).

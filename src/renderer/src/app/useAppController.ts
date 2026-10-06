@@ -28,8 +28,11 @@ import type {
   ProyectoResumen,
   DatosListas,
   EstadoFirewall,
-  ProgresoTono
+  ProgresoTono,
+  RolDispositivo,
+  SalidaSonido
 } from '@shared/types'
+import { ROLES } from '@shared/types'
 import { calcularSecciones, estaSonando, largoTipicoDeCompas, posicionActualMs, seccionEn, tramoVigente } from '@shared/playback'
 import { golpeActual } from '@shared/cuenta'
 import { compasYPulso } from '@shared/colchon'
@@ -40,6 +43,7 @@ import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_S
 import { setPlayheadMs, getPlayheadMs, setGolpeCuenta, setGolpeColchon } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
 import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
+import { EmisorTalkback, type PedazoTalkback } from '../audio/talkback'
 import { codigoDesdeDireccion, puenteAndroid } from '../conexion'
 
 /** Compas mas cercano (si esta a menos de medio compas): "ajustar al compas". */
@@ -136,6 +140,13 @@ function conPistaActualizada(estado: EstadoCompleto, m: MixerActualizadoPayload)
 
 const THROTTLE_MIXER_MS = 40
 
+const esRolValido = (r: unknown): r is RolDispositivo => typeof r === 'string' && (ROLES as string[]).includes(r)
+
+function salidaValida(s: unknown): SalidaSonido {
+  const x = s && typeof s === 'object' ? (s as Record<string, unknown>) : {}
+  return { click: x.click === true, guia: x.guia === true }
+}
+
 export function useAppController() {
   const origen: OrigenCliente = typeof window !== 'undefined' && window.electronAPI ? 'compu' : 'celular'
 
@@ -165,6 +176,36 @@ export function useAppController() {
   const [ajusteManualMs, setAjusteManualMsState] = useState<number>(() => leerPref('ajuste-fino-ms', 0))
   const [mezclaPersonal, setMezclaPersonalState] = useState<MezclaPersonal>(() => leerPref('mezcla-personal', {}))
   const [nombreDispositivo, setNombreDispositivoState] = useState<string>(() => leerPref('nombre', ''))
+  // para que usa la app ESTE celular (director, musico, voz, sonido, multimedia): manda lo que dice la
+  // compu (se puede cambiar desde alla); sin conexion, lo guardado aca. null = todavia no eligio
+  const [rol, setRolState] = useState<RolDispositivo | null>(() => {
+    const r = origen === 'celular' ? leerPref<unknown>('rol', null) : null
+    return esRolValido(r) ? r : null
+  })
+  const [salidaSonido, setSalidaSonidoState] = useState<SalidaSonido>(() => salidaValida(leerPref('salida-sonido', null)))
+  /** multimedia: escuchar el audio en este celular (por defecto no: solo mira) */
+  const [escucharMultimedia, setEscucharMultimediaState] = useState<boolean>(() => leerPref('escuchar-multimedia', false))
+  /** el rol se cambio aca sin que la compu lo confirmara (sin conexion): al conectar manda el de aca */
+  const rolPendienteRef = useRef<boolean>(leerPref('rol-pendiente', false))
+  const rolRef = useRef({ rol, salida: salidaSonido })
+  rolRef.current = { rol, salida: salidaSonido }
+  /** hasta cuando manda la "salida" cambiada aca (la lista de la compu que llega mientras tanto puede ser de antes) */
+  const salidaLocalHastaRef = useRef(0)
+  /** el ajuste fino (lo puede cambiar la compu) */
+  const ajusteFinoRef = useRef<((ms: number) => void) | null>(null)
+  // talkback (ver audio/talkback.ts). Celular: si esta sonando ahora y si ya llego alguna vez (para mostrar su volumen)
+  const [talkbackSonando, setTalkbackSonando] = useState(false)
+  const [talkbackRecibido, setTalkbackRecibido] = useState(false)
+  /** la compu esta hablando (el aviso en pantalla no parpadea entre palabra y palabra) */
+  const [talkbackHablando, setTalkbackHablando] = useState(false)
+  // compu: la entrada (microfono) y si se esta hablando
+  const [talkback, setTalkback] = useState<{ hablando: boolean; error: string | null; entrada: string | null }>(() => ({
+    hablando: false,
+    error: null,
+    entrada: origen === 'compu' ? leerPref<string | null>('talkback-entrada', null) : null
+  }))
+  const talkbackRef = useRef<EmisorTalkback | null>(null)
+  const nivelTalkbackRef = useRef(0)
 
   /** la compu pide el codigo de la banda (n: cuantas veces, para reaccionar a cada rechazo) */
   const [pedidoCodigo, setPedidoCodigo] = useState<{ motivo: MotivoCodigo; n: number } | null>(null)
@@ -189,7 +230,10 @@ export function useAppController() {
       token: window.electronAPI?.compuToken,
       deviceId,
       nombre: nombreRef.current || undefined,
-      codigo: codigoRef.current ?? undefined
+      codigo: codigoRef.current ?? undefined,
+      rol: rolRef.current.rol ?? undefined,
+      salida: rolRef.current.rol === 'sonido' ? rolRef.current.salida : undefined,
+      rolPendiente: rolPendienteRef.current || undefined
     }))
   }
   const engineRef = useRef<PlaybackEngine | null>(null)
@@ -210,6 +254,27 @@ export function useAppController() {
   estadoRef.current = estado
   const prefsRef = useRef({ volumenGeneral, ajusteManualMs, mezclaPersonal })
   prefsRef.current = { volumenGeneral, ajusteManualMs, mezclaPersonal }
+
+  // la fila de este celular en "Dispositivos": su rol lo puede cambiar la compu
+  const miFila = useMemo(() => (origen === 'celular' ? (dispositivos.find((d) => d.id === `celular:${deviceIdPersistente()}`) ?? null) : null), [dispositivos, origen])
+  useEffect(() => {
+    if (!miFila || !miFila.conectado) return
+    const mismaSalida = !miFila.salida || (miFila.salida.click === salidaSonido.click && miFila.salida.guia === salidaSonido.guia)
+    if (miFila.rol === rol && rolPendienteRef.current) {
+      rolPendienteRef.current = false
+      guardarPref('rol-pendiente', false)
+    }
+    if (mismaSalida) salidaLocalHastaRef.current = 0
+    // lo que se cambio aca y todavia no llego a la compu: se espera; si no, manda la compu
+    if (miFila.rol !== rol && !rolPendienteRef.current && esRolValido(miFila.rol)) {
+      setRolState(miFila.rol)
+      guardarPref('rol', miFila.rol)
+    }
+    if (!mismaSalida && miFila.salida && Date.now() > salidaLocalHastaRef.current) {
+      setSalidaSonidoState(miFila.salida)
+      guardarPref('salida-sonido', miFila.salida)
+    }
+  }, [miFila, rol, salidaSonido])
 
   // diagnostico: con ?debug en la URL se exponen el motor y el estado en window.__mt (pruebas de campo)
   useEffect(() => {
@@ -305,9 +370,16 @@ export function useAppController() {
     const modoForzado = new URLSearchParams(window.location.search).get('modo')
     const engine = new StreamingEngine(modoForzado === 'pistas' || modoForzado === 'mezcla' ? modoForzado : origen === 'celular' ? 'mezcla' : 'pistas')
     const p = prefsRef.current
-    engine.setVolumenGeneral(p.volumenGeneral)
+    const sonido = rolRef.current.rol === 'sonido'
+    // la consola: la banda sola al centro, a volumen fijo (lo fino se hace en la consola)
+    engine.setVolumenGeneral(sonido ? 100 : p.volumenGeneral)
     engine.setAjusteManualMs(p.ajusteManualMs)
     engine.setMezclaPersonal(origen === 'celular' ? p.mezclaPersonal : {})
+    engine.setSalidaSonido(sonido ? rolRef.current.salida : null)
+    engine.onTalkback((v) => {
+      setTalkbackSonando(v)
+      if (v) setTalkbackRecibido(true)
+    })
     engine.onRequiereResync(() => {
       const socket = socketRef.current
       const actual = estadoRef.current
@@ -338,6 +410,22 @@ export function useAppController() {
     setBufferEstado(null)
     setErrorAudio(null)
   }, [])
+
+  // multimedia: sin audio (salvo que lo pida): no baja nada por el WiFi
+  useEffect(() => {
+    if (origen !== 'celular' || rol !== 'multimedia' || escucharMultimedia || !engineRef.current) return
+    apagarAudio()
+    setAudioActivo(false)
+  }, [rol, escucharMultimedia, origen, apagarAudio])
+
+  // el rol cambia lo que suena: la consola (banda sola, al centro, volumen fijo) o un celular comun
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine || origen !== 'celular') return
+    const sonido = rol === 'sonido'
+    engine.setSalidaSonido(sonido ? salidaSonido : null)
+    engine.setVolumenGeneral(sonido ? 100 : volumenGeneral)
+  }, [rol, salidaSonido, volumenGeneral, origen])
 
   // ---- conexion ----
   useEffect(() => {
@@ -429,6 +517,20 @@ export function useAppController() {
       }),
       socket.onRechazado((err) => avisar({ tipo: 'error', texto: err.mensaje })),
       socket.onDispositivos((lista) => setDispositivos(lista)),
+      // la compu cambio el ajuste fino de este celular (p.ej. el de la consola)
+      socket.on<{ ms: number }>('ajuste:fino', (p) => {
+        if (typeof p?.ms === 'number') ajusteFinoRef.current?.(p.ms)
+      }),
+      // talkback: la compu le habla a la banda (20 ms por mensaje)
+      socket.on<PedazoTalkback>('talkback:audio', (p) => engineRef.current?.recibirTalkback(p, socket.clockOffsetMs)),
+      socket.on<{ hablando: boolean }>('talkback:estado', (p) => {
+        setTalkbackHablando(!!p?.hablando)
+        if (p?.hablando) setTalkbackRecibido(true)
+      }),
+      // "Probar el sync": un click en todos a la vez
+      socket.on<{ golpes: { t: number; n: number }[] }>('sync:prueba', (p) => {
+        if (Array.isArray(p?.golpes)) engineRef.current?.probarSync(p.golpes, socket.clockOffsetMs)
+      }),
       socket.onImportProgreso((p) => setImportProgreso(p.etapa === 'listo' ? null : p)),
       socket.on<InfoModeloVoz>('modelo:estado', (m) => {
         setModeloVoz(m)
@@ -508,13 +610,15 @@ export function useAppController() {
       if (!socket) return
       if (!engine) {
         if (origen === 'celular' && ultimoReporte !== 'sin-audio') {
-          socket.emit('sync:report', { driftMs: null, buffer: null, error: null, audio: false })
+          socket.emit('sync:report', { driftMs: null, buffer: null, error: null, audio: false, ajusteMs: prefsRef.current.ajusteManualMs })
           ultimoReporte = 'sin-audio'
         }
         return
       }
       const actual = estadoRef.current
       const playback = actual?.playbackActivo
+      // si la hora del sistema salto recien, primero se compensa (sino pareceria un desfase del audio)
+      socket.revisarReloj()
       const now = socket.serverNow()
       const buffer = engine.estadoBuffer()
       const error = engine.errorAudio()
@@ -540,7 +644,19 @@ export function useAppController() {
       }
       setDriftMs(drift)
       // cada 2 s: desfase, buffer y el diagnostico (WiFi, colchon, cortes) para la compu
-      socket.emit('sync:report', { driftMs: drift, buffer, error, audio: true, diag: { ...engine.resumenDiagnostico(), resyncs: resyncsRef.current, plataforma: plataforma(origen) } })
+      socket.emit('sync:report', {
+        driftMs: drift,
+        buffer,
+        error,
+        audio: true,
+        ajusteMs: prefsRef.current.ajusteManualMs,
+        diag: {
+          ...engine.resumenDiagnostico(),
+          resyncs: resyncsRef.current,
+          plataforma: plataforma(origen),
+          talkback: engine.esperaTalkback.medicion().redMs !== null ? engine.esperaTalkback.medicion() : null
+        }
+      })
       ultimoReporte = JSON.stringify({ d: drift === null ? null : Math.round(drift), buffer, error })
     }, INTERVALO_MONITOREO_MS)
     return () => clearInterval(id)
@@ -658,6 +774,9 @@ export function useAppController() {
         setAjusteManualMsState(clamped)
         guardarPref('ajuste-fino-ms', clamped)
         engineRef.current?.setAjusteManualMs(clamped)
+        prefsRef.current = { ...prefsRef.current, ajusteManualMs: clamped }
+        // que la compu lo vea ya (no en el proximo reporte)
+        emit('sync:report', { ajusteMs: clamped })
         // el ajuste solo afecta el proximo scheduling: reentrar en sync para que se note ya
         const playback = estadoRef.current?.playbackActivo
         if (engineRef.current && playback && estaSonando(playback, socket.serverNow())) {
@@ -668,6 +787,132 @@ export function useAppController() {
         setMezclaPersonalState(m)
         guardarPref('mezcla-personal', m)
         engineRef.current?.setMezclaPersonal(m)
+      },
+      // ---- rol de este celular ----
+      elegirRol(nuevo: RolDispositivo): void {
+        setRolState(nuevo)
+        guardarPref('rol', nuevo)
+        rolPendienteRef.current = true
+        guardarPref('rol-pendiente', true)
+        rolRef.current = { ...rolRef.current, rol: nuevo }
+        if (!socket.conectado) return
+        socket
+          .emitAck<{ ok: boolean }>('rol:elegir', { rol: nuevo, salida: nuevo === 'sonido' ? rolRef.current.salida : undefined })
+          .then((r) => {
+            if (!r?.ok) return
+            rolPendienteRef.current = false
+            guardarPref('rol-pendiente', false)
+          })
+          .catch(() => {
+            // se manda al reconectar (queda pendiente)
+          })
+      },
+      /** El celular de Sonido: que mas va a la consola (guia, click), ademas de la banda. */
+      setSalidaSonido(cambio: Partial<SalidaSonido>): void {
+        const nueva = { ...rolRef.current.salida, ...cambio }
+        salidaLocalHastaRef.current = Date.now() + 3000
+        setSalidaSonidoState(nueva)
+        guardarPref('salida-sonido', nueva)
+        rolRef.current = { ...rolRef.current, salida: nueva }
+        emit('sonido:salida', cambio)
+      },
+      /** Pico de lo que sale por cada lado (vumetro de la consola); null = sin audio. */
+      nivelSalida(): { izq: number; der: number } | null {
+        return engineRef.current?.nivelSalida() ?? null
+      },
+      setEscucharMultimedia(v: boolean): void {
+        setEscucharMultimediaState(v)
+        guardarPref('escuchar-multimedia', v)
+      },
+      /** Compu: cambiarle el rol a un celular (p.ej. elegir cual va a la consola). */
+      setRolDe(id: string, nuevo: RolDispositivo): Promise<{ ok: boolean }> {
+        return socket.emitAck<{ ok: boolean }>('dispositivo:rol', { id, rol: nuevo }).catch(() => ({ ok: false }))
+      },
+      /** Compu: que mas va a la consola por un celular de Sonido. */
+      setSalidaDe(id: string, cambio: Partial<SalidaSonido>): void {
+        emit('sonido:salida', { id, ...cambio })
+      },
+      /** Compu: el ajuste fino de sincronizacion de un celular (ms; + = que suene despues). */
+      setAjusteDe(id: string, ms: number): Promise<{ ok: boolean }> {
+        return socket.emitAck<{ ok: boolean }>('dispositivo:ajuste', { id, ms }).catch(() => ({ ok: false }))
+      },
+      /**
+       * Compu: talkback. true = empieza a hablar (la primera vez pide el
+       * microfono), false = deja de hablar. Lo escuchan los oidos de la banda
+       * (no la consola ni multimedia).
+       */
+      async hablarTalkback(si: boolean): Promise<void> {
+        let emisor = talkbackRef.current
+        if (!emisor) {
+          emisor = new EmisorTalkback(
+            (p) => socket.socket.volatile.emit('talkback:audio', p),
+            () => socket.serverNow()
+          )
+          emisor.onNivel = (v) => {
+            nivelTalkbackRef.current = v
+          }
+          talkbackRef.current = emisor
+        }
+        if (!si) {
+          emisor.hablando = false
+          emit('talkback:hablando', { hablando: false })
+          setTalkback((t) => ({ ...t, hablando: false }))
+          return
+        }
+        setTalkback((t) => ({ ...t, hablando: true, error: null }))
+        try {
+          await emisor.abrir(leerPref<string | null>('talkback-entrada', null))
+        } catch (e) {
+          const nombre = (e as { name?: string })?.name
+          setTalkback((t) => ({
+            ...t,
+            hablando: false,
+            error: nombre === 'NotAllowedError' ? 'Windows no dejó usar el micrófono' : nombre === 'NotFoundError' || nombre === 'OverconstrainedError' ? 'No se encontró esa entrada de audio' : 'No se pudo abrir el micrófono'
+          }))
+          return
+        }
+        emisor.hablando = true
+        emit('talkback:hablando', { hablando: true })
+      },
+      /** Compu: lo que entra por el microfono del talkback (0 a 1), para el vumetro. */
+      nivelTalkback(): number {
+        return nivelTalkbackRef.current
+      },
+      /** Compu: las entradas de audio para el talkback. */
+      entradasTalkback(): Promise<{ id: string; nombre: string }[]> {
+        return EmisorTalkback.entradas().catch(() => [])
+      },
+      /** Compu: elegir la entrada del talkback (null = la de Windows); si ya estaba abierta, se cambia. */
+      setEntradaTalkback(id: string | null): void {
+        guardarPref('talkback-entrada', id)
+        setTalkback((t) => ({ ...t, entrada: id, error: null }))
+        const emisor = talkbackRef.current
+        if (emisor?.abierto()) void emisor.abrir(id).catch(() => setTalkback((t) => ({ ...t, error: 'No se pudo abrir esa entrada' })))
+      },
+      /** Compu: abrir la entrada sin hablar (para ver el nivel en el vumetro). */
+      async probarEntradaTalkback(): Promise<boolean> {
+        if (!talkbackRef.current) {
+          const emisor = new EmisorTalkback(
+            (p) => socket.socket.volatile.emit('talkback:audio', p),
+            () => socket.serverNow()
+          )
+          emisor.onNivel = (v) => {
+            nivelTalkbackRef.current = v
+          }
+          talkbackRef.current = emisor
+        }
+        try {
+          await talkbackRef.current.abrir(leerPref<string | null>('talkback-entrada', null))
+          return true
+        } catch {
+          setTalkback((t) => ({ ...t, error: 'No se pudo abrir el micrófono' }))
+          return false
+        }
+      },
+
+      /** Compu: un click en todos los dispositivos a la vez, para escuchar si suenan juntos (con la musica parada). */
+      probarSync(): Promise<{ ok: boolean; error?: string }> {
+        return socket.emitAck<{ ok: boolean; error?: string }>('sync:prueba', {}).catch(() => ({ ok: false }))
       },
       setNombreDispositivo(nombre: string): void {
         const limpio = nombre.replace(/\s+/g, ' ').trim().slice(0, 24)
@@ -1063,6 +1308,8 @@ export function useAppController() {
     }
   }, [avisar, encenderAudio])
 
+  ajusteFinoRef.current = acciones.setAjusteManualMs
+
   const siguienteProyecto = useMemo(() => {
     if (!estado) return null
     const i = estado.tabs.findIndex((t) => t.tabId === estado.activeTabId)
@@ -1103,6 +1350,15 @@ export function useAppController() {
     ajusteManualMs,
     mezclaPersonal,
     nombreDispositivo,
+    rol,
+    salidaSonido,
+    escucharMultimedia,
+    talkback,
+    talkbackSonando,
+    talkbackRecibido,
+    talkbackHablando,
+    /** este celular maneja la cancion: director (o todavia sin rol, como antes) y sin el control bloqueado */
+    puedeControlar: origen === 'compu' || (!(estado?.locked ?? false) && (rol === null || rol === 'director')),
     ...acciones
   }
 }

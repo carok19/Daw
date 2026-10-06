@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { HelpCircle, KeyRound, ListMusic, Lock, LockOpen, Plus, ShieldAlert, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
 import type { DispositivoInfo, EstadoLicencia, ListaActiva, TabResumen } from '@shared/types'
 import { Toggle } from '../ui/Toggle'
+import { ChipConsola } from './Consola'
 
 interface Props {
   tabs: TabResumen[]
@@ -13,6 +14,10 @@ interface Props {
   onNueva: () => void
   dispositivos: DispositivoInfo[]
   onDispositivos: () => void
+  /** elegir el celular de la consola (rol Sonido) */
+  onConsola: () => void
+  /** el boton del talkback (mantener apretado para hablar) */
+  talkback: React.ReactNode
   locked: boolean
   onLocked: (v: boolean) => void
   sonidoLocal: boolean
@@ -34,7 +39,8 @@ function saludCelulares(dispositivos: DispositivoInfo[]): { conectados: number; 
   const conectados = celulares.filter((d) => d.conectado)
   if (celulares.length === 0) return { conectados: 0, nivel: 'nada', detalle: 'Ningún celular conectado' }
   const conError = conectados.filter((d) => d.error)
-  const sinAudio = conectados.filter((d) => !d.audio)
+  // (multimedia no baja audio a proposito)
+  const sinAudio = conectados.filter((d) => !d.audio && d.rol !== 'multimedia')
   const bufferMal = conectados.filter((d) => d.buffer === 'critico')
   const desfasados = conectados.filter((d) => d.driftMs !== null && Math.abs(d.driftMs) >= 150)
   const caidos = celulares.filter((d) => !d.conectado)
@@ -170,11 +176,17 @@ export function TopBar(p: Props) {
           <span className="num">{salud.conectados}</span>
           <span className="texto-largo">{salud.conectados === 1 ? 'celular' : 'celulares'}</span>
         </button>
+        {p.talkback}
+        <ChipConsola dispositivos={p.dispositivos} onClick={p.onConsola} />
         <Toggle
           activo={p.locked}
           onCambiar={p.onLocked}
           variante="warn"
-          titulo={p.locked ? 'Celulares bloqueados: no pueden reproducir, pausar ni saltar secciones' : 'Celulares con control: pueden reproducir, pausar y saltar secciones. Activá para bloquearlos.'}
+          titulo={
+            p.locked
+              ? 'Celulares bloqueados: nadie maneja la canción desde un celular (ni el director)'
+              : 'El celular del director (rol Director) puede reproducir, pausar y saltar secciones. Activá para bloquearlo.'
+          }
         >
           {p.locked ? <Lock size={15} /> : <LockOpen size={15} />}
           <span className="texto-largo">{p.locked ? 'Celulares bloqueados' : 'Celulares con control'}</span>
