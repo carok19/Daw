@@ -2,14 +2,15 @@ import type { CuentaProgramada, Proyecto, TempoProyecto } from './types'
 import { largoTipicoDeCompas } from './playback'
 
 /**
- * Cuenta antes de la cancion: al dar play (desde parado o en pausa) suena 1
- * compas de click ("1 2 3 4") y recien entra la musica. Los golpes caen sobre
- * la grilla de compases de la propia cancion (la que se detecta del click),
- * asi la cuenta sigue el mismo pulso que la musica.
+ * Cuenta antes de la cancion (opcional, por cancion): con la cuenta prendida,
+ * al dar play desde el principio suena 1 o 2 compases de click ("1 2 3 4") y
+ * recien entra la musica. Los golpes caen sobre la grilla de compases de la
+ * propia cancion (la que se detecta del click), asi la cuenta sigue el mismo
+ * pulso que la musica. Por defecto no hay cuenta.
  *
  * Muchas canciones ya traen su cuenta (la guia dice "1, 2, 3, 4" con la banda
- * en silencio): desde el principio, la automatica no agrega otra (cuenta la
- * cancion). Desde una seccion o despues de una pausa, si.
+ * en silencio, `tempo.cuentaPropia`): es parte del audio; la usan el colchon
+ * y AirTracks Video.
  */
 
 /** Cuanto ocupa cada sonido (el "1" y el golpe comun) en el WAV de la cuenta (/cuenta/<cancion>.wav). */
@@ -37,16 +38,19 @@ export function suenaSuCuenta(tempo: Pick<TempoProyecto, 'compasesMs' | 'cuentaP
 }
 
 /**
- * Cuantos compases de cuenta lleva la cancion arrancando en `posMs`: los
- * elegidos, o automatico (1; ninguno si arranca desde el principio y la
- * cancion ya trae su cuenta; 0 sin tempo).
+ * Cuantos compases de cuenta lleva la cancion arrancando en `posMs`. Por
+ * defecto ninguno: play arranca la musica enseguida (los musicos lo pidieron:
+ * contar antes de cada play, al seguir despues de una pausa o al empezar
+ * desde una seccion, costaba mas de lo que ayudaba). Si la cancion tiene la
+ * cuenta prendida (1 o 2 compases), suena solo arrancando desde el principio
+ * (hasta su primer "1"), nunca a mitad de la cancion. Sin tempo, nunca.
  */
 export function compasesDeCuenta(p: Pick<Proyecto, 'cuenta' | 'tempo'>, posMs?: number): 0 | 1 | 2 {
   const compases = p.tempo?.compasesMs
   if (!compases || compases.length < 2) return 0
-  if (p.cuenta === 0 || p.cuenta === 1 || p.cuenta === 2) return p.cuenta
-  if (posMs !== undefined && suenaSuCuenta(p.tempo, posMs)) return 0
-  return 1
+  if (p.cuenta !== 1 && p.cuenta !== 2) return 0
+  if (posMs !== undefined && posMs > compases[0] + 50) return 0
+  return p.cuenta
 }
 
 /**

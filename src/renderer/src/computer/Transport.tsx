@@ -250,20 +250,20 @@ export function Transport(p: Props) {
             )}
             {p.proyecto.tempo && p.proyecto.tempo.compasesMs.length > 1 && (
               <select
-                className="chip-cuenta"
-                value={p.proyecto.cuenta === undefined ? 'auto' : String(p.proyecto.cuenta)}
-                onChange={(e) => p.onCuenta(e.target.value === 'auto' ? null : (Number(e.target.value) as 0 | 1 | 2))}
+                className={`chip-cuenta ${p.proyecto.cuenta === 1 || p.proyecto.cuenta === 2 ? 'activa' : ''}`}
+                value={p.proyecto.cuenta === 1 || p.proyecto.cuenta === 2 ? String(p.proyecto.cuenta) : ''}
+                onChange={(e) => p.onCuenta(e.target.value === '' ? null : (Number(e.target.value) as 1 | 2))}
                 title={
-                  (p.proyecto.tempo.cuentaPropia ?? 0) > 0
-                    ? `Esta canción ya trae su cuenta (${p.proyecto.tempo.cuentaPropia === 1 ? '1 compás' : `${p.proyecto.tempo.cuentaPropia} compases`}): desde el principio cuenta ella; desde una sección o después de una pausa, el click cuenta 1 compás. Se puede forzar otra.`
-                    : 'Cuenta al dar play: el click cuenta un compás (“1 2 3 4”) y recién entra la canción, en todos a la vez'
+                  'Cuenta antes de la canción: solo al dar play desde el principio (desde una sección o después de una pausa, la música sigue enseguida, sin cuenta)' +
+                  ((p.proyecto.tempo.cuentaPropia ?? 0) > 0
+                    ? `. Esta canción ya trae su cuenta (${p.proyecto.tempo.cuentaPropia === 1 ? '1 compás' : `${p.proyecto.tempo.cuentaPropia} compases`}).`
+                    : '')
                 }
                 aria-label="Cuenta antes de la canción"
               >
-                <option value="auto">{(p.proyecto.tempo.cuentaPropia ?? 0) > 0 ? 'Cuenta: la de la canción (auto)' : 'Cuenta: 1 compás (auto)'}</option>
-                <option value="2">Cuenta: 2 compases</option>
-                <option value="1">Cuenta: 1 compás</option>
-                <option value="0">Sin cuenta</option>
+                <option value="">Sin cuenta</option>
+                <option value="1">Cuenta: 1 compás (desde el principio)</option>
+                <option value="2">Cuenta: 2 compases (desde el principio)</option>
               </select>
             )}
           </div>

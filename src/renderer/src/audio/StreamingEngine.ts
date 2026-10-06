@@ -163,7 +163,7 @@ function contenidoHasta(tr: Tramo, t: number): number {
 
 /**
  * Motor de audio por streaming (celulares Y compu): buffer deslizante por
- * segmentos de 2 s pedidos al servidor (ver README "Streaming progresivo").
+ * segmentos de 1 s pedidos al servidor (ver README "Streaming progresivo").
  * Nunca descarga ni decodifica la cancion entera.
  *
  * Encadenado gapless: cada segmento es un `AudioBufferSourceNode` de un solo

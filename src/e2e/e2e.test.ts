@@ -25,6 +25,7 @@ import { ANUNCIOS, generarClick, inicioCompas, SR, wav16, zipConGuia } from '../
 import { crearRar5 } from '../server/__fixtures__/rar'
 import { verificarLicencia } from '../server/licencia'
 import { deBase64Url } from '../shared/licencia'
+import { SEGMENTO_SEC } from '../shared/mezcla'
 
 const RENDERER = path.resolve(__dirname, '../renderer')
 const esperar = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -670,7 +671,7 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     await esperar(2500)
     // el primer tramo programado despues del pedido (arranca a mitad de segmento: donde cae el compas)
     const todos = (await diag()).tramos as unknown as { ini: number; pos: number; dur: number }[]
-    const nuevos = todos.filter((tr) => tr.ini > tResync && Math.abs(tr.pos / 2 - Math.round(tr.pos / 2)) > 1e-6)
+    const nuevos = todos.filter((tr) => tr.ini > tResync && Math.abs(tr.pos / SEGMENTO_SEC - Math.round(tr.pos / SEGMENTO_SEC)) > 1e-6)
     const reentrada = nuevos.length ? nuevos[0].pos * 1000 : NaN
     assert.ok(
       tab.proyecto.tempo!.compasesMs.some((c) => Math.abs(c - reentrada) < 1),
@@ -827,7 +828,11 @@ test('e2e: compu + 2 celulares', { timeout: 5 * 60 * 1000 }, async (t) => {
     // la compu ve el diagnostico de ese celular y copia el informe para mandar por chat
     await ctxCompu.grantPermissions(['clipboard-read', 'clipboard-write'])
     await compu.locator('.chip-dispositivos').click()
-    await compu.waitForFunction(() => /WiFi .* Mbps \(usa 1,4\) · colchón \d+ s · sin cortes/.test(document.querySelector('.modal .lista')?.textContent ?? ''))
+    await compu
+      .waitForFunction(() => /WiFi .* Mbps \(usa 1,4\) · colchón \d+ s · sin cortes/.test(document.querySelector('.modal .lista')?.textContent ?? ''))
+      .catch(async (e: Error) => {
+        throw new Error(`${e.message} · la lista dice: ${await compu.locator('.modal .lista').textContent()}`)
+      })
     await compu.getByRole('button', { name: /Copiar diagnóstico/ }).click()
     await compu.getByRole('button', { name: 'Copiado' }).waitFor()
     const informe = await compu.evaluate(() => navigator.clipboard.readText())
@@ -1646,8 +1651,8 @@ test('cuenta: al dar play suena "1 2 3 4, 1 2 3 4" a la vez en la compu y el cel
   }
   server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
   await compu.getByLabel('Cuenta antes de la canción').waitFor()
-  // la banda suena desde el principio (no trae su propia cuenta): la automatica es 1 compas; aca se eligen 2
-  assert.match((await compu.getByLabel('Cuenta antes de la canción').locator('option:checked').textContent())!, /1 compás \(auto\)/)
+  // por defecto no hay cuenta; aca se eligen 2 compases (suena solo desde el principio)
+  assert.equal(await compu.getByLabel('Cuenta antes de la canción').inputValue(), '')
   await compu.getByLabel('Cuenta antes de la canción').selectOption('2')
   await compu.waitForFunction(() => (document.querySelector('.chip-cuenta') as HTMLSelectElement | null)?.value === '2')
 
@@ -1763,8 +1768,8 @@ test('cuenta: al dar play suena "1 2 3 4, 1 2 3 4" a la vez en la compu y el cel
   })
 
   await t.test('"Sin cuenta" en esta canción: arranca directo', async () => {
-    await compu.getByLabel('Cuenta antes de la canción').selectOption('0')
-    await compu.waitForFunction(() => (document.querySelector('.chip-cuenta') as HTMLSelectElement | null)?.value === '0')
+    await compu.getByLabel('Cuenta antes de la canción').selectOption('')
+    await compu.waitForFunction(() => (document.querySelector('.chip-cuenta') as HTMLSelectElement | null)?.value === '')
     await esperar(300)
     await compu.getByRole('button', { name: 'Reproducir' }).click()
     await esperar(300)

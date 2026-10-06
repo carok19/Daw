@@ -396,7 +396,7 @@ test('"Detectar secciones" reemplaza las existentes y el modelo de voz se inform
   assert.deepEqual(final.proyectoActivo!.marcadores.map((m) => m.nombre), ['Coro'])
 })
 
-test('cuenta propia: al importar se detecta que la guía ya cuenta; desde el principio no se agrega otra, desde una sección 1 compás', { timeout: 60000 }, async (t) => {
+test('cuenta propia: al importar se detecta que la guía ya cuenta; play sin cuenta extra, ni desde el principio ni desde una sección', { timeout: 60000 }, async (t) => {
   const { tmp, compu, ack } = await entorno(t)
   const seg = 24
   // la guia cuenta "1, 2, 3, 4" dos compases (120 BPM desde 0,5 s) y recien entra la banda
@@ -429,8 +429,8 @@ test('cuenta propia: al importar se detecta que la guía ya cuenta; desde el pri
   assert.equal(cmd.playback.cuenta, undefined)
   await Promise.all([comando(), compu.emit('transport:stop')])
   await esperar(100)
-  // desde el Coro: 1 compas del click
+  // desde el Coro: la banda entra ya (sin cuenta)
   ;[cmd] = await Promise.all([comando(), compu.emit('transport:play', { positionMs: 12500 })])
-  assert.equal(cmd.playback.cuenta?.golpes.length, 4)
+  assert.equal(cmd.playback.cuenta, undefined)
   await Promise.all([comando(), compu.emit('transport:stop')])
 })

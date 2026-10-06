@@ -8,8 +8,13 @@ import type { Pista, Proyecto } from './types'
  * servidor (que mezcla), para que los dos calculen exactamente lo mismo.
  */
 
-/** Duracion (seg) de cada segmento de audio (el mismo en la mezcla y en las pistas sueltas). */
-export const SEGMENTO_SEC = 2
+/**
+ * Duracion (seg) de cada segmento de audio (el mismo en la mezcla y en las
+ * pistas sueltas). 1 s: un mute o un fader se oyen en ~0,5 s aun con el WiFi
+ * cargado (con 2 s tardaban 0,7-1,5 s: el pedazo que hay que volver a bajar
+ * pesa el doble).
+ */
+export const SEGMENTO_SEC = 1
 
 /** Ajuste personal de una pista en ESTE dispositivo ("Mi mezcla"), por nombre de pista. */
 export interface AjustePersonal {

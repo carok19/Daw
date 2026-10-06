@@ -289,26 +289,18 @@ cambian a propósito.
     avisa y el recorrido; si estaba pausada, sigue en el mismo punto de la
     música. En el celular se ve “76 BPM”. Se combina con el tono, la canción
     recuerda su velocidad y tocar “+6 %” vuelve a la original.
-11. **Cuenta antes de la canción:** al dar play (desde parado, en pausa o
-    desde una sección) el click cuenta un compás, **“1 2 3 4”**, y recién
-    entra la canción, en todos a la vez. Usa el tempo y el compás que la app
-    detecta del click (3/4: “1 2 3”) y **el mismo sonido del click de la
-    canción** (el “1” con su acento), por el oído del click y con el volumen
-    de click de cada uno. En la compu el reloj muestra el número de la cuenta
-    y en los celulares “Cuenta 3”.
-    - **Canciones que ya traen su cuenta** (la guía dice “1, 2, 3, 4” con la
-      banda en silencio, o cuenta solo el click): la app lo detecta sola y,
-      **desde el principio, no agrega otra** (cuenta la canción). Desde una
-      sección o después de una pausa, sí cuenta su compás (ahí la canción no
-      trae cuenta). Se ve en el selector: “Cuenta: la de la canción (auto)”.
-      Un pad bajito de fondo o un golpe de batería en el “4” no la engañan;
-      una intro suave, en cambio, es música (lleva cuenta). Las canciones que
-      ya estaban importadas se revisan solas al abrirlas.
-    - Al lado del BPM se puede forzar por canción: automática, 2 compases, 1
-      o **sin cuenta**.
-    - Después de una pausa, la cuenta sigue el pulso de la canción y la
-      música vuelve justo donde quedó. Los saltos con la música sonando no
-      llevan cuenta. Sin tempo detectado, arranca directo como siempre.
+11. **Cuenta antes de la canción (opcional, apagada):** por defecto el play
+    arranca la música **enseguida**, sin “ti ti ti”: desde el principio,
+    desde una sección o después de una pausa. Si una canción la necesita, al
+    lado del BPM se elige **“Cuenta: 1 compás”** o **“2 compases”**, y suena
+    **solo al dar play desde el principio** (nunca al seguir después de una
+    pausa ni desde una sección: ahí la banda tiene que poder entrar ya). La
+    cuenta usa el tempo y el compás que la app detecta del click (3/4: “1 2
+    3”) y **el mismo sonido del click de la canción** (el “1” con su acento),
+    por el oído del click y con el volumen de click de cada uno, en todos a
+    la vez. En la compu el reloj muestra el número y en los celulares
+    “Cuenta 3”. Las canciones que ya traen su cuenta (la guía dice “1, 2, 3,
+    4” con la banda en silencio) la siguen teniendo: es parte del audio.
 12. **Colchón: pad y click, sin la banda.** Un **pad** de ambiente (un
     colchón sostenido en el tono) y el **click**, sonando en todos a la vez.
     El pad lo hace la app (no hay que bajar nada): raíz, quinta y octava, sin
@@ -437,9 +429,12 @@ separado, una canción de 20 pistas pedía más de 25 Mbps por celular y el WiFi
 no daba). Sigue siendo WAV sin comprimir, sin pérdida de calidad. Con 10
 celulares son ~14 Mbps en total: entra en cualquier router. Un mute o un
 fader (de la compu o de “Mi mezcla”) se escucha en el celular en **~0,1 s**
-con buen WiFi y en **~0,6 s** con el WiFi cargado (medido con audio real,
-limitando el celular a 6 Mbps; un cambio justo al final de un pedazo de 2 s
-puede tardar hasta ~1,3 s).
+con buen WiFi y en **~0,4 s** con el WiFi cargado (medido con audio real,
+limitando el celular a 6 Mbps: 0,37–0,66 s). El audio viaja en pedazos de
+**1 s**: un mute baja de nuevo solo lo que falta de ese segundo, la mitad que
+con los pedazos de 2 s de antes (que tardaban 0,7–1,5 s con el WiFi cargado).
+Medido también en un celular viejo simulado (CPU 4–6 veces más lenta, WiFi de
+5 Mbps): 0,45 s; lo que pesa es la red, no el celular.
 
 **¿Se corta?** En la ventana de Celulares, debajo de cada celular, se ve
 cuánto WiFi le da la red, cuánto necesita, cuántos segundos de audio tiene
@@ -589,7 +584,7 @@ ser del usuario: ni un zip actualizado ni un análisis automático las pisan
 
 ### Streaming de audio (celulares y compu)
 
-Nadie descarga ni decodifica la canción entera: se piden segmentos de 2 s y
+Nadie descarga ni decodifica la canción entera: se piden segmentos de 1 s y
 cada segmento se libera apenas termina.
 
 - **Celulares: la mezcla la hace la compu.** El celular pide
@@ -646,7 +641,7 @@ cada segmento se libera apenas termina.
 
 | Constante (`audio/streamConfig.ts`) | Valor | Significado |
 |---|---|---|
-| `SEGMENT_DURATION_SEC` | 2 | Duración de cada segmento |
+| `SEGMENT_DURATION_SEC` | 1 | Duración de cada segmento (`SEGMENTO_SEC` en `shared/mezcla.ts`) |
 | `BUFFER_TARGET_SEC` | 20 / 8 | Colchón bajado por delante (mezcla / pistas sueltas) |
 | `HORIZONTE_PROGRAMADO_SEC` | 4 | Audio ya programado en Web Audio |
 | `BUFFER_CRITICAL_SEC` | 3 | Por debajo: aviso de conexión lenta |
@@ -856,18 +851,20 @@ estado. **Nada de su audio viaja por la red mientras suena:**
    hasta tener 5 mediciones, y si a alguno una orden le llega sin tiempo
    para programarla, se vuelve a 1,5 s por 2 minutos. Sin celulares, 30 ms.
    El margen actual sale en “Copiar diagnóstico”.
-3. **Cuenta:** el play desde parado o en pausa lleva los golpes de la cuenta
-   (`shared/cuenta.ts`) con su hora: cada dispositivo los toca con el mismo
+3. **Cuenta (opcional):** con la cuenta prendida en la canción, el play
+   desde el principio lleva los golpes (`shared/cuenta.ts`,
+   `compasesDeCuenta`) con su hora: cada dispositivo los toca con el mismo
    reloj que la música, con el sonido del click recortado de la propia
    pista (`/cuenta/<canción>.wav`). Medido con audio real grabado en la
    compu y en un celular: cada golpe y la entrada de la canción, a 1–2 ms
-   entre ellos. La cuenta que ya trae la canción (`tempo.cuentaPropia`, en
+   entre ellos. Después de una pausa, desde una sección o en un salto no hay
+   cuenta. La cuenta que ya trae la canción (`tempo.cuentaPropia`, en
    compases) la mide `server/cuenta.ts` una vez por tempo: la energía de la
    banda (todo menos click y guía) en la primera parte de cada uno de los
    primeros 12 compases; los primeros que están 24 dB por debajo del más
    fuerte, con la guía hablando (o en silencio de verdad, si cuenta solo el
-   click), y después entra la banda (hasta 4 compases). Arrancando antes de
-   su último compás, la cuenta automática no suma otra.
+   click), y después entra la banda (hasta 4 compases). La usan el colchón
+   y AirTracks Video.
 4. **Tramo previo:** entre que se emite un comando y su horario sigue
    sonando lo anterior; el estado lo describe (`previo`, una cadena corta si
    hay dos comandos seguidos), así la interfaz, el monitor de drift y un

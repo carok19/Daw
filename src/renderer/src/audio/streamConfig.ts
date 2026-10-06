@@ -40,15 +40,15 @@ export const MAX_FETCHES_GLOBAL = 8
  */
 export const MAX_CUES = 16
 
-/** Segmentos precargados por cada marcador (2 x 2s cubren el minimo de arranque). */
-export const SEGMENTOS_POR_CUE = 2
+/** Segmentos precargados por cada marcador (4 s: cubren el minimo de arranque). */
+export const SEGMENTOS_POR_CUE = Math.ceil(4 / SEGMENT_DURATION_SEC)
 
 /**
  * Segmentos del principio de la SIGUIENTE cancion del setlist que se bajan de
  * antemano (con la actual ya asegurada y de a poco): al pasar de cancion, el
  * celular arranca sin esperar la red.
  */
-export const SEGMENTOS_PRECARGA_SIGUIENTE = 2
+export const SEGMENTOS_PRECARGA_SIGUIENTE = Math.ceil(4 / SEGMENT_DURATION_SEC)
 
 /** Un cambio de mezcla (fader) se aplica como mucho cada tanto mientras se arrastra. */
 export const INTERVALO_CAMBIO_MEZCLA_MS = 300

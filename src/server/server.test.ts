@@ -15,7 +15,7 @@ import dgram from 'node:dgram'
 import dnsPacket from 'dns-packet'
 import { responderMdns } from './descubrimiento'
 import { decodePcmSegment, parseWavHeader } from '../shared/wav'
-import { aplicarPaneoAutomatico, codificarMezcla, coeficientesPaneo, mezclaEfectiva, type CanalMezcla } from '../shared/mezcla'
+import { aplicarPaneoAutomatico, codificarMezcla, coeficientesPaneo, mezclaEfectiva, SEGMENTO_SEC, type CanalMezcla } from '../shared/mezcla'
 import { migrarProyecto } from './projects'
 import { fichaDesdeProyecto, interpretarFicha } from './ficha'
 import { Mezclador } from './mezclador'
@@ -1216,21 +1216,22 @@ test('cuenta: los golpes caen en la grilla de la canción (1 2 3 4, 1 2 3 4) y l
   assert.equal(golpesDeCuenta(null, 0, 2), null)
   assert.equal(golpesDeCuenta({ compasesMs: [0], compas: 4 }, 0, 2), null)
 
-  // automatica: 1 compas (tambien en las lentas); lo elegido manda
+  // cuantos compases: por defecto ninguno; lo elegido, solo desde el principio
   const tempo = (compasMs: number, cuentaPropia?: number) => ({ bpm: 1, compas: 4, compasesMs: [0, 1, 2, 3, 4].map((k) => k * compasMs), clickPistaId: null, acentoClaro: true, cuentaPropia })
-  assert.equal(compasesDeCuenta({ tempo: tempo(2000) }, 0), 1)
-  assert.equal(compasesDeCuenta({ tempo: tempo(4000) }, 0), 1, '60 BPM')
+  // por defecto, sin cuenta (play arranca la musica enseguida)
+  assert.equal(compasesDeCuenta({ tempo: tempo(2000) }, 0), 0)
   assert.equal(compasesDeCuenta({ tempo: tempo(2000), cuenta: 0 }, 0), 0)
+  // prendida en la cancion: solo arrancando desde el principio (hasta el primer "1")
   assert.equal(compasesDeCuenta({ tempo: tempo(4000), cuenta: 2 }, 0), 2)
+  assert.equal(compasesDeCuenta({ tempo: tempo(2000), cuenta: 1 }, 0), 1)
+  assert.equal(compasesDeCuenta({ tempo: tempo(2000), cuenta: 1 }, 6000), 0, 'desde una sección o después de una pausa: nunca')
   assert.equal(compasesDeCuenta({ tempo: null, cuenta: 2 }, 0), 0, 'sin tempo no hay cuenta')
-  // la cancion ya trae 2 compases de cuenta (la guia cuenta con la banda en silencio): desde el principio cuenta ella
+  // la cancion ya trae 2 compases de cuenta (la guia cuenta con la banda en silencio): nunca se le suma otra sola
   const propia = tempo(2000, 2)
   assert.equal(compasesDeCuenta({ tempo: propia }, 0), 0)
-  assert.equal(compasesDeCuenta({ tempo: propia }, 2000), 0, 'desde adentro de su cuenta: queda un compas de ella')
-  assert.equal(compasesDeCuenta({ tempo: propia }, 4000), 1, 'desde donde entra la banda, una seccion o una pausa: 1 compas del click')
-  assert.equal(compasesDeCuenta({ tempo: propia }, 9000), 1)
-  assert.equal(compasesDeCuenta({ tempo: propia, cuenta: 2 }, 0), 2, 'lo elegido manda')
-  assert.equal(compasesDeCuenta({ tempo: { ...propia, compasesMs: [500, 2500, 4500, 6500] } }, 0), 0, 'con un silencio antes del primer compas')
+  assert.equal(compasesDeCuenta({ tempo: propia }, 4000), 0, 'desde donde entra la banda, una seccion o una pausa: tampoco')
+  assert.equal(compasesDeCuenta({ tempo: propia, cuenta: 2 }, 0), 2, 'lo elegido manda (desde el principio)')
+  assert.equal(compasesDeCuenta({ tempo: { ...propia, compasesMs: [500, 2500, 4500, 6500] }, cuenta: 1 }, 0), 1, 'con un silencio antes del primer compas')
   assert.equal(suenaSuCuenta(tempo(2000, 0), 0), false)
   assert.equal(suenaSuCuenta(tempo(2000), 0), false, 'sin revisar todavia: como si no trajera')
 
@@ -1246,7 +1247,7 @@ test('cuenta: los golpes caen en la grilla de la canción (1 2 3 4, 1 2 3 4) y l
   assert.equal(golpeActual(p.cuenta, 104_100), 0, 'ya entró la música')
 })
 
-test('cuenta: al dar play (parado o en pausa) la compu programa la cuenta con el sonido del click de la canción; se puede cambiar por canción', async (t) => {
+test('cuenta: por defecto no hay; prendida en la canción, la compu la programa solo desde el principio (nunca al seguir ni desde una sección), con el sonido del click', async (t) => {
   const env = await entorno(t)
   const compu = await env.conectar(compuAuth)
   const sr = 44100
@@ -1270,7 +1271,14 @@ test('cuenta: al dar play (parado o en pausa) la compu programa la cuenta con el
   assert.ok(pico(x.subarray(0, Math.round(0.003 * sr))) > 0.3, 'empieza en el ataque (sin silencio antes)')
   assert.equal((await fetch(`http://localhost:${env.port}/cuenta/${crypto.randomUUID()}.wav`)).status, 404)
 
-  // play desde parado: 1 compas de cuenta antes del comienzo (la cuenta termina en el primer "1", a los 0,5 s)
+  // por defecto, sin cuenta: play arranca la musica enseguida
+  const [directo] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
+  assert.equal(directo.playback.cuenta, undefined, 'sin cuenta por defecto')
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
+  await esperar(100) // que el stop llegue a su horario
+
+  // prendida (1 compas), desde parado: la cuenta termina en el primer "1", a los 0,5 s
+  assert.equal((await emitAck<{ ok: boolean }>(compu, 'cuenta:set', { proyectoId: p.id, cuenta: 1 })).ok, true)
   const t0 = Date.now()
   const [cmd] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
   const cuenta = cmd.playback.cuenta!
@@ -1280,26 +1288,30 @@ test('cuenta: al dar play (parado o en pausa) la compu programa la cuenta con el
   assert.equal(cmd.executeAtServerTime - cuenta.golpes[0].t, 1500, 'la musica (desde 0) entra 1,5 s despues: la cuenta termina en el "1" de los 0,5 s')
   assert.equal(cuenta.golpes[3].t - cmd.executeAtServerTime, 0)
 
-  // en pausa y play otra vez: cuenta que llega justo al punto donde se paro
+  // en pausa y play otra vez: sigue enseguida, sin cuenta (aunque este prendida)
   await esperar(Math.max(0, cmd.executeAtServerTime - Date.now()) + 700)
   const [pausa] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:pause')])
   await esperar(100) // que la pausa llegue a su horario
   const [otra] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
   assert.equal(otra.positionMs, pausa.positionMs)
-  const ultimo = otra.playback.cuenta!.golpes[otra.playback.cuenta!.golpes.length - 1]
-  assert.ok(ultimo.t < otra.executeAtServerTime && otra.executeAtServerTime - ultimo.t <= 500, 'el ultimo golpe, a menos de un pulso de la entrada')
+  assert.equal(otra.playback.cuenta, undefined, 'al seguir después de una pausa: sin cuenta')
   // sonando, un salto no lleva cuenta
   const [salto] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:seek', { positionMs: 8500, inmediato: true })])
   assert.equal(salto.playback.cuenta, undefined)
   await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
+  await esperar(100)
+  // desde una seccion (parado): tampoco
+  const [desdeSeccion] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 4500 })])
+  assert.equal(desdeSeccion.playback.cuenta, undefined, 'desde una sección: sin cuenta')
+  await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
 
-  // "Sin cuenta" en esta cancion: arranca como antes
+  // "Sin cuenta" en esta cancion
   assert.equal((await emitAck<{ ok: boolean }>(compu, 'cuenta:set', { proyectoId: p.id, cuenta: 0 })).ok, true)
   assert.equal((await emitAck<EstadoCompleto>(compu, 'state:request', {})).proyectoActivo!.cuenta, 0)
   const [sin] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
   assert.equal(sin.playback.cuenta, undefined)
   await Promise.all([esperarEvento(compu, 'playback:scheduled'), compu.emit('transport:stop')])
-  // 2 compases; y de vuelta a automatica
+  // 2 compases (desde el principio); y de vuelta a como viene (sin cuenta)
   await esperar(100) // que el stop llegue a su horario
   await emitAck(compu, 'cuenta:set', { proyectoId: p.id, cuenta: 2 })
   const [dos] = await Promise.all([esperarEvento<ComandoProgramado>(compu, 'playback:scheduled'), compu.emit('transport:play', {})])
@@ -1776,13 +1788,25 @@ test('voz del salto: se importa el pack (el español) y los celulares la reciben
   assert.ok(anuncio, 'el salto trae la voz')
   assert.deepEqual([anuncio.desdeMs, anuncio.hastaMs, anuncio.pistaId, anuncio.guiaPistaId], [2000, 4000, guia.id, guia.id])
 
-  // el pedazo 1 (2 a 4 s) de la mezcla de un celular, con y sin la voz
+  // de 2 a 4 s de la mezcla de un celular (los pedazos de ese tramo, pegados), con y sin la voz
   const canales = mezclaEfectiva(p.pistas)
-  const base = `http://localhost:${env.port}/mezcla/${p.id}/1.wav?v=${p.revision ?? 0}&m=${codificarMezcla(canales)}`
-  const leer = async (url: string): Promise<Float32Array[]> => {
-    const bytes = await (await fetch(url)).arrayBuffer()
-    const info = parseWavHeader(bytes)
-    return decodePcmSegment(info, bytes.slice(info.dataOffset))
+  const pedazos = Array.from({ length: Math.round(2 / SEGMENTO_SEC) }, (_, k) => Math.round(2 / SEGMENTO_SEC) + k)
+  const leer = async (canalesPedidos: CanalMezcla[], extra = ''): Promise<Float32Array[]> => {
+    const partes: Float32Array[][] = []
+    for (const n of pedazos) {
+      const bytes = await (await fetch(`http://localhost:${env.port}/mezcla/${p.id}/${n}.wav?v=${p.revision ?? 0}&m=${codificarMezcla(canalesPedidos)}${extra}`)).arrayBuffer()
+      const info = parseWavHeader(bytes)
+      partes.push(decodePcmSegment(info, bytes.slice(info.dataOffset)))
+    }
+    return [0, 1].map((c) => {
+      const total = new Float32Array(partes.reduce((a, x) => a + x[c].length, 0))
+      let o = 0
+      for (const x of partes) {
+        total.set(x[c], o)
+        o += x[c].length
+      }
+      return total
+    })
   }
   const rms = (x: Float32Array, desde: number, hasta: number): number => {
     let s = 0
@@ -1793,9 +1817,9 @@ test('voz del salto: se importa el pack (el español) y los celulares la reciben
     for (let i = Math.round(desde * sr); i < x.length; i++) if (Math.abs(x[i]) > 0.05) return i / sr
     return -1
   }
-  const [sinL] = await leer(base)
+  const [sinL] = await leer(canales)
   assert.ok(rms(sinL, 0.45, 0.95) > 0.1, 'sin la voz se oye la guia')
-  const [L, R] = await leer(`${base}&a=${anuncio.id}`)
+  const [L, R] = await leer(canales, `&a=${anuncio.id}`)
   // la guia calla todo el compas; el "Puente" arranca justo en el 1 (sin el silencio que tenia el archivo),
   // el "3" y el "4" en sus pulsos; todo con el lado de la guia (izquierda)
   assert.ok(rms(L, 0.45, 0.95) < 0.003, `la guía se calla (rms ${rms(L, 0.45, 0.95)})`)
@@ -1809,7 +1833,7 @@ test('voz del salto: se importa el pack (el español) y los celulares la reciben
 
   // con la guia muteada en esa mezcla, la voz tampoco suena
   const sinGuia = canales.filter((c) => c.pistaId !== guia.id)
-  const [mudoL] = await leer(`http://localhost:${env.port}/mezcla/${p.id}/1.wav?v=${p.revision ?? 0}&m=${codificarMezcla(sinGuia)}&a=${anuncio.id}`)
+  const [mudoL] = await leer(sinGuia, `&a=${anuncio.id}`)
   assert.ok(Math.max(...mudoL.map(Math.abs)) < 0.001)
 
   // voces apagadas: el salto va sin voz; sin pack, igual
@@ -1924,8 +1948,9 @@ test('mezcla por celular: la compu arma UNA pista estéreo con la mezcla pedida 
   const esperadoR = 0 + 0.5 * -0.1 + 2 * 0.1 * b.aRR
   const s0 = await muestras(await pedir(0, mezcla))
   assert.equal(s0.sr, 44100, 'la frecuencia de la mayoria')
-  assert.equal(s0.L.length, 2 * 44100, 'segmentos de 2 s exactos')
-  for (const i of [0, 1000, 44100, 88199]) {
+  const largo = SEGMENTO_SEC * 44100
+  assert.equal(s0.L.length, largo, `segmentos de ${SEGMENTO_SEC} s exactos`)
+  for (const i of [0, 1000, largo / 2, largo - 1]) {
     assert.ok(Math.abs(s0.L[i] - esperadoL) < 0.001, `L[${i}] = ${s0.L[i]} (esperado ${esperadoL})`)
     assert.ok(Math.abs(s0.R[i] - esperadoR) < 0.001, `R[${i}] = ${s0.R[i]} (esperado ${esperadoR})`)
   }
@@ -1938,12 +1963,13 @@ test('mezcla por celular: la compu arma UNA pista estéreo con la mezcla pedida 
   const fuerte = await muestras(await pedir(0, [{ pistaId: id('Guia'), ganancia: 4, pan: -1 }, { pistaId: id('Pad'), ganancia: 2, pan: -1 }]))
   assert.ok(fuerte.L[100] > 0.9 && fuerte.L[100] < 1, `limitado: ${fuerte.L[100]}`)
 
-  // final de la cancion: el ultimo segmento es mas corto y lo avisa; despues, 416
-  const r2 = await pedir(2, mezcla)
+  // final de la cancion (5 s): el ultimo segmento lo avisa (y es mas corto si no entra entero); despues, 416
+  const ultimo = Math.ceil(5 / SEGMENTO_SEC) - 1
+  const r2 = await pedir(ultimo, mezcla)
   assert.equal(r2.headers.get('x-ultimo'), '1')
-  assert.equal((await muestras(r2)).L.length, 44100)
-  assert.equal((await pedir(1, mezcla)).headers.get('x-ultimo'), '0')
-  assert.equal((await pedir(3, mezcla)).status, 416)
+  assert.equal((await muestras(r2)).L.length, Math.round((5 - ultimo * SEGMENTO_SEC) * 44100))
+  assert.equal((await pedir(ultimo - 1, mezcla)).headers.get('x-ultimo'), '0')
+  assert.equal((await pedir(ultimo + 1, mezcla)).status, 416)
 
   // pedidos invalidos
   assert.equal((await fetch(`${base}/0.wav?v=${(p.revision ?? 0) + 1}&m=`)).status, 409, 'revision vieja')
@@ -1956,7 +1982,7 @@ test('mezcla por celular: la compu arma UNA pista estéreo con la mezcla pedida 
 
   // los celulares con la misma mezcla comparten el segmento (se calcula una vez)
   const antes = env.server.mezclador.estadisticas()
-  await Promise.all([pedir(1, mezcla), pedir(1, mezcla), pedir(1, mezcla)].map(async (r) => (await r).arrayBuffer()))
+  await Promise.all([pedir(ultimo - 1, mezcla), pedir(ultimo - 1, mezcla), pedir(ultimo - 1, mezcla)].map(async (r) => (await r).arrayBuffer()))
   const despues = env.server.mezclador.estadisticas()
   assert.equal(despues.mezclados, antes.mezclados, 'ya estaba en la cache')
   assert.equal(despues.aciertosCache - antes.aciertosCache, 3)

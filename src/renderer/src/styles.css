@@ -3754,6 +3754,10 @@ input[type='date'] {
     color: var(--text);
   }
 }
+.chip-cuenta.activa {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
 .chip-cuenta option {
   background: var(--panel-2);
   color: var(--text);
