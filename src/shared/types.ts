@@ -334,7 +334,29 @@ export interface SaltoPendiente {
   tSalto: number
   /** la voz que lo avisa ("Coro… 3, 4"); null = sin voces importadas o no entra */
   anuncio?: AnuncioSalto | null
+  /** "Terminar con fundido": en el limite la cancion no salta, se apaga (ver FundidoFinal) y para */
+  fin?: boolean
 }
+
+/**
+ * La cancion se esta apagando ("Terminar con fundido"): desde `desde` (hora
+ * del servidor) baja a silencio en `ms`, igual en todos los dispositivos, y
+ * ahi para (vuelve al principio, como al terminar sola).
+ */
+export interface FundidoFinal {
+  desde: number
+  ms: number
+}
+
+/** Aviso del servidor: empieza el fundido o (con `vuelve`) se cancelo a mitad y la musica vuelve a esa hora. */
+export interface AvisoFundido extends FundidoFinal {
+  tabId: string
+  vuelve?: number
+}
+
+/** Duraciones del fundido que se pueden elegir (ms). */
+export const DURACIONES_FUNDIDO = [2000, 4000, 6000, 8000]
+export const FUNDIDO_POR_DEFECTO_MS = 4000
 
 /**
  * Voz que avisa un salto (ver shared/anuncio.ts): suena en el ultimo compas
@@ -455,6 +477,10 @@ export interface EstadoCompleto {
   playbackActivo: PlaybackState | null
   modoSalto: ModoSalto
   saltoPendiente: SaltoPendiente | null
+  /** la cancion se esta apagando ("Terminar con fundido"; null = no) */
+  fundido?: FundidoFinal | null
+  /** cuanto tarda en apagarse con "Terminar" (ms) */
+  fundidoMs?: number
   /** voces para avisar los saltos (null = no se importo ningun pack) */
   voces?: InfoVoces | null
   /** pads propios del colchón (null = no se importaron: suenan los de la app) */

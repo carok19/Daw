@@ -82,7 +82,7 @@ export function MiniTimeline({ controller, onda, grande }: { controller: AppCont
   const pos = usePlayheadMs()
   const actual = seccionEn(secciones, pos)
   const salto = estado?.saltoPendiente ?? null
-  const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
+  const destino = salto && !salto.fin ? seccionEn(secciones, salto.destinoMs) : null
   const pct = (ms: number): string => `${Math.min(100, Math.max(0, (ms / dur) * 100))}%`
   return (
     <span className={`m-timeline ${grande ? 'm-recorrido' : ''} ${onda ? 'con-onda' : ''}`} aria-hidden>

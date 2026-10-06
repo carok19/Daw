@@ -20,6 +20,12 @@ export const MARGIN_SIN_CELULARES_MS = 30
 /** Anticipacion minima con la que se emite el salto de "repetir seccion" (aunque no haya celulares). */
 const ANTICIPO_MIN_LOOP_MS = 250
 
+/** "Terminar con fundido" necesita al menos esto de cancion para apagarse (si no, termina sola). */
+const FUNDIDO_MIN_MS = 500
+
+/** Cancelado a mitad del fundido: en cuanto empieza a volver la musica (como mucho). */
+const VUELTA_FUNDIDO_MAX_MS = 500
+
 /** Una seccion mas corta que esto no se repite (no da el tiempo para programarla en todos). */
 const MIN_SECCION_LOOP_MS = 1000
 
@@ -236,8 +242,10 @@ export class Transporte {
     // (con la cancion parada, desde el comienzo de la seccion: lo de antes de su "1" entra antes, a tiempo)
     if (propio && this.volverDeColchon(tab, propio, propio.sinBanda ? destino.inicioMs : alCompas(tab, destino.inicioMs))) return
 
-    if (tab.playback.estado !== 'playing' || p.inmediato || this.state.modoSalto === 'inmediato') {
-      this.cancelarSalto()
+    // (apagandose con "Terminar": elegir una seccion la trae de vuelta, ya)
+    const apagandose = this.state.fundido?.tabId === tab.tabId
+    if (tab.playback.estado !== 'playing' || p.inmediato || this.state.modoSalto === 'inmediato' || apagandose) {
+      this.cancelarSalto(false)
       this.seek(destino.inicioMs)
       return
     }
@@ -278,8 +286,9 @@ export class Transporte {
     const propio = this.colchonDe(tab)
     if (propio && this.volverDeColchon(tab, propio, alCompas(tab, positionMs))) return
     const compases = tab.proyecto.tempo?.compasesMs
-    if (tab.playback.estado !== 'playing' || inmediato || this.state.modoSalto === 'inmediato' || !compases || compases.length < 2) {
-      this.cancelarSalto()
+    const apagandose = this.state.fundido?.tabId === tab.tabId
+    if (tab.playback.estado !== 'playing' || inmediato || this.state.modoSalto === 'inmediato' || !compases || compases.length < 2 || apagandose) {
+      this.cancelarSalto(false)
       this.seek(positionMs)
       return
     }
@@ -300,9 +309,41 @@ export class Transporte {
     this.alCambiarSalto()
   }
 
-  /** Cancela el salto elegido que todavia no se hizo. */
-  cancelarSalto(): void {
-    if (!this.state.saltoPendiente) return
+  /**
+   * "Terminar con fundido": la cancion termina cuando quiere el director, sin
+   * cortarla de golpe. Segun el modo de salto (al terminar la seccion, en el
+   * proximo compas, o ya) queda pendiente como un salto ("Se apaga en 3 s", se
+   * puede cancelar); en ese momento la musica sigue y baja a silencio en todos
+   * a la vez (`fundidoMs`), y ahi para. Devuelve el motivo si no se puede.
+   */
+  terminar(): string | null {
+    const tab = this.state.getActiveTab()
+    if (!tab || tab.proyecto.colchon || tab.playback.estado !== 'playing') return 'La canción no está sonando'
+    if (this.colchonDe(tab)) return 'Primero terminá el colchón'
+    if (this.state.fundido?.tabId === tab.tabId) return null // ya se esta apagando
+    const now = Date.now()
+    const dur = tab.proyecto.duracionTotalMs
+    const secciones = calcularSecciones(tab.proyecto.marcadores, dur)
+    // tiene que quedar cancion para apagarse: en la ultima seccion, "al terminar" seria el final (que ya llega solo)
+    const sirve = (l: { limiteMs: number } | null): boolean => !!l && l.limiteMs < dur - FUNDIDO_MIN_MS
+    let limite = this.state.modoSalto === 'inmediato' ? null : this.limiteDeSalto(tab, secciones, this.state.modoSalto, now)
+    if (!sirve(limite) && this.state.modoSalto === 'seccion') limite = this.limiteDeSalto(tab, secciones, 'compas', now)
+    if (!sirve(limite)) {
+      // ya (con el margen para que llegue a todos)
+      const tSalto = Math.max(now + this.margen(), tab.playback.referenceServerTime)
+      limite = { limiteMs: Math.round(posicionActualMs(tab.playback, tSalto)), tSalto }
+    }
+    const { limiteMs, tSalto } = limite!
+    if (limiteMs >= dur - FUNDIDO_MIN_MS) return 'La canción ya está terminando'
+    this.state.saltoPendiente = { tabId: tab.tabId, destinoMs: limiteMs, nombre: 'Final', limiteMs, tSalto, anuncio: null, fin: true }
+    this.reprogramarTimers()
+    this.alCambiarSalto()
+    return null
+  }
+
+  /** Cancela el salto elegido que todavia no se hizo (o, a mitad del fundido de "Terminar", la musica vuelve). */
+  cancelarSalto(tambienElFundido = true): void {
+    if (!this.state.saltoPendiente) return tambienElFundido ? this.cancelarFundido() : undefined
     this.state.saltoPendiente = null
     this.reprogramarTimers()
     this.alCambiarSalto()
@@ -346,6 +387,7 @@ export class Transporte {
       this.cancelarSalto()
       return
     }
+    if (pendiente.fin) return this.empezarFundido(tab, tSalto)
     if (pendiente.destinoMs === pendiente.limiteMs) {
       // la seccion elegida es justo la que sigue: la musica ya continua ahi sola
       this.cancelarSalto()
@@ -353,6 +395,39 @@ export class Transporte {
     }
     const executeAt = Math.max(tSalto, Date.now() + 20)
     this.emitir(tab, 'play', { estado: 'playing', positionMs: pendiente.destinoMs, referenceServerTime: executeAt })
+  }
+
+  /** Llego el momento de "Terminar": la musica sigue y se apaga en todos a la vez; al final, stop. */
+  private empezarFundido(tab: Tab, desde: number): void {
+    this.state.saltoPendiente = null
+    // no pasa del final de la cancion (si queda menos, se apaga en lo que queda)
+    const ms = Math.round(Math.min(this.state.fundidoMs, tab.proyecto.duracionTotalMs - posicionActualMs(tab.playback, desde)))
+    if (ms >= FUNDIDO_MIN_MS) {
+      this.state.fundido = { tabId: tab.tabId, desde, ms }
+      // ya mismo y livianito (no espera al estado completo): los celulares programan la curva a la hora de la compu
+      this.io.emit('transport:fundido', { tabId: tab.tabId, desde, ms })
+    }
+    this.reprogramarTimers()
+    this.alCambiarSalto()
+  }
+
+  /** Se arrepintio a mitad del fundido: la musica vuelve enseguida (en todos a la vez) y la cancion sigue. */
+  private cancelarFundido(): void {
+    const f = this.state.fundido
+    if (!f) return
+    this.state.fundido = null
+    // es solo volumen: no hace falta todo el margen de sync (al que le llega tarde, vuelve desde donde esta)
+    const vuelve = Date.now() + Math.min(this.margen(), VUELTA_FUNDIDO_MAX_MS)
+    if (vuelve < f.desde + f.ms) this.io.emit('transport:fundido', { tabId: f.tabId, desde: f.desde, ms: f.ms, vuelve })
+    this.reprogramarTimers()
+    this.alCambiarSalto()
+  }
+
+  private finDelFundido(tabId: string, tStop: number): void {
+    const tab = this.state.getActiveTab()
+    const f = this.state.fundido
+    if (!tab || tab.tabId !== tabId || !f || f.tabId !== tabId || f.desde + f.ms !== tStop || tab.playback.estado !== 'playing') return
+    this.emitir(tab, 'stop', { estado: 'stopped', positionMs: 0, referenceServerTime: Math.max(tStop, Date.now() + 20) })
   }
 
   // ---- colchon (ver shared/colchon.ts) ----
@@ -378,6 +453,7 @@ export class Transporte {
     const tab = this.state.getActiveTab()
     if (!tab || tab.proyecto.colchon) return 'No hay una canción sonando'
     if (this.colchonSonando()) return null // ya esta
+    if (this.state.fundido?.tabId === tab.tabId) return 'La canción se está terminando'
     const tempo = tab.proyecto.tempo
     if (!tempo || tempo.compasesMs.length < 2) return 'Esta canción no tiene el tempo detectado: el colchón sigue su click'
     if (tab.playback.estado !== 'playing') return this.colchonConLaCancionParada(tab)
@@ -608,8 +684,10 @@ export class Transporte {
 
   private emitir(tab: Tab, accion: AccionProgramada, tramo: TramoReproduccion): void {
     // cualquier comando (pausa, otro salto, el salto mismo) reemplaza al salto que estaba esperando
-    const habiaSalto = this.state.saltoPendiente !== null
+    // (y al fundido de "Terminar": la nueva orden manda desde su horario; hasta ahi sigue la curva)
+    const habiaSalto = this.state.saltoPendiente !== null || this.state.fundido?.tabId === tab.tabId
     this.state.saltoPendiente = null
+    if (this.state.fundido?.tabId === tab.tabId) this.state.fundido = null
     // otra orden para esta cancion (volver del colchon, pausa, stop): la pausa del colchon ya no va
     if (this.pausaDeColchon?.tabId === tab.tabId) this.pausaDeColchon = null
     const now = Date.now()
@@ -652,6 +730,14 @@ export class Transporte {
     const pausa = this.pausaDeColchon
     if (pausa && pausa.tabId === tabId) {
       this.timer = setTimeout(() => this.ejecutarPausaDeColchon(tabId, pausa.tPausa), Math.max(0, pausa.tPausa - this.margen() - now))
+      return
+    }
+
+    // apagandose ("Terminar con fundido"): al final del fundido, stop (nada mas: ni repetir ni saltos)
+    const fundido = this.state.fundido
+    if (fundido && fundido.tabId === tabId) {
+      const tStop = fundido.desde + fundido.ms
+      this.timer = setTimeout(() => this.finDelFundido(tabId, tStop), Math.max(0, tStop - this.margen() - now))
       return
     }
 

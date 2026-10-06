@@ -19,9 +19,12 @@ export function buildEstadoCompleto(state: AppState): EstadoCompleto {
             nombre: state.saltoPendiente.nombre,
             limiteMs: state.saltoPendiente.limiteMs,
             tSalto: state.saltoPendiente.tSalto,
-            anuncio: state.saltoPendiente.anuncio ?? null
+            anuncio: state.saltoPendiente.anuncio ?? null,
+            ...(state.saltoPendiente.fin ? { fin: true } : {})
           }
         : null,
+    fundido: state.fundido && state.fundido.tabId === tab?.tabId ? { desde: state.fundido.desde, ms: state.fundido.ms } : null,
+    fundidoMs: state.fundidoMs,
     voces: state.voces,
     pads: state.pads,
     colchon: state.colchon,

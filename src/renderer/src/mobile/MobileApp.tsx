@@ -52,6 +52,7 @@ import { VistaSonido } from './VistaSonido'
 import { VistaMultimedia, VistaVoz } from './VistasRol'
 import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion'
 import { PulsoColchon, textoColchon, textoCompasColchon } from '../ui/Colchon'
+import { estadoTerminar, IconoFundido, textoCuandoTermina } from '../ui/Fundido'
 import { SALIDA_PAD_VUELTA_MS } from '@shared/colchon'
 
 type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones' | 'invitar'
@@ -188,7 +189,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
             ) : rol === 'voz' ? (
               <VistaVoz controller={controller} proyecto={proyecto} onHoja={setHoja} />
             ) : (
-              <VistaCancion controller={controller} proyecto={proyecto} onHoja={setHoja} />
+              <VistaCancion controller={controller} proyecto={proyecto} onHoja={setHoja} onAjustes={() => setHoja('ajustes')} />
             )
           ) : (
             <Mezcla controller={controller} proyecto={proyecto} />
@@ -577,9 +578,13 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
               {faltanBarra !== null && <small className={`m-barra-faltan num ${faltanBarra === 1 ? 'ultimo' : ''}`}> · {textoQueFaltan(faltanBarra)}</small>}
             </span>
           )}
-          {salto ? (
+          {estado?.fundido ? (
             <span className="m-barra-salto">
-              <ArrowRight size={14} /> {salto.nombre} <span className="num">{faltaPara(salto, pos)}</span>
+              <IconoFundido size={14} /> se está apagando…
+            </span>
+          ) : salto ? (
+            <span className="m-barra-salto">
+              {salto.fin ? <IconoFundido size={14} /> : <ArrowRight size={14} />} {salto.fin ? 'se apaga' : salto.nombre} <span className="num">{faltaPara(salto, pos)}</span>
             </span>
           ) : (
             <span className="m-barra-sigue">
@@ -649,7 +654,42 @@ function BarraFlotante({ controller, onHoja, conInfo }: { controller: AppControl
 
 // ---------- la cancion: recorrido + secciones ----------
 
-function VistaCancion({ controller, proyecto, onHoja }: { controller: AppController; proyecto: Proyecto; onHoja: (h: HojaAbierta) => void }) {
+/**
+ * "Terminar" (la ultima tarjeta, despues de las secciones): la cancion
+ * termina al final de esta seccion (o en el compas, o ya: el modo de salto)
+ * apagandose en unos segundos, en todos a la vez. Otra vez: se cancela (o,
+ * si ya se estaba apagando, la musica vuelve y sigue).
+ */
+function TarjetaTerminar({ controller, pos }: { controller: AppController; pos: number }) {
+  const e = controller.estado
+  const sonando = e?.playbackActivo?.estado === 'playing'
+  const terminar = estadoTerminar(e)
+  const salto = e?.saltoPendiente ?? null
+  const segundos = Math.round((e?.fundidoMs ?? 4000) / 1000)
+  const detalle =
+    terminar === 'apagandose'
+      ? 'apagándose · tocá para seguir'
+      : terminar === 'pendiente' && salto
+        ? `se apaga ${faltaPara(salto, pos)} · tocá para cancelar`
+        : sonando
+          ? `${textoCuandoTermina(e?.modoSalto)} (${segundos} s)`
+          : 'apaga la canción de a poco'
+  return (
+    <button
+      className={`m-marcador terminar ${terminar ? 'pendiente' : ''}`}
+      disabled={!sonando && !terminar}
+      onClick={() => void controller.terminar()}
+      aria-label={terminar === 'apagandose' ? 'Que siga la canción' : terminar ? 'Cancelar el final' : 'Terminar la canción con fundido'}
+    >
+      <span className="m-marcador-nombre">
+        <IconoFundido size={18} /> Terminar
+      </span>
+      <small className="m-marcador-detalle num">{detalle}</small>
+    </button>
+  )
+}
+
+function VistaCancion({ controller, proyecto, onHoja, onAjustes }: { controller: AppController; proyecto: Proyecto; onHoja: (h: HojaAbierta) => void; onAjustes: () => void }) {
   const { estado, secciones } = controller
   const pos = usePlayheadPaso(200)
   const golpe = useGolpeCuenta()
@@ -661,7 +701,9 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
   const loop = estado?.loop ?? false
   const sonando = estado?.playbackActivo?.estado === 'playing'
   const salto = estado?.saltoPendiente ?? null
-  const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
+  // "Terminar con fundido" pendiente: el limite es el final, no hay seccion de destino
+  const destino = salto && !salto.fin ? seccionEn(secciones, salto.destinoMs) : null
+  const terminar = estadoTerminar(estado)
   const modo = estado?.modoSalto ?? 'seccion'
   const conMarcador = secciones.filter((s) => s.marcador)
   // las tarjetas: las secciones marcadas y, siempre primero, el comienzo de la cancion ("Inicio")
@@ -670,7 +712,7 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
   // compases que faltan para que termine la seccion (o para el salto elegido)
   const faltan = compasesQueFaltan(compases, actual, pos, salto?.limiteMs)
   const bpmAqui = bpmDistintoEnSeccion(proyecto.tempo, actual)
-  const proxima = salto ? destino : loop ? null : siguiente
+  const proxima = salto ? destino : loop || terminar ? null : siguiente
   const aviso = avisoDeTono(proyecto, pos, proxima, faltan, salto ? salto.limiteMs : (actual?.finMs ?? null))
   const enSuColchon = !!estado?.colchon && estado.colchon.desdeCancion && estado.colchon.hasta === null && estado.colchon.tabId === estado.activeTabId
   const ayuda = locked
@@ -728,7 +770,17 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
             <AvisoTono aviso={aviso} />
           </>
         )}
-        {salto ? (
+        {terminar ? (
+          <span className="m-salto m-terminando" role="status">
+            <IconoFundido size={15} /> {terminar === 'apagandose' ? 'Se está apagando…' : 'Se apaga'}
+            {salto && <span className="num">{faltaPara(salto, pos)}</span>}
+            {!locked && (
+              <button onClick={controller.cancelarSalto} aria-label={terminar === 'apagandose' ? 'Que siga la canción' : 'Cancelar el final'}>
+                {terminar === 'apagandose' ? 'Seguir' : <X size={15} />}
+              </button>
+            )}
+          </span>
+        ) : salto ? (
           <span className="m-salto" role="status">
             <ArrowRight size={15} /> {salto.nombre}
             {cambioDeTono(proyecto, pos, destino)} <span className="num">{faltaPara(salto, pos)}</span>
@@ -779,33 +831,19 @@ function VistaCancion({ controller, proyecto, onHoja }: { controller: AppControl
               </button>
             )
           })}
+        {!locked && <TarjetaTerminar controller={controller} pos={pos} />}
       </div>
       {conMarcador.length === 0 && <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>}
-      {!locked && conMarcador.length > 0 && (
-        <div className="m-modo-salto" role="radiogroup" aria-label="Cómo salta al tocar una sección">
-          <span>Saltar</span>
-          {(
-            [
-              ['seccion', 'al terminar'],
-              ['compas', 'en el compás'],
-              ['inmediato', 'ya']
-            ] as const
-          ).map(([m, texto]) => (
-            <button key={m} role="radio" aria-checked={modo === m} className={modo === m ? 'activo' : ''} onClick={() => controller.setModoSalto(m)}>
-              {texto}
-            </button>
-          ))}
-        </div>
+      {locked ? (
+        <p className="m-ayuda-salto">
+          <Lock size={14} /> {textoSinControl(controller)}
+        </p>
+      ) : (
+        // como salta se elige en ⚙ (no ocupa lugar aca): el texto dice como esta
+        <button className="m-ayuda-salto m-ayuda-boton" onClick={onAjustes} aria-label={`${ayuda} Cambiar cómo salta`}>
+          {ayuda} <Settings size={13} />
+        </button>
       )}
-      <p className="m-ayuda-salto">
-        {locked ? (
-          <>
-            <Lock size={14} /> {textoSinControl(controller)}
-          </>
-        ) : (
-          ayuda
-        )}
-      </p>
     </section>
   )
 }
@@ -889,7 +927,8 @@ function HojaSecciones({ controller, onCerrar }: { controller: AppController; on
   const conMarcador = controller.secciones.filter((s) => s.marcador)
   const tarjetas = controller.secciones.filter((s) => s.marcador || s.indice === 0)
   const actual = seccionEn(controller.secciones, pos)
-  const destino = salto ? seccionEn(controller.secciones, salto.destinoMs) : null
+  const destino = salto && !salto.fin ? seccionEn(controller.secciones, salto.destinoMs) : null
+  const terminar = estadoTerminar(estado)
   const explicacion =
     modo === 'inmediato'
       ? 'Tocá una sección para ir ahí.'
@@ -905,18 +944,26 @@ function HojaSecciones({ controller, onCerrar }: { controller: AppController; on
         </p>
       )}
       {!locked && sonando && <p className="ayuda" style={{ marginTop: 0 }}>{explicacion}</p>}
-      {salto && (
+      {terminar ? (
         <div className="m-salto-aviso">
-          <ArrowRight size={16} />
-          <span>
-            Sigue <b>{salto.nombre}</b> <span className="num">{faltaPara(salto, pos)}</span>
-          </span>
-          {!locked && (
-            <button onClick={controller.cancelarSalto}>
-              <X size={15} /> Cancelar
-            </button>
-          )}
+          <IconoFundido size={16} />
+          <span>{terminar === 'apagandose' ? 'La canción se está apagando…' : <>Se apaga <span className="num">{salto ? faltaPara(salto, pos) : ''}</span></>}</span>
+          {!locked && <button onClick={controller.cancelarSalto}>{terminar === 'apagandose' ? 'Seguir' : <><X size={15} /> Cancelar</>}</button>}
         </div>
+      ) : (
+        salto && (
+          <div className="m-salto-aviso">
+            <ArrowRight size={16} />
+            <span>
+              Sigue <b>{salto.nombre}</b> <span className="num">{faltaPara(salto, pos)}</span>
+            </span>
+            {!locked && (
+              <button onClick={controller.cancelarSalto}>
+                <X size={15} /> Cancelar
+              </button>
+            )}
+          </div>
+        )
       )}
       <div className="m-marcadores">
         {tarjetas.map((s) => (
@@ -933,6 +980,7 @@ function HojaSecciones({ controller, onCerrar }: { controller: AppController; on
             </span>
           </button>
         ))}
+        {!locked && <TarjetaTerminar controller={controller} pos={pos} />}
       </div>
       {conMarcador.length === 0 && <p className="vacio">Esta canción todavía no tiene secciones marcadas.</p>}
     </Hoja>

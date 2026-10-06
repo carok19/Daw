@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react'
-import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Megaphone, Mic, Music, Pencil, Repeat, SkipBack, Trash2, WandSparkles, X } from 'lucide-react'
-import type { AnalisisProyecto, InfoModeloVoz, InfoVoces, Marcador, ModoSalto, Proyecto, SaltoPendiente } from '@shared/types'
+import { useState } from 'react'
+import { ArrowRight, CircleAlert, Download, FileAudio, Flag, LoaderCircle, Mic, Music, Pencil, Repeat, SkipBack, Trash2, WandSparkles, X } from 'lucide-react'
+import type { AnalisisProyecto, InfoModeloVoz, Marcador, Proyecto, SaltoPendiente } from '@shared/types'
 import { TONALIDADES, tonalidadEn, transponerTonalidad } from '@shared/tonalidad'
 import type { Seccion } from '@shared/playback'
 import { compasesQueFaltan, seccionEn } from '@shared/playback'
@@ -19,11 +19,8 @@ interface Props {
   /** ir a la seccion que empieza ahi (la de "Inicio", que no tiene marca) */
   onJumpInicio: (inicioMs: number, inmediato: boolean) => void
   saltoPendiente: SaltoPendiente | null
-  modoSalto: ModoSalto
-  hayTempo: boolean
   compasesMs: number[] | null
   loop: boolean
-  onModoSalto: (m: ModoSalto) => void
   onCancelarSalto: () => void
   onCreate: (tiempoMs: number, nombre?: string) => void
   onRename: (marcadorId: string, nombre: string) => void
@@ -34,76 +31,9 @@ interface Props {
   onDelete: (marcador: Marcador) => void
   onDetectar: () => void
   onDescargarModelo: () => void
-  voces: InfoVoces | null
-  onImportarVoces: () => Promise<boolean>
-  onActivarVoces: (activo: boolean) => void
-  onBorrarVoces: () => void
-  /** que pad suena en el colchon (al lado de la voz del salto) */
-  padsDelColchon?: ReactNode
 }
 
 const EN_CURSO = ['analizando', 'esperando-voz', 'reconociendo']
-
-const IDIOMA_VOCES: Record<InfoVoces['idioma'], string> = { es: 'en español', en: 'en inglés', otro: '' }
-
-/**
- * Voz que avisa el salto ("Coro… 3, 4" en el último compás antes de saltar),
- * con un pack de voces que se importa una vez (no viene con la app).
- */
-function VozDelSalto(p: { voces: InfoVoces | null; onImportar: () => Promise<boolean>; onActivar: (a: boolean) => void; onBorrar: () => void }) {
-  const [importando, setImportando] = useState(false)
-  async function importar(): Promise<void> {
-    setImportando(true)
-    try {
-      await p.onImportar()
-    } finally {
-      setImportando(false)
-    }
-  }
-  if (importando) {
-    return (
-      <div className="voz-salto">
-        <LoaderCircle size={14} className="girando" /> Importando las voces…
-      </div>
-    )
-  }
-  if (!p.voces) {
-    return (
-      <div className="voz-salto">
-        <Megaphone size={14} />
-        <span>Avisar el salto con voz</span>
-        <button
-          className="btn-chico"
-          onClick={() => void importar()}
-          title="Elegí un .zip o .rar con un audio por sección (Coro, Verso 1, Puente…) y los números 1 a 7. Si trae varios idiomas se usa el español."
-        >
-          Importar voces…
-        </button>
-      </div>
-    )
-  }
-  const v = p.voces
-  return (
-    <div className={`voz-salto ${v.activo ? 'activa' : ''}`}>
-      <label title="En el último compás antes del salto se escucha la sección elegida y la cuenta, con el volumen y el lado de la guía (la guía de la canción se calla en ese compás)">
-        <input type="checkbox" checked={v.activo} onChange={(e) => p.onActivar(e.target.checked)} />
-        <Megaphone size={14} /> Avisar con voz <em>“Coro… 3, 4”</em>
-      </label>
-      <small className="num" title={v.deFabrica ? 'Las voces que trae el programa (Secuencias.com)' : v.numeros ? undefined : 'El pack no trae los números: se avisa solo el nombre'}>
-        {v.deFabrica ? `voces del programa ${IDIOMA_VOCES[v.idioma]}` : `${v.cantidad} voces ${IDIOMA_VOCES[v.idioma]}`}
-        {!v.numeros && ' · sin números'}
-      </small>
-      <button className="btn-icono" onClick={() => void importar()} title={v.deFabrica ? 'Usar otro pack de voces (.zip o .rar)' : 'Cambiar el pack de voces'} aria-label="Usar otro pack de voces">
-        <Download size={13} />
-      </button>
-      {!v.deFabrica && (
-        <button className="btn-icono" onClick={p.onBorrar} title="Quitar este pack (vuelven las voces del programa)" aria-label="Quitar este pack de voces">
-          <Trash2 size={13} />
-        </button>
-      )}
-    </div>
-  )
-}
 
 export function MarkersPanel(p: Props) {
   const { secciones, onJump, onCreate, onRename, onDelete } = p
@@ -113,7 +43,7 @@ export function MarkersPanel(p: Props) {
   const conMarcador = secciones.filter((s) => s.marcador)
   // las tarjetas: las secciones marcadas y, siempre primero, el comienzo de la cancion ("Inicio")
   const tarjetas = secciones.filter((s) => s.marcador || s.indice === 0)
-  const destino = p.saltoPendiente ? seccionEn(secciones, p.saltoPendiente.destinoMs) : null
+  const destino = p.saltoPendiente && !p.saltoPendiente.fin ? seccionEn(secciones, p.saltoPendiente.destinoMs) : null
 
   function agregar(): void {
     onCreate(pos, nombreNuevo.trim() || undefined)
@@ -123,41 +53,6 @@ export function MarkersPanel(p: Props) {
   return (
     <section className="secciones" aria-label="Secciones">
       <div className="secciones-herramientas">
-        <div className="modo-salto" role="radiogroup" aria-label="Cuándo salta al elegir una sección sonando">
-          <span>Al elegir una sección sonando, saltar:</span>
-          <div className="segmentado segmentado-chico">
-            <button
-              role="radio"
-              aria-checked={p.modoSalto === 'seccion'}
-              className={p.modoSalto === 'seccion' ? 'activo' : ''}
-              onClick={() => p.onModoSalto('seccion')}
-              title="La sección actual termina y la música sigue directo en la elegida (sin cortes)"
-            >
-              Al terminar
-            </button>
-            <button
-              role="radio"
-              aria-checked={p.modoSalto === 'compas'}
-              className={p.modoSalto === 'compas' ? 'activo' : ''}
-              onClick={() => p.onModoSalto('compas')}
-              disabled={!p.hayTempo}
-              title={p.hayTempo ? 'En el próximo "1" del compás' : 'Hace falta el tempo (pista de click)'}
-            >
-              En el compás
-            </button>
-            <button
-              role="radio"
-              aria-checked={p.modoSalto === 'inmediato'}
-              className={p.modoSalto === 'inmediato' ? 'activo' : ''}
-              onClick={() => p.onModoSalto('inmediato')}
-              title="Enseguida (con el margen de sincronización de los celulares)"
-            >
-              Ya
-            </button>
-          </div>
-        </div>
-        <VozDelSalto voces={p.voces} onImportar={p.onImportarVoces} onActivar={p.onActivarVoces} onBorrar={p.onBorrarVoces} />
-        {p.padsDelColchon}
         <div className="secciones-nueva">
           <input
             placeholder="Nombre (Intro, Coro…)"
@@ -223,9 +118,9 @@ export function MarkersPanel(p: Props) {
       )}
 
       <div className="secciones-pie">
-        Click en una sección para ir (sonando, según el modo de salto; con <kbd>Shift</kbd>, ya) · <kbd>1</kbd>…<kbd>9</kbd> ·{' '}
-        <kbd>←</kbd> <kbd>→</kbd> anterior / siguiente · <kbd>Esc</kbd> cancela el salto · doble click en el nombre para renombrar ·
-        arrastrá los triángulos de la línea de tiempo para mover una sección.
+        Click en una sección para ir (sonando, según el modo de salto de ⚙ Ajustes; con <kbd>Shift</kbd>, ya) · <kbd>1</kbd>…<kbd>9</kbd> ·{' '}
+        <kbd>←</kbd> <kbd>→</kbd> anterior / siguiente · <kbd>F</kbd> terminar con fundido · <kbd>Esc</kbd> cancela el salto · doble click en el
+        nombre para renombrar · arrastrá los triángulos de la línea de tiempo para mover una sección.
       </div>
     </section>
   )

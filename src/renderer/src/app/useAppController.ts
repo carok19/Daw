@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  AvisoFundido,
   AjustesColchon,
   AnuncioSalto,
   AjustesConexion,
@@ -38,7 +39,7 @@ import { golpeActual } from '@shared/cuenta'
 import { compasYPulso } from '@shared/colchon'
 import { SocketClient } from '../sync/SocketClient'
 import { StreamingEngine } from '../audio/StreamingEngine'
-import type { MezclaPersonal, PlaybackEngine } from '../audio/PlaybackEngine'
+import type { CurvaFundido, MezclaPersonal, PlaybackEngine } from '../audio/PlaybackEngine'
 import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_SUAVE_MS, UMBRAL_SUAVE_PRECISO_MS } from '../sync/driftConfig'
 import { setPlayheadMs, getPlayheadMs, setGolpeCuenta, setGolpeColchon } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
@@ -251,6 +252,8 @@ export function useAppController() {
   const anuncioRef = useRef<{ anuncio: AnuncioSalto; destinoMs: number; tSalto: number } | null>(null)
   const soltarAnuncioRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const ultimoComandoRef = useRef<ComandoProgramado | null>(null)
+  // "Terminar con fundido": la curva que tiene el motor (de que cancion, y si ya se sabe cuando vuelve el volumen)
+  const fundidoRef = useRef<(CurvaFundido & { tabId: string }) | null>(null)
   estadoRef.current = estado
   const prefsRef = useRef({ volumenGeneral, ajusteManualMs, mezclaPersonal })
   prefsRef.current = { volumenGeneral, ajusteManualMs, mezclaPersonal }
@@ -376,6 +379,8 @@ export function useAppController() {
     engine.setAjusteManualMs(p.ajusteManualMs)
     engine.setMezclaPersonal(origen === 'celular' ? p.mezclaPersonal : {})
     engine.setSalidaSonido(sonido ? rolRef.current.salida : null)
+    // (se activo el audio con la cancion apagandose: entra con la curva)
+    if (fundidoRef.current && socketRef.current) engine.setFundido(fundidoRef.current, socketRef.current.clockOffsetMs)
     engine.onTalkback((v) => {
       setTalkbackSonando(v)
       if (v) setTalkbackRecibido(true)
@@ -455,7 +460,22 @@ export function useAppController() {
       estadoRef.current = nuevo
       sincronizarMotor(nuevo, esReconexion ? 600 : 300, esReconexion)
       actualizarAnuncio(nuevo)
+      actualizarFundido(nuevo)
       engineRef.current?.setColchon(nuevo.colchon ?? null, () => socket.clockOffsetMs)
+    }
+
+    /** La curva de "Terminar con fundido" en el motor (el aviso ya la puso; esto cubre al que entra o se reconecta a mitad). */
+    function ponerFundido(f: (CurvaFundido & { tabId: string }) | null): void {
+      fundidoRef.current = f
+      engineRef.current?.setFundido(f, socket.clockOffsetMs)
+    }
+    function actualizarFundido(nuevo: EstadoCompleto): void {
+      const actual = fundidoRef.current
+      const f = nuevo.fundido ?? null
+      if (actual && actual.tabId !== nuevo.activeTabId) return ponerFundido(null)
+      if (f && nuevo.activeTabId && (!actual || actual.desde !== f.desde)) return ponerFundido({ ...f, tabId: nuevo.activeTabId })
+      // ya no se apaga y no llego la orden que lo cierra (p.ej. se perdio el aviso de que se cancelo): vuelve el volumen
+      if (!f && actual && actual.vuelve === undefined) ponerFundido({ ...actual, vuelve: socket.serverNow() + 100, suave: true })
     }
 
     /**
@@ -495,9 +515,14 @@ export function useAppController() {
         // llego sin tiempo para programarla: la compu vuelve a esperar mas antes de cada orden
         if (origen === 'celular' && cmd.accion !== 'stop' && cmd.accion !== 'seek' && cmd.executeAtServerTime - socket.serverNow() < 60) socket.emit('sync:tarde', {})
         const actual = estadoRef.current
+        // apagandose con "Terminar": la curva sigue hasta esta orden (el stop del final, una pausa, otra seccion) y ahi vuelve el volumen
+        const f = fundidoRef.current
+        if (f && f.tabId === cmd.tabId && f.vuelve === undefined && cmd.accion !== 'seek') {
+          ponerFundido({ ...f, vuelve: cmd.executeAtServerTime + (cmd.accion === 'play' ? 0 : 60) })
+        }
         if (actual && actual.activeTabId === cmd.tabId) {
           engineRef.current?.ejecutar(cmd, socket.clockOffsetMs)
-          const nuevo = { ...actual, playbackActivo: cmd.playback }
+          const nuevo = { ...actual, playbackActivo: cmd.playback, fundido: null }
           estadoRef.current = nuevo
           setEstado(nuevo)
         } else if (cmd.accion === 'stop') {
@@ -526,6 +551,15 @@ export function useAppController() {
       socket.on<{ hablando: boolean }>('talkback:estado', (p) => {
         setTalkbackHablando(!!p?.hablando)
         if (p?.hablando) setTalkbackRecibido(true)
+      }),
+      // "Terminar con fundido": empieza a apagarse (o se cancelo a mitad y vuelve)
+      socket.on<AvisoFundido>('transport:fundido', (p) => {
+        const actual = estadoRef.current
+        if (!p || !actual || p.tabId !== actual.activeTabId || typeof p.desde !== 'number' || typeof p.ms !== 'number') return
+        ponerFundido({ tabId: p.tabId, desde: p.desde, ms: p.ms, ...(typeof p.vuelve === 'number' ? { vuelve: p.vuelve, suave: true } : {}) })
+        const nuevo = { ...actual, saltoPendiente: null, fundido: typeof p.vuelve === 'number' ? null : { desde: p.desde, ms: p.ms } }
+        estadoRef.current = nuevo
+        setEstado(nuevo)
       }),
       // "Probar el sync": un click en todos a la vez
       socket.on<{ golpes: { t: number; n: number }[] }>('sync:prueba', (p) => {
@@ -966,11 +1000,31 @@ export function useAppController() {
         const s = lista[numero - 1]
         if (s) emit('seccion:saltar', { posicionMs: s.inicioMs, inmediato })
       },
+      /** Cancela el salto elegido (o "Terminar": antes de que empiece, o a mitad del fundido, y la musica vuelve). */
       cancelarSalto(): void {
         emit('salto:cancelar')
       },
       setModoSalto(modo: ModoSalto): void {
         emit('salto:modo', { modo })
+      },
+      /**
+       * "Terminar con fundido": al terminar la seccion (o en el compas, o ya,
+       * segun el modo de salto) la cancion se apaga en todos y para. Otra vez
+       * (o Esc) lo cancela.
+       */
+      async terminar(): Promise<void> {
+        const e = estadoRef.current
+        if (e?.saltoPendiente?.fin || e?.fundido) return void emit('salto:cancelar')
+        try {
+          const r = await socket.emitAck<{ ok: boolean; error?: string }>('transport:terminar', {}, 5000)
+          if (!r.ok && r.error) avisar({ tipo: 'error', texto: r.error })
+        } catch {
+          avisar({ tipo: 'error', texto: 'No se pudo terminar la canción (sin conexión con la compu)' })
+        }
+      },
+      /** Cuanto tarda en apagarse con "Terminar" (la compu). */
+      setDuracionFundido(ms: number): void {
+        emit('fundido:duracion', { ms })
       },
       setLoop(activo: boolean): void {
         emit('loop:set', { activo })

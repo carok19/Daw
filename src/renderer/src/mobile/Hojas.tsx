@@ -49,8 +49,36 @@ export function HojaAjustes({
   const ms = controller.ajusteManualMs
   const cambiar = (delta: number): void => controller.setAjusteManualMs(ms + delta)
 
+  const modo = controller.estado?.modoSalto ?? 'seccion'
+
   return (
-    <Hoja titulo="Ajustes de este celular" onCerrar={onCerrar}>
+    <Hoja titulo="Ajustes" onCerrar={onCerrar}>
+      {controller.puedeControlar && controller.estado?.proyectoActivo && (
+        <div className="hoja-seccion">
+          <h3>Al tocar una sección, sonando</h3>
+          <div className="m-modo-salto" role="radiogroup" aria-label="Cómo salta al tocar una sección">
+            {(
+              [
+                ['seccion', 'Al terminar'],
+                ['compas', 'En el compás'],
+                ['inmediato', 'Ya']
+              ] as const
+            ).map(([m, texto]) => (
+              <button key={m} role="radio" aria-checked={modo === m} className={modo === m ? 'activo' : ''} onClick={() => controller.setModoSalto(m)}>
+                {texto}
+              </button>
+            ))}
+          </div>
+          <p className="ayuda" style={{ marginBottom: 0 }}>
+            {modo === 'seccion'
+              ? 'La sección que suena termina y sigue la que elegiste, sin cortes.'
+              : modo === 'compas'
+                ? 'Salta en el próximo “1” del compás.'
+                : 'Salta enseguida.'}{' '}
+            Lo mismo para <b>Terminar</b>: la canción se apaga desde ahí.
+          </p>
+        </div>
+      )}
       {controller.rol && onCambiarRol && (
         <div className="hoja-seccion">
           <h3>Qué hacés en la banda</h3>

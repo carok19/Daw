@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { appBaseDir } from './projects'
+import { DURACIONES_FUNDIDO, type ModoSalto } from '../shared/types'
 
 /**
  * Ajustes de la conexion de los celulares, guardados en la compu
@@ -20,6 +21,10 @@ export interface Ajustes {
   codigoBanda: string | null
   wifi: WifiInvitacion | null
   idInstalacion: string
+  /** como salta al elegir una seccion sonando (se recuerda entre usos) */
+  modoSalto?: ModoSalto
+  /** cuanto tarda en apagarse con "Terminar" (ms) */
+  fundidoMs?: number
 }
 
 function ruta(): string {
@@ -36,7 +41,9 @@ export function leerAjustes(): Ajustes {
   const ajustes: Ajustes = {
     codigoBanda: normalizarCodigo(datos.codigoBanda),
     wifi: datos.wifi && typeof datos.wifi.ssid === 'string' && datos.wifi.ssid ? { ssid: datos.wifi.ssid, clave: String(datos.wifi.clave ?? '') } : null,
-    idInstalacion: typeof datos.idInstalacion === 'string' && datos.idInstalacion ? datos.idInstalacion : crypto.randomUUID()
+    idInstalacion: typeof datos.idInstalacion === 'string' && datos.idInstalacion ? datos.idInstalacion : crypto.randomUUID(),
+    ...(['seccion', 'compas', 'inmediato'].includes(datos.modoSalto as string) ? { modoSalto: datos.modoSalto } : {}),
+    ...(DURACIONES_FUNDIDO.includes(datos.fundidoMs as number) ? { fundidoMs: datos.fundidoMs } : {})
   }
   if (!datos.idInstalacion) guardarAjustes(ajustes)
   return ajustes

@@ -10,7 +10,7 @@ import { TopBar } from './TopBar'
 import { Transport } from './Transport'
 import { Mixer } from './Mixer'
 import { MarkersPanel } from './MarkersPanel'
-import { PadsDelColchon } from './PadsDelColchon'
+import { PanelAjustes } from './Ajustes'
 import { ConnectionPanel } from './ConnectionPanel'
 import { PanelConsola } from './Consola'
 import { BotonTalkback, PanelTalkback } from './Talkback'
@@ -19,8 +19,9 @@ import { ProjectsScreen } from './ProjectsScreen'
 import { ShortcutsModal } from './ShortcutsModal'
 import { ListaEditor, ListasScreen } from './Listas'
 import { BannerColchon, PantallaColchon } from './Colchon'
+import { estadoTerminar } from '../ui/Fundido'
 
-type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' } | { tipo: 'consola' } | { tipo: 'talkback' }
+type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' } | { tipo: 'consola' } | { tipo: 'talkback' } | { tipo: 'ajustes' }
 /** escenario = la cancion (mixer, secciones); listas = las listas por dia; editar = armar una lista */
 type Vista = { tipo: 'escenario' } | { tipo: 'listas' } | { tipo: 'editar'; listaId: string }
 /** En el escenario: el recorrido de la cancion con sus secciones, o la mezcla (el mixer a pantalla completa). */
@@ -86,7 +87,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
           case 'ArrowRight':
             return () => c.saltarSeccion(1, e.shiftKey)
           case 'Escape':
-            return c.estado?.saltoPendiente ? c.cancelarSalto : null
+            // cancela el salto elegido, o "Terminar" (pendiente, o a mitad del fundido: la musica vuelve)
+            return c.estado?.saltoPendiente || c.estado?.fundido ? c.cancelarSalto : null
+          case 'KeyF':
+            // terminar con fundido (otra vez: se cancela)
+            return c.estado?.playbackActivo?.estado === 'playing' || c.estado?.fundido ? () => void c.terminar() : null
           case 'PageDown':
             return () => cancionRelativaRef.current(1)
           case 'PageUp':
@@ -215,6 +220,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         sonidoLocal={controller.sonidoLocal}
         onSonidoLocal={controller.setSonidoLocal}
         onAyuda={() => setVentana({ tipo: 'atajos' })}
+        onAjustes={() => setVentana({ tipo: 'ajustes' })}
         licencia={controller.licencia}
         onLicencia={() => setVentana({ tipo: 'licencia' })}
         lista={estado?.lista ?? null}
@@ -289,6 +295,10 @@ export function ComputerApp({ controller }: { controller: AppController }) {
             onAjustarCompas={controller.setAjustarCompas}
             saltoPendiente={estado?.saltoPendiente ?? null}
             onCancelarSalto={controller.cancelarSalto}
+            terminar={estadoTerminar(estado)}
+            onTerminar={() => void controller.terminar()}
+            modoSalto={estado?.modoSalto ?? 'seccion'}
+            fundidoMs={estado?.fundidoMs ?? 4000}
             progresoTono={controller.progresoTono[proyecto.id] ?? null}
             onCambiarTono={(n) => void controller.cambiarTono(proyecto.id, n)}
             onCambiarVelocidad={(v) => void controller.cambiarVelocidad(proyecto.id, v)}
@@ -336,9 +346,6 @@ export function ComputerApp({ controller }: { controller: AppController }) {
               onJump={controller.jumpToMarker}
               onJumpInicio={controller.irASeccionEn}
               saltoPendiente={estado?.saltoPendiente ?? null}
-              modoSalto={estado?.modoSalto ?? 'seccion'}
-              hayTempo={!!proyecto.tempo}
-              onModoSalto={controller.setModoSalto}
               onCancelarSalto={controller.cancelarSalto}
               onCreate={controller.createMarker}
               onRename={(id, nombre) => controller.updateMarker(id, { nombre })}
@@ -347,11 +354,6 @@ export function ComputerApp({ controller }: { controller: AppController }) {
               onDelete={controller.deleteMarker}
               onDetectar={() => void detectarSecciones()}
               onDescargarModelo={controller.descargarModeloVoz}
-              voces={estado?.voces ?? null}
-              onImportarVoces={controller.importarVoces}
-              onActivarVoces={controller.activarVoces}
-              onBorrarVoces={controller.borrarVoces}
-              padsDelColchon={<PadsDelColchon controller={controller} />}
             />
             )}
           </main>
@@ -371,6 +373,7 @@ export function ComputerApp({ controller }: { controller: AppController }) {
       {ventana?.tipo === 'consola' && <PanelConsola controller={controller} onCerrar={() => setVentana(null)} />}
       {ventana?.tipo === 'talkback' && <PanelTalkback controller={controller} onCerrar={() => setVentana(null)} />}
       {ventana?.tipo === 'atajos' && <ShortcutsModal onCerrar={() => setVentana(null)} />}
+      {ventana?.tipo === 'ajustes' && <PanelAjustes controller={controller} onCerrar={() => setVentana(null)} />}
 
       <Avisos avisos={controller.avisos} onCerrar={controller.cerrarAviso} />
     </div>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { HelpCircle, KeyRound, ListMusic, Lock, LockOpen, Plus, ShieldAlert, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
+import { HelpCircle, KeyRound, ListMusic, Lock, LockOpen, Plus, Settings, ShieldAlert, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
 import type { DispositivoInfo, EstadoLicencia, ListaActiva, TabResumen } from '@shared/types'
 import { Toggle } from '../ui/Toggle'
 import { ChipConsola } from './Consola'
@@ -23,6 +23,8 @@ interface Props {
   sonidoLocal: boolean
   onSonidoLocal: (v: boolean) => void
   onAyuda: () => void
+  /** ⚙ Ajustes: saltos, fundido, voz del salto, pads */
+  onAjustes: () => void
   licencia: EstadoLicencia | null
   onLicencia: () => void
   /** la lista del dia cargada arriba */
@@ -199,6 +201,9 @@ export function TopBar(p: Props) {
           {p.sonidoLocal ? <Volume2 size={15} /> : <VolumeX size={15} />}
           <span className="texto-largo">Sonido en la compu</span>
         </Toggle>
+        <button className="btn-fantasma btn-icono" onClick={p.onAjustes} title="Ajustes: cómo salta, Terminar con fundido, voz del salto y pad del colchón" aria-label="Ajustes">
+          <Settings size={19} />
+        </button>
         <button className="btn-fantasma btn-icono" onClick={p.onAyuda} title="Atajos de teclado (?)" aria-label="Atajos de teclado">
           <HelpCircle size={19} />
         </button>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowRight, ChevronRight, Magnet, MonitorPlay, Pause, Play, Repeat, SkipBack, SkipForward, Square, Waves, X } from 'lucide-react'
-import type { OndaCancion, PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
+import type { ModoSalto, OndaCancion, PlaybackState, ProgresoTono, Proyecto, SaltoPendiente } from '@shared/types'
 import type { Seccion } from '@shared/playback'
 import { bpmDistintoEnSeccion, compasesQueFaltan, seccionEn } from '@shared/playback'
 import { tonalidadEn } from '@shared/tonalidad'
@@ -10,6 +10,7 @@ import { colorDeSeccion } from '../secciones'
 import { Timeline } from './Timeline'
 import { SyncBadge } from './SyncBadge'
 import { ControlTono, ControlVelocidad } from './ControlTono'
+import { IconoFundido, textoCuandoTermina } from '../ui/Fundido'
 
 interface Props {
   proyecto: Proyecto
@@ -31,6 +32,11 @@ interface Props {
   onAjustarCompas: (v: boolean) => void
   saltoPendiente: SaltoPendiente | null
   onCancelarSalto: () => void
+  /** "Terminar con fundido": pendiente o apagandose (null = no) */
+  terminar: 'pendiente' | 'apagandose' | null
+  onTerminar: () => void
+  modoSalto: ModoSalto
+  fundidoMs: number
   progresoTono: ProgresoTono | null
   onCambiarTono: (semitonos: number) => void
   onCambiarVelocidad: (velocidad: number) => void
@@ -117,12 +123,14 @@ function SeccionActual({
   secciones,
   loop,
   salto,
+  terminar,
   onCancelarSalto
 }: {
   proyecto: Proyecto
   secciones: Seccion[]
   loop: boolean
   salto: SaltoPendiente | null
+  terminar: 'pendiente' | 'apagandose' | null
   onCancelarSalto: () => void
 }) {
   const pos = usePlayheadPaso(100)
@@ -130,7 +138,7 @@ function SeccionActual({
   const actual = seccionEn(secciones, pos)
   const siguiente = actual ? secciones[actual.indice + 1] : null
   if (!actual) return null
-  const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
+  const destino = salto && !salto.fin ? seccionEn(secciones, salto.destinoMs) : null
   const compasesMs = proyecto.tempo?.compasesMs ?? null
   // una cancion que cambia de tempo o de tono: el de la parte que suena
   const bpmAqui = bpmDistintoEnSeccion(proyecto.tempo, actual)
@@ -152,7 +160,20 @@ function SeccionActual({
           {Math.round(bpmAqui)} BPM aquí
         </span>
       )}
-      {salto && destino ? (
+      {terminar ? (
+        <span className="salto-pendiente terminando" role="status">
+          <IconoFundido size={14} />
+          <b>{terminar === 'apagandose' ? 'Se está apagando…' : 'Se apaga'}</b>
+          {salto && terminar === 'pendiente' && <span className="num">{faltaParaSalto(salto, pos)}</span>}
+          <button
+            onClick={onCancelarSalto}
+            title={terminar === 'apagandose' ? 'Que siga la canción: la música vuelve (Esc)' : 'Cancelar el final (Esc)'}
+            aria-label={terminar === 'apagandose' ? 'Que siga la canción' : 'Cancelar el final'}
+          >
+            {terminar === 'apagandose' ? 'Seguir' : <X size={13} />}
+          </button>
+        </span>
+      ) : salto && destino ? (
         <span className="salto-pendiente" role="status" style={{ '--color-seccion': colorDeSeccion(destino) } as React.CSSProperties}>
           <ArrowRight size={14} />
           <b>{salto.nombre}</b>
@@ -220,7 +241,7 @@ export function Transport(p: Props) {
             <ControlTono proyecto={p.proyecto} sonando={sonando} progreso={p.progresoTono} onCambiar={p.onCambiarTono} onTonalidad={p.onTonalidad} />
           </div>
           <div className="transporte-meta">
-            <SeccionActual proyecto={p.proyecto} secciones={p.secciones} loop={p.loop} salto={p.saltoPendiente} onCancelarSalto={p.onCancelarSalto} />
+            <SeccionActual proyecto={p.proyecto} secciones={p.secciones} loop={p.loop} salto={p.saltoPendiente} terminar={p.terminar} onCancelarSalto={p.onCancelarSalto} />
             {p.proyecto.tempo && (
               <span className="chip-tempo num" title={
                   p.proyecto.tempo.acentoClaro
@@ -275,6 +296,22 @@ export function Transport(p: Props) {
           </button>
           <button className="tbtn" onClick={p.onStop} title="Stop y volver al inicio (Enter)" aria-label="Stop">
             <Square size={18} fill="currentColor" />
+          </button>
+          <button
+            className={`tbtn tbtn-terminar ${p.terminar ? 'activo' : ''}`}
+            onClick={p.onTerminar}
+            disabled={!sonando && !p.terminar}
+            title={
+              p.terminar === 'apagandose'
+                ? 'Se está apagando: tocá (o F, o Esc) para que siga la canción'
+                : p.terminar
+                  ? 'Termina con fundido: tocá (o F, o Esc) para cancelar'
+                  : `Terminar con fundido (F): la canción ${textoCuandoTermina(p.modoSalto)} en ${Math.round(p.fundidoMs / 1000)} s y para, en todos a la vez`
+            }
+            aria-pressed={!!p.terminar}
+            aria-label="Terminar con fundido"
+          >
+            <IconoFundido size={20} />
           </button>
           <button
             className={`tbtn tbtn-play ${sonando ? 'sonando' : ''}`}

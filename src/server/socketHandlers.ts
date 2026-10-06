@@ -35,6 +35,7 @@ import type {
   MotivoCodigo,
   SesionAnterior
 } from '../shared/types'
+import { DURACIONES_FUNDIDO } from '../shared/types'
 import type { AppState, Tab } from './state'
 import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ImportError, ZipSinPistasError } from './zip'
@@ -303,6 +304,9 @@ export function registerSocketHandlers(
     return { id, desdeMs, hastaMs, pistaId, guiaPistaId }
   }
 
+  // lo que se eligio la ultima vez (⚙ Ajustes): como salta y cuanto tarda en apagarse con "Terminar"
+  if (conexion.ajustes.modoSalto) state.modoSalto = conexion.ajustes.modoSalto
+  if (conexion.ajustes.fundidoMs) state.fundidoMs = conexion.ajustes.fundidoMs
   const transporte = new Transporte(io, state, hayCelularesConectados, () => emitirEstadoPronto(), () => entrega.margen(idsCelulares()), anunciar)
   // el colchon cambia: todos lo saben enseguida (antes de la orden que lo termina, asi el click para justo)
   transporte.alCambiarColchon = () => emitirEstado()
@@ -913,7 +917,25 @@ export function registerSocketHandlers(
       // la compu o el director (desde su celular)
       if (!payload || !['seccion', 'compas', 'inmediato'].includes(payload.modo ?? '') || !permitido()) return
       state.modoSalto = payload.modo!
-      if (state.modoSalto === 'inmediato') transporte.cancelarSalto()
+      if (state.modoSalto === 'inmediato') transporte.cancelarSalto(false)
+      conexion.ajustes.modoSalto = state.modoSalto
+      guardarAjustes(conexion.ajustes)
+      emitirEstado()
+    })
+
+    // "Terminar con fundido": al terminar la seccion (o en el compas, o ya, segun el modo) la cancion se apaga y para
+    socket.on('transport:terminar', (_payload: unknown, ack?: Ack<{ ok: boolean; error?: string }>) => {
+      if (!permitido()) return ack?.({ ok: false, error: 'El control está bloqueado' })
+      const error = transporte.terminar()
+      ack?.(error ? { ok: false, error } : { ok: true })
+    })
+
+    // cuanto tarda en apagarse (la compu, en ⚙ Ajustes)
+    socket.on('fundido:duracion', (payload: { ms?: number }) => {
+      if (!soloCompu(socket) || !DURACIONES_FUNDIDO.includes(payload?.ms as number)) return
+      state.fundidoMs = payload.ms!
+      conexion.ajustes.fundidoMs = state.fundidoMs
+      guardarAjustes(conexion.ajustes)
       emitirEstado()
     })
 

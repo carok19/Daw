@@ -9,6 +9,7 @@ import { formatMmSs } from '../format'
 import { colorDeSeccion } from '../secciones'
 import { useOnda } from '../ui/Onda'
 import { AvisoTono, avisoDeTono, cambioDeTono, colorClaro, faltaPara, MiniTimeline } from './Comunes'
+import { IconoFundido } from '../ui/Fundido'
 
 type AbrirHoja = (h: 'canciones' | 'secciones') => void
 
@@ -22,17 +23,20 @@ function useMomento(controller: AppController, proyecto: Proyecto) {
   const actual = seccionEn(secciones, pos)
   const loop = estado?.loop ?? false
   const salto = estado?.saltoPendiente ?? null
-  const destino = salto ? seccionEn(secciones, salto.destinoMs) : null
+  // "Terminar con fundido": lo que viene es el final (se apaga)
+  const fin = !!salto?.fin || !!estado?.fundido
+  const destino = salto && !salto.fin ? seccionEn(secciones, salto.destinoMs) : null
   const siguiente = actual ? (secciones[actual.indice + 1] ?? null) : null
   // lo que viene: el salto elegido, la misma (repitiendo) o la siguiente
-  const proxima = salto ? destino : loop ? actual : siguiente
+  const proxima = fin ? null : salto ? destino : loop ? actual : siguiente
   const compases = proyecto.tempo?.compasesMs ?? null
   const faltan = compasesQueFaltan(compases, actual, pos, salto?.limiteMs)
   // cuando cambia de seccion (el salto elegido, o el final de esta)
   const limiteMs = salto ? salto.limiteMs : actual ? actual.finMs : null
   const sonando = estado?.playbackActivo?.estado === 'playing'
   const aviso = avisoDeTono(proyecto, pos, salto ? destino : loop ? null : siguiente, faltan, limiteMs)
-  return { pos, golpe, actual, loop, salto, destino, siguiente, proxima, faltan, limiteMs, sonando, aviso, secciones }
+  const apagandose = !!estado?.fundido
+  return { pos, golpe, actual, loop, salto, destino, siguiente, proxima, faltan, limiteMs, sonando, aviso, secciones, fin, apagandose }
 }
 
 /** "faltan 3" con un punto por compas (hasta 8): se ve de reojo, sin leer. */
@@ -104,10 +108,10 @@ export function VistaVoz({ controller, proyecto, onHoja }: { controller: AppCont
           <AvisoTono aviso={m.aviso} />
         </div>
       </div>
-      <div className={`voz-sigue ${m.salto ? 'salto' : ''}`} style={conColor(m.proxima)}>
-        <small>{m.salto ? 'Ahora va' : m.loop ? 'Se repite' : 'Sigue'}</small>
+      <div className={`voz-sigue ${m.salto || m.fin ? 'salto' : ''}`} style={conColor(m.proxima)}>
+        <small>{m.apagandose ? 'Se está apagando' : m.fin ? 'Se termina' : m.salto ? 'Ahora va' : m.loop ? 'Se repite' : 'Sigue'}</small>
         <b>
-          <ArrowRight size={20} /> {m.proxima?.nombre ?? 'Final'}
+          {m.fin ? <IconoFundido size={20} /> : <ArrowRight size={20} />} {m.proxima?.nombre ?? 'Final'}
         </b>
         <span className="voz-sigue-detalle num">
           {cambioDeTono(proyecto, m.pos, m.proxima)}
@@ -157,11 +161,11 @@ function Multimedia({ controller, proyecto, onHoja }: { controller: AppControlle
         <b>{m.golpe > 0 ? `Cuenta ${m.golpe}` : (m.actual?.nombre ?? '—')}</b>
         {!m.sonando && <span className="mm-pausa">{estado?.playbackActivo?.estado === 'paused' ? 'en pausa' : 'parado'}</span>}
       </div>
-      <div className={`mm-sigue ${pronto ? 'pronto' : ''}`} style={conColor(m.proxima)} role="status" aria-live="polite">
-        <small>{m.salto ? 'Ahora va' : m.loop ? 'Se repite' : 'Sigue'}</small>
+      <div className={`mm-sigue ${pronto || m.apagandose ? 'pronto' : ''}`} style={conColor(m.proxima)} role="status" aria-live="polite">
+        <small>{m.apagandose ? 'Se está apagando' : m.fin ? 'Se termina' : m.salto ? 'Ahora va' : m.loop ? 'Se repite' : 'Sigue'}</small>
         <b>{m.proxima?.nombre ?? 'Final'}</b>
         <span className="mm-cuenta num">
-          {segundos !== null ? (segundos === 0 ? 'ya' : `en ${segundos} s`) : ''}
+          {m.apagandose ? 'ya' : segundos !== null ? (segundos === 0 ? 'ya' : `en ${segundos} s`) : ''}
           {m.faltan !== null && m.sonando && <small> · {m.faltan === 1 ? 'último compás' : `${m.faltan} compases`}</small>}
         </span>
       </div>

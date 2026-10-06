@@ -26,6 +26,7 @@ import { crearRar5 } from '../server/__fixtures__/rar'
 import { verificarLicencia } from '../server/licencia'
 import { deBase64Url } from '../shared/licencia'
 import { SEGMENTO_SEC } from '../shared/mezcla'
+import { posicionActualMs } from '../shared/playback'
 import type { DispositivoInfo } from '../shared/types'
 
 const RENDERER = path.resolve(__dirname, '../renderer')
@@ -157,7 +158,8 @@ async function vistaCelular(cel: Page, vista: 'Canción' | 'Mi mezcla'): Promise
 /** Cuantas secciones ve un celular (las tarjetas de la pantalla de la cancion) y si se pueden tocar. */
 async function seccionesEnCelular(cel: Page): Promise<{ cantidad: number; deshabilitadas: boolean }> {
   await vistaCelular(cel, 'Canción')
-  const tarjetas = cel.locator('.m-vista-cancion .m-marcador')
+  // (las secciones: sin la de "Terminar", la ultima del director)
+  const tarjetas = cel.locator('.m-vista-cancion .m-marcador:not(.terminar)')
   const cantidad = await tarjetas.count()
   const deshabilitadas = cantidad > 0 && (await tarjetas.first().isDisabled())
   return { cantidad, deshabilitadas }
@@ -2129,13 +2131,17 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
   p.tempo = { bpm: 120, compas: 4, compasesMs: Array.from({ length: 15 }, (_, k) => 500 + 2000 * k), clickPistaId: p.pistas.find((x) => x.nombre === 'Click')!.id, acentoClaro: true }
   p.cuenta = 0
   server.io.emit('estado:actualizado', buildEstadoCompleto(server.state))
-  // las voces que avisan el salto ya vienen con el programa, en español (sin importar nada)
+  // las voces que avisan el salto ya vienen con el programa, en español (sin importar nada): en ⚙ Ajustes
   await vistaCompu(compu, 'Secciones')
+  assert.equal(await compu.locator('.secciones-herramientas .voz-salto').count(), 0, 'la barra de secciones queda limpia')
+  await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
   await compu.locator('.voz-salto', { hasText: 'voces del programa en español' }).waitFor()
   assert.equal(await compu.getByRole('button', { name: 'Quitar este pack de voces' }).count(), 0)
-  // al lado, el pad del colchon: el de la app, y se pueden importar los propios
+  // y el pad del colchon: el de la app, y se pueden importar los propios
   await compu.locator('.voz-salto', { hasText: 'Pad del colchón: el de AirTracks' }).getByRole('button', { name: 'Importar mis pads…' }).waitFor()
-  await captura(compu, 'secciones-voz-y-pads')
+  await captura(compu, 'ajustes-voz-y-pads')
+  await compu.keyboard.press('Escape')
+  await compu.locator('.modal').waitFor({ state: 'detached' })
 
   const ctxCel = await contextoCelular(browser, devices['Pixel 7'])
   ctxCel.setDefaultTimeout(15000)
@@ -2874,6 +2880,149 @@ test('talkback: la compu habla y la banda la escucha en los oídos (la consola n
     await compu.getByText(/llega en \d+ ms por el WiFi · se escucha a los \d+ ms/).waitFor()
     await compu.getByText('Consola: no lo recibe').waitFor()
     await compu.keyboard.press('Escape')
+    assert.deepEqual(errores, [])
+  })
+})
+
+test('terminar con fundido: al terminar la sección la canción se apaga en todos y para; a mitad del fundido, "Seguir" la trae de vuelta (audio real)', { timeout: 3 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-fundido-'))
+  process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
+  const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
+  const port = await server.start(0)
+  const base = `http://localhost:${port}`
+  const browser: Browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
+  t.after(async () => {
+    await browser.close()
+    await server.close()
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+  // un seno parejo de 440 Hz: se ve bien como baja
+  const SEG = 40
+  const teclas = new Float32Array(SEG * SR)
+  for (let i = 0; i < teclas.length; i++) teclas[i] = 0.3 * Math.sin((2 * Math.PI * 440 * i) / SR)
+  const z = new AdmZip()
+  z.addFile('Teclas.wav', wav16(teclas, SR))
+  z.addFile('marcas.txt', Buffer.from('0:06 Verso\n0:12 Coro\n0:18 Final\n'))
+  const zip = path.join(tmp, 'Fundido.zip')
+  z.writeZip(zip)
+
+  const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  ctxCompu.setDefaultTimeout(15000)
+  await ctxCompu.addInitScript(() => {
+    const g = globalThis as unknown as { __zip: string | null; electronAPI: unknown }
+    g.__zip = null
+    g.electronAPI = { isElectron: true, compuToken: 'e2e', pickZipFile: async () => g.__zip, getConnectionInfo: async () => ({ url: '', ip: null, port: 0 }) }
+  })
+  const compu = await ctxCompu.newPage()
+  const errores: string[] = []
+  compu.on('pageerror', (e) => errores.push(e.message))
+  await compu.goto(base)
+  await compu.evaluate((zz) => ((globalThis as unknown as { __zip: string }).__zip = zz), zip)
+  await compu.getByRole('button', { name: /Importar o abrir canción/ }).click()
+  await compu.getByRole('button', { name: /Importar \.zip/ }).click()
+  await compu.waitForSelector('.modal', { state: 'detached', timeout: 60000 })
+
+  const celular = async (rol: string): Promise<Page> => {
+    const ctx = await contextoCelular(browser, devices['Pixel 7'], rol)
+    ctx.setDefaultTimeout(15000)
+    const pg = await ctx.newPage()
+    pg.on('pageerror', (e) => errores.push(`celular: ${e.message}`))
+    await pg.goto(`${base}/?debug`)
+    await pg.getByRole('button', { name: /Tocá para empezar/ }).click()
+    return pg
+  }
+  const director = await celular('director')
+  const musico = await celular('musico')
+  const posicion = (): number => posicionActualMs(server.state.getActiveTab()!.playback, Date.now())
+  const esperarPosicion = async (ms: number): Promise<void> => {
+    while (posicion() < ms) await esperar(20)
+  }
+  /** La amplitud del seno cada 250 ms (lo que sale del motor del celular). */
+  const envolvente = async (pg: Page, segundos: number): Promise<number[]> => {
+    const { sr, L, R } = await grabarSalida(pg, segundos)
+    const n = Math.round(sr / 4)
+    const v: number[] = []
+    for (let i = 0; i + n <= L.length; i += n) v.push(Math.max(amplitudEn(L.slice(i, i + n), 440, sr), amplitudEn(R.slice(i, i + n), 440, sr)))
+    return v
+  }
+
+  await t.test('el director lo tiene a mano (la última tarjeta) y "cómo salta" pasó a ⚙: la pantalla queda limpia', async () => {
+    await director.locator('.m-vista-cancion').waitFor()
+    assert.equal(await director.locator('.m-vista-cancion .m-modo-salto').count(), 0)
+    assert.ok(await director.getByRole('button', { name: 'Terminar la canción con fundido' }).isDisabled(), 'parado no hay nada que terminar')
+    assert.equal(await musico.getByRole('button', { name: 'Terminar la canción con fundido' }).count(), 0, 'el músico no lo tiene')
+    await director.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await director.getByRole('radio', { name: 'Al terminar' }).waitFor()
+    assert.equal(await director.getByRole('radio', { name: 'Al terminar' }).getAttribute('aria-checked'), 'true')
+    await captura(director, 'celular-ajustes')
+    await director.getByRole('button', { name: 'Cerrar' }).click()
+  })
+
+  await t.test('Terminar: queda pendiente hasta el final de la sección (en todos se ve), ahí se apaga de a poco y para', async () => {
+    await director.locator('.m-barra .m-play').click()
+    await esperarPosicion(1500)
+    await director.getByRole('button', { name: 'Terminar la canción con fundido' }).click()
+    await director.locator('.m-marcador.terminar.pendiente').waitFor()
+    await director.locator('.m-terminando', { hasText: /Se apaga\s*en \d+ s/ }).waitFor()
+    await musico.locator('.m-terminando', { hasText: 'Se apaga' }).waitFor()
+    assert.equal(await musico.locator('.m-terminando button').count(), 0, 'el músico lo ve, pero no lo maneja')
+    await compu.locator('.salto-pendiente.terminando', { hasText: 'Se apaga' }).waitFor()
+    await compu.locator('.tbtn-terminar.activo').waitFor()
+    await captura(director, 'celular-terminar-pendiente')
+    await captura(compu, 'compu-terminar-pendiente')
+    // de 3,5 s a 11,5 s: suena parejo, al terminar la seccion (6 s) baja en 4 s y despues silencio (paro)
+    await esperarPosicion(3500)
+    const env = await envolvente(musico, 8)
+    t.diagnostic(`amplitud cada 250 ms: ${env.map((x) => x.toFixed(3)).join(' ')}`)
+    const a0 = Math.max(...env.slice(0, 4))
+    assert.ok(a0 > 0.03, `suena antes del fundido (${a0})`)
+    const i90 = env.findIndex((x) => x < a0 * 0.9)
+    const i10 = env.findIndex((x) => x < a0 * 0.1)
+    assert.ok(i90 >= 6 && i90 <= 14, `empieza a bajar al terminar la sección (${(3.5 + i90 / 4).toFixed(2)} s)`)
+    assert.ok(i10 > i90, 'baja hasta casi nada')
+    const dura = (i10 - i90) / 4
+    assert.ok(dura >= 2.6 && dura <= 3.9, `de 90 % a 10 % tarda lo que corresponde a 4 s de fundido (${dura} s)`)
+    for (let i = i90 + 1; i <= i10; i++) assert.ok(env[i] <= env[i - 1] * 1.1 + 0.002, `baja parejo (ventana ${i}: ${env[i]} después de ${env[i - 1]})`)
+    for (const x of env.slice(i10 + 6)) assert.ok(x < a0 * 0.02, `después, silencio (${x})`)
+    await director.locator('.m-terminando').waitFor({ state: 'detached' })
+    assert.equal(server.state.getActiveTab()!.playback.estado, 'stopped')
+    assert.equal(server.state.fundido, null)
+  })
+
+  await t.test('desde la compu: ⚙ Ajustes (salta "Ya") y la tecla F; a mitad, "Seguir" en el celular trae la música de vuelta', async () => {
+    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await compu.getByRole('radio', { name: /^Ya/ }).click()
+    await compu.locator('.ajustes-opcion.activo', { hasText: /^Ya/ }).waitFor()
+    await captura(compu, 'ajustes-compu')
+    await compu.keyboard.press('Escape')
+    await compu.locator('.modal').waitFor({ state: 'detached' })
+    await director.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await director.locator('[role=radio][aria-checked=true]', { hasText: /^Ya$/ }).waitFor()
+    await director.getByRole('button', { name: 'Cerrar' }).click()
+
+    await director.locator('.m-barra .m-play').click()
+    await esperarPosicion(2000)
+    const antes = await envolvente(musico, 1)
+    await compu.locator('body').click({ position: { x: 5, y: 5 } })
+    await compu.keyboard.press('f')
+    await director.locator('.m-terminando', { hasText: 'Se está apagando' }).waitFor()
+    // (se graba todo: baja, "Seguir", vuelve)
+    const grabando = envolvente(musico, 6)
+    // un segundo y medio despues de que empezo a bajar (en todos a la vez: a la hora de la compu)
+    const f = server.state.fundido!
+    await esperar(Math.max(0, f.desde + 1500 - Date.now()))
+    await director.locator('.m-terminando').getByRole('button', { name: 'Que siga la canción' }).click()
+    await director.locator('.m-terminando').waitFor({ state: 'detached' })
+    const env = await grabando
+    t.diagnostic(`amplitud cada 250 ms: ${env.map((x) => x.toFixed(3)).join(' ')}`)
+    const a = Math.max(...antes)
+    const minimo = Math.min(...env)
+    assert.ok(minimo < a * 0.75 && minimo > a * 0.2, `bajó un poco y no del todo (${minimo} de ${a})`)
+    const d = Math.min(...env.slice(-4))
+    assert.ok(d > a * 0.9, `la música volvió (${d} de ${a})`)
+    await esperar(3000)
+    assert.equal(server.state.getActiveTab()!.playback.estado, 'playing', 'no paró')
+    await compu.keyboard.press('Enter')
     assert.deepEqual(errores, [])
   })
 })

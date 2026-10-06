@@ -87,8 +87,8 @@ export function Timeline({ secciones, duracionMs, compasesMs, loop, salto, ajust
       {compasesMs && <RayasCompas compasesMs={compasesMs} duracionMs={dur} />}
       {salto && (
         <>
-          <div className="timeline-salto-limite" style={{ left: pct(salto.limiteMs) }} title={`Acá salta a ${salto.nombre}`} />
-          <div className="timeline-salto-destino" style={{ left: pct(salto.destinoMs) }} />
+          <div className={`timeline-salto-limite ${salto.fin ? 'fin' : ''}`} style={{ left: pct(salto.limiteMs) }} title={salto.fin ? 'Acá empieza a apagarse' : `Acá salta a ${salto.nombre}`} />
+          {!salto.fin && <div className="timeline-salto-destino" style={{ left: pct(salto.destinoMs) }} />}
         </>
       )}
       <div className="timeline-pasado" style={{ width: pct(playhead) }} />

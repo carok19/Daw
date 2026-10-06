@@ -48,6 +48,7 @@ import {
   proximoPulso
 } from '../shared/colchon'
 import type {
+  AvisoFundido,
   AjustesConexion,
   ClockSyncAck,
   DatosInvitacion,
@@ -2202,6 +2203,104 @@ test('saltos de sección con celulares: el salto se manda con todo el margen de 
   assert.ok(cmd.executeAtServerTime - llegada >= 1400, `llegó ${cmd.executeAtServerTime - llegada} ms antes del salto`)
   compu.emit('transport:stop')
   await env.cerrar()
+})
+
+test('terminar con fundido: al terminar la sección se apaga en todos y para; se cancela antes o a mitad, y se recuerda la duración', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  const director = await env.conectar({ origen: 'celular', deviceId: 'cel-fin', nombre: 'Director', rol: 'director' })
+  const bajo = await env.conectar({ origen: 'celular', deviceId: 'cel-fin-2', nombre: 'Bajo', rol: 'musico' })
+  // 12 s: Inicio 0-3, Verso 3-6, Coro 6-9, Final 9-12
+  const largo = path.join(tmpDir('multitrack-audio-'), 'fin.wav')
+  generarAudio(largo, 12, 'mono')
+  await cargarZip(compu, crearZip('fin', { 'click.wav': largo, 'marcas.txt': Buffer.from('0:03 Verso\n0:06 Coro\n0:09 Final\n') }))
+  const avisos: AvisoFundido[] = []
+  director.on('transport:fundido', (a: AvisoFundido) => avisos.push(a))
+
+  // la duracion la elige la compu (un celular no); por defecto 4 s
+  const e0 = await emitAck<EstadoCompleto>(compu, 'state:request', {})
+  assert.equal(e0.fundidoMs, 4000)
+  director.emit('fundido:duracion', { ms: 8000 })
+  const [e1] = await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => x.fundidoMs === 2000), compu.emit('fundido:duracion', { ms: 2000 })])
+  assert.equal(e1.fundidoMs, 2000)
+
+  // sonando en el Inicio: "Terminar" queda pendiente hasta el final de la seccion (3 s), como un salto
+  const [inicio] = await Promise.all([esperarEvento<ComandoProgramado>(director, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1000 })])
+  await esperar(100)
+  const sinPermiso = await emitAck<{ ok: boolean }>(bajo, 'transport:terminar', {})
+  assert.equal(sinPermiso.ok, false, 'un músico no termina la canción')
+  const [conFin, r] = await Promise.all([
+    esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !!x.saltoPendiente?.fin),
+    emitAck<{ ok: boolean }>(director, 'transport:terminar', {})
+  ])
+  assert.equal(r.ok, true)
+  const fin = conFin.saltoPendiente!
+  assert.equal(fin.nombre, 'Final')
+  assert.equal(fin.limiteMs, 3000)
+  assert.ok(Math.abs(fin.tSalto - (inicio.executeAtServerTime + 2000)) < 5, `empieza a ${fin.tSalto - inicio.executeAtServerTime} ms del arranque`)
+  // en el limite no salta: la musica sigue y se apaga (2 s) en todos a la vez; despues, stop
+  const comandos: ComandoProgramado[] = []
+  director.on('playback:scheduled', (c: ComandoProgramado) => comandos.push(c))
+  const stop = await esperarEvento<ComandoProgramado>(director, 'playback:scheduled', (c) => c.accion === 'stop', 8000)
+  assert.equal(comandos.length, 1, 'solo el stop (ningún salto en el límite)')
+  assert.deepEqual(avisos.map((a) => [a.desde, a.ms]), [[fin.tSalto, 2000]])
+  assert.equal(stop.executeAtServerTime, fin.tSalto + 2000)
+  assert.equal(stop.playback.estado, 'stopped')
+  assert.equal(stop.positionMs, 0)
+  const parado = await esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.fundido && !x.saltoPendiente, 3000)
+  assert.equal(parado.fundido, null)
+
+  // cancelado antes de empezar: sigue como si nada
+  avisos.length = 0
+  await Promise.all([esperarEvento(director, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 1000 })])
+  await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !!x.saltoPendiente?.fin), emitAck(director, 'transport:terminar', {})])
+  await Promise.all([esperarEvento<EstadoCompleto>(compu, 'estado:actualizado', (x) => !x.saltoPendiente), director.emit('salto:cancelar')])
+  await esperar(2500)
+  assert.equal(avisos.length, 0)
+  assert.equal(env.server.state.getActiveTab()!.playback.estado, 'playing')
+
+  // modo "ya": se apaga enseguida; cancelado a mitad, la musica vuelve y sigue (sin stop)
+  await Promise.all([esperarEvento(compu, 'estado:actualizado', (x: EstadoCompleto) => x.modoSalto === 'inmediato'), compu.emit('salto:modo', { modo: 'inmediato' })])
+  const t0 = Date.now()
+  const [ya] = await Promise.all([esperarEvento<AvisoFundido>(director, 'transport:fundido'), emitAck(director, 'transport:terminar', {})])
+  assert.ok(ya.desde - t0 < 2000 && ya.vuelve === undefined)
+  await esperar(500)
+  comandos.length = 0
+  const [vuelta] = await Promise.all([esperarEvento<AvisoFundido>(director, 'transport:fundido'), director.emit('salto:cancelar')])
+  assert.equal(vuelta.desde, ya.desde)
+  assert.ok(vuelta.vuelve! > Date.now() - 50 && vuelta.vuelve! < ya.desde + ya.ms)
+  await esperar(2500)
+  assert.equal(comandos.length, 0, 'no para')
+  assert.equal(env.server.state.fundido, null)
+
+  // apagandose, elegir una seccion la trae de vuelta ya (no espera el final de la seccion)
+  await Promise.all([esperarEvento(compu, 'estado:actualizado', (x: EstadoCompleto) => x.modoSalto === 'seccion'), compu.emit('salto:modo', { modo: 'seccion' })])
+  await Promise.all([esperarEvento(director, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 2000 })])
+  await esperar(100)
+  await Promise.all([esperarEvento<AvisoFundido>(director, 'transport:fundido', () => true, 4000), emitAck(director, 'transport:terminar', {})])
+  const [otra] = await Promise.all([esperarEvento<ComandoProgramado>(director, 'playback:scheduled'), director.emit('seccion:saltar', { posicionMs: 6000 })])
+  assert.equal(otra.accion, 'play')
+  assert.equal(otra.positionMs, 6000)
+  assert.equal(env.server.state.fundido, null)
+  assert.equal(env.server.state.saltoPendiente, null)
+
+  // en la ultima seccion (su final es el de la cancion): se apaga ya
+  await Promise.all([esperarEvento(director, 'playback:scheduled'), compu.emit('transport:play', { positionMs: 9500 })])
+  await esperar(100)
+  const t1 = Date.now()
+  const [ultima] = await Promise.all([esperarEvento<AvisoFundido>(director, 'transport:fundido', () => true, 4000), emitAck(director, 'transport:terminar', {})])
+  assert.ok(ultima.desde - t1 < 2000, `empezó a los ${ultima.desde - t1} ms`)
+  compu.emit('transport:stop')
+  await Promise.all([esperarEvento(compu, 'estado:actualizado', (x: EstadoCompleto) => x.modoSalto === 'compas'), compu.emit('salto:modo', { modo: 'compas' })])
+  await env.cerrar()
+
+  // la duracion y el modo de salto se recuerdan (ajustes.json)
+  const otraVez = await entorno(t, env.appDir)
+  const compu2 = await otraVez.conectar(compuAuth)
+  const e2 = await emitAck<EstadoCompleto>(compu2, 'state:request', {})
+  assert.equal(e2.fundidoMs, 2000)
+  assert.equal(e2.modoSalto, 'compas')
+  await otraVez.cerrar()
 })
 
 test('agregar una canción mientras otra suena no la interrumpe', async (t) => {

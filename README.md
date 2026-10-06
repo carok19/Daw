@@ -180,9 +180,10 @@ cambian a propósito.
    hacés en la banda?”** y el mismo toque ya arranca (no hay otro paso). Cada
    uno ve, y escucha, lo suyo:
    - **Dirijo (Director):** maneja la canción desde el celular (play,
-     secciones, repetir, colchón) y elige ahí mismo cómo salta al tocar una
-     sección: **al terminar** la que suena, **en el compás** o **ya**. Puede
-     haber más de uno.
+     secciones, repetir, colchón, **Terminar**). Cómo salta al tocar una
+     sección (**al terminar** la que suena, **en el compás** o **ya**) se
+     elige en su ⚙, para que no ocupe lugar en la pantalla. Puede haber más
+     de uno.
    - **Toco (Músico):** su mezcla y por dónde va la canción (secciones,
      compases que faltan, tono), sin botones que se toquen sin querer.
    - **Canto (Voz):** la sección que se canta, bien grande y con su color;
@@ -229,7 +230,9 @@ cambian a propósito.
    tocan). La primera tarjeta es siempre **Inicio** (⏮): para **volver a
    empezar desde el celular** sin depender de la compu; sonando va al
    principio a tiempo (al terminar la sección o en el compás), en pausa va
-   enseguida. **Mi mezcla** es la otra pantalla, entera: cada músico sube o
+   enseguida. La última, en el celular del director, es **Terminar** (ver
+   *Terminar con fundido*, abajo). Debajo, una línea dice qué pasa al tocar
+   una sección; tocándola se abre ⚙ para cambiarlo. **Mi mezcla** es la otra pantalla, entera: cada músico sube o
    baja cada pista (más click, menos pad…) sin cambiar lo que escuchan los
    demás. Arriba, la **mezcla rápida**: tres faders, **Click**, **Guía** y
    **Banda** (todo lo demás), para lo más común sin buscar pista por pista;
@@ -266,8 +269,10 @@ cambian a propósito.
    **Elegir una sección con la canción sonando** no corta: la sección
    actual termina y la música sigue directo en la elegida (se ve “→ Coro en
    5 s” en la compu y en los celulares). Se puede cambiar por otra, o
-   cancelar con ✕ / Esc. En el panel de secciones se elige si salta *al
-   terminar* la sección, *en el compás* o *ya*. Con el tempo detectado,
+   cancelar con ✕ / Esc. En **⚙ Ajustes** (en la compu, arriba a la
+   derecha; en el celular del director, su ⚙) se elige si salta *al
+   terminar* la sección, *en el compás* o *ya*; queda guardado para la
+   próxima vez. Con el tempo detectado,
    todo salto cae en el “1”: el destino y el momento se llevan al compás
    (aunque la marca haya quedado unos ms corrida), un click en la línea de
    tiempo espera al próximo compás, y la vuelta de “repetir” también va de
@@ -283,7 +288,7 @@ cambian a propósito.
    Interludio, Instrumental, Final, Repetir…— y los números 1 a 7, de los
    recursos gratuitos “Click and Guide Samples” de
    [Secuencias.com](https://secuencias.com)): no hay que importar nada. En
-   el panel de secciones se apaga o prende (**Avisar con voz**), y el botón
+   **⚙ Ajustes** de la compu se apaga o prende (**Avisar con voz**), y el botón
    de al lado permite usar **otro pack** (un .zip o .rar con un audio por
    sección y los números; si trae varios idiomas se usa el español); con
    el tacho se quita ese pack y vuelven las del programa. Los nombres se
@@ -292,6 +297,21 @@ cambian a propósito.
    hablar cada archivo. Si el salto se elige tan encima que el “1” ya pasó,
    el nombre va en el primer pulso que llega; sin la voz de esa sección,
    solo la cuenta.
+   **Terminar con fundido:** para cerrar la canción cuando el director
+   quiere (“terminamos acá”) sin cortarla de golpe ni ir a una sección
+   Final. En el celular del director es la última tarjeta, **Terminar**; en
+   la compu, el botón con la rampa (al lado del stop) o la tecla **F**. Como
+   un salto, sigue el modo de ⚙: **al terminar** la sección que suena (o en
+   el próximo compás, o ya) la música sigue y **se apaga de a poco en todos
+   a la vez**, y para (vuelve al principio, como al terminar sola).
+   Mientras espera se ve “**Se apaga en 5 s**” en la compu y en todos los
+   celulares (en *Voz* y *Pantallas*: “Se termina · Final”); tocando otra
+   vez Terminar, ✕ o Esc se cancela. Ya apagándose, **Seguir** (o Esc)
+   trae la música de vuelta en medio segundo y la canción sigue; elegir
+   una sección la lleva ahí enseguida. Cuánto tarda en apagarse (2, 4, 6 u
+   8 s; 4 por defecto) se elige en ⚙ Ajustes de la compu. En la última
+   sección (cuyo final es el de la canción) se apaga desde el próximo
+   compás.
 11. **Cambiar el tono** (de −6 a +6 semitonos): en la compu, al lado del
     nombre de la canción, **− A +**. Cada toque sube o baja medio tono y se
     ve “A → B +2”. La compu prepara las pistas en el tono nuevo (unos
@@ -344,7 +364,7 @@ cambian a propósito.
     colchón sostenido en el tono) y el **click**, sonando en todos a la vez.
     El pad lo hace la app (no hay que bajar nada): raíz, quinta y octava, sin
     tercera, así sirve igual en mayor y en menor. **Pads propios:** en
-    *Secciones* (al lado de la voz del salto) o en la pantalla de un colchón,
+    **⚙ Ajustes** de la compu (debajo de la voz del salto) o en la pantalla de un colchón,
     **Importar mis pads…** → un .zip o .rar con un audio por tono (el nombre
     dice el tono: “Pad C.wav”, “Warm Pad - F#.mp3”, “Pad Bb.wav”, “Fondo
     Re.wav”) **o un solo audio** (si el nombre no dice el tono, lo pregunta).
@@ -514,7 +534,8 @@ mismo en ⚙ → Estado.
 | ← / → | Sección anterior / siguiente (sonando: en el límite; dos veces → saltea una) |
 | 1 … 9 | Ir a la sección 1 a 9 (sonando: al terminar la sección actual) |
 | Shift + 1…9 / ← → | Lo mismo, pero ya |
-| Esc | Cancelar el salto elegido |
+| Esc | Cancelar el salto elegido (o el final; apagándose, la música vuelve) |
+| F | Terminar con fundido (según el modo de salto; otra vez: cancelar) |
 | Click en la línea de tiempo | Sonando: salta en el próximo compás, al “1” más cercano (Shift: ya; Alt: sin imán) |
 | M | Marcar una sección en la posición actual |
 | L | Repetir la sección actual |
@@ -969,6 +990,14 @@ se escucha a los **90–100 ms**; la consola no recibe nada (−90 dB).
    hasta tener 5 mediciones, y si a alguno una orden le llega sin tiempo
    para programarla, se vuelve a 1,5 s por 2 minutos. Sin celulares, 30 ms.
    El margen actual sale en “Copiar diagnóstico”.
+   **Terminar con fundido** usa lo mismo: el servidor manda a todos la
+   hora (del servidor) en que empieza a bajar y cuánto dura, y cada
+   dispositivo programa esa curva en su motor de audio (una ganancia propia
+   de la canción, después del colchón), así baja igual en todos. Al final,
+   el stop es un comando programado más. Si se cancela a mitad, la música
+   vuelve en medio segundo (no espera todo el margen: es solo volumen; al
+   que le llega tarde, vuelve desde donde está), y quien entra o se
+   reconecta a mitad toma la curva del estado.
 3. **Cuenta (opcional):** con la cuenta prendida en la canción, el play
    desde el principio lleva los golpes (`shared/cuenta.ts`,
    `compasesDeCuenta`) con su hora: cada dispositivo los toca con el mismo

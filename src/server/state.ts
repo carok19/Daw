@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import type { ColchonActivo, EstadoPantallaVideo, InfoPads, InfoVoces, ListaActiva, Marcador, ModoSalto, PatchPista, PlaybackState, Proyecto, SaltoPendiente, TabResumen } from '../shared/types'
+import { FUNDIDO_POR_DEFECTO_MS, type ColchonActivo, type EstadoPantallaVideo, type FundidoFinal, type InfoPads, type InfoVoces, type ListaActiva, type Marcador, type ModoSalto, type PatchPista, type PlaybackState, type Proyecto, type SaltoPendiente, type TabResumen } from '../shared/types'
 import { posicionActualMs } from '../shared/playback'
 import { normalizarTonalidad } from '../shared/tonalidad'
 import { guardarSesion, saveProyecto, type SesionGuardada } from './projects'
@@ -50,6 +50,10 @@ export class AppState {
   modoSalto: ModoSalto = 'seccion'
   /** salto elegido que espera su limite (lo maneja Transporte); se cancela al cambiar de cancion */
   saltoPendiente: (SaltoPendiente & { tabId: string }) | null = null
+  /** la cancion se esta apagando ("Terminar con fundido"; lo maneja Transporte) */
+  fundido: (FundidoFinal & { tabId: string }) | null = null
+  /** cuanto tarda en apagarse con "Terminar" */
+  fundidoMs = FUNDIDO_POR_DEFECTO_MS
   /** colchón sonando (pad y click, sin la banda; lo maneja Transporte). Sigue aunque se cambie de canción */
   colchon: ColchonActivo | null = null
   /** volumen del pad del último colchón dentro de una canción (el próximo arranca igual) */
@@ -96,6 +100,7 @@ export class AppState {
       this.activeTabId = this.orden[Math.min(indice, this.orden.length - 1)] ?? null
       this.loop = false
       this.saltoPendiente = null
+      this.fundido = null
     }
     this.persistirSesion()
   }
@@ -125,6 +130,7 @@ export class AppState {
     this.activeTabId = tabId
     this.loop = false
     this.saltoPendiente = null
+    this.fundido = null
     const nueva = this.tabs.get(tabId)
     if (nueva) {
       nueva.proyecto.usadoEn = new Date().toISOString()

@@ -5,7 +5,7 @@ import { aplicarGrupos, clavePista, codificarMezcla, mezclaDeSonido, mezclaEfect
 import { LARGO_SONIDO_CUENTA_SEC } from '@shared/cuenta'
 import { ENTRADA_PAD_SOLO_MS, NOTAS_PAD, PAN_CLICK_COLCHON, PAN_PAD, golpesDeColchon } from '@shared/colchon'
 import { cargarProcesador, deInt16, EsperaTalkback, type PedazoTalkback } from './talkback'
-import type { MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
+import type { CurvaFundido, MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
   BUFFER_MIN_START_SEC,
@@ -105,6 +105,8 @@ interface Precarga {
 }
 
 const INTERVALO_TICK_MS = 250
+/** Se cancelo "Terminar" a mitad del fundido: en cuanto vuelve la musica a su volumen. */
+const VUELTA_FUNDIDO_SEC = 0.4
 /**
  * El limitador (DynamicsCompressorNode) mira 6 ms hacia adelante: todo sale
  * 6 ms despues de pasar por el. Es igual en todos los navegadores (el mismo
@@ -273,6 +275,8 @@ export class StreamingEngine implements PlaybackEngine {
   private vozAnuncio: { id: string; buffer: AudioBuffer | null; fuente: AudioBufferSourceNode | null; callada: Canal | null } | null = null
   // colchon (pad y click sin la banda): todo el audio de la cancion pasa por cancionGain, que el colchon apaga
   private cancionGain: GainNode
+  // "Terminar con fundido": la cancion (despues del colchon) baja a silencio, con la misma curva en todos
+  private fundidoGain: GainNode
   private padPanner: StereoPannerNode
   private vocesColchon: VozColchon[] = []
   private buffersPad = new Map<string, Promise<AudioBuffer | null>>()
@@ -304,7 +308,9 @@ export class StreamingEngine implements PlaybackEngine {
     this.anuncioGain.connect(this.anuncioPanner)
     this.anuncioPanner.connect(this.masterGain)
     this.cancionGain = this.ctx.createGain()
-    this.cancionGain.connect(this.masterGain)
+    this.fundidoGain = this.ctx.createGain()
+    this.cancionGain.connect(this.fundidoGain)
+    this.fundidoGain.connect(this.masterGain)
     this.padPanner = this.ctx.createStereoPanner()
     this.padPanner.pan.value = PAN_PAD
     this.padPanner.connect(this.masterGain)
@@ -719,6 +725,7 @@ export class StreamingEngine implements PlaybackEngine {
   }
 
   detener(): void {
+    this.setFundido(null, 0)
     this.cortarCuenta(0)
     this.cortarVozAnuncio()
     this.cortarDesde(this.ctx.currentTime)
@@ -1269,6 +1276,33 @@ export class StreamingEngine implements PlaybackEngine {
     param.cancelScheduledValues(ahora)
     param.setValueAtTime(valorEn(ahora), ahora)
     for (const [t, v] of puntos) if (t > ahora) param.linearRampToValueAtTime(v, t)
+  }
+
+  /**
+   * "Terminar con fundido" (null = sin fundido: el volumen vuelve ya). La
+   * cancion baja a silencio desde `desde` (hora del servidor) en `ms`, y en
+   * `vuelve` (si hay) el volumen vuelve: despacio si se cancelo a mitad
+   * (`suave`), de golpe si es la orden siguiente (el stop del final, o una
+   * seccion elegida mientras se apagaba). Si llega tarde, se engancha donde va.
+   */
+  setFundido(f: CurvaFundido | null, clockOffsetMs: number): void {
+    const g = this.fundidoGain.gain
+    if (!f) {
+      this.envolvente(g, [[this.ctx.currentTime, 1]])
+      return
+    }
+    const tD = this.ctxDeServidor(f.desde, clockOffsetMs)
+    const tE = tD + f.ms / 1000
+    let puntos: [number, number][] = [
+      [tD, 1],
+      [tE, 0]
+    ]
+    if (f.vuelve !== undefined) {
+      const tV = this.ctxDeServidor(f.vuelve, clockOffsetMs)
+      const enV = tV <= tD ? 1 : tV >= tE ? 0 : 1 - (tV - tD) / (tE - tD)
+      puntos = [...puntos.filter(([t]) => t < tV), [tV, enV], [tV + (f.suave ? VUELTA_FUNDIDO_SEC : 0.003), 1]]
+    }
+    this.envolvente(g, puntos)
   }
 
   /** Entradas y salidas: la banda que se apaga (colchon dentro de una cancion), el click que entra y el pad. */

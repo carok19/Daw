@@ -5468,3 +5468,125 @@ input[type='date'] {
 .consola-panel.compu .consola-panel-fila > svg {
   color: var(--text-2);
 }
+
+/* ---------- "Terminar con fundido" ---------- */
+.icono-fundido {
+  flex: none;
+}
+/* celular: la ultima tarjeta, despues de las secciones */
+.m-marcador.terminar {
+  --color-seccion: #64748b;
+}
+.m-marcador.terminar .m-marcador-nombre {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.m-salto.m-terminando {
+  border-color: var(--text-3);
+  background: color-mix(in srgb, #64748b 35%, transparent);
+}
+.m-salto.m-terminando button {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  padding: 3px 9px;
+  background: rgba(255, 255, 255, 0.12);
+}
+/* "Tocá una sección: …" lleva a ⚙ (ahi se elige como salta) */
+.m-ayuda-boton {
+  width: 100%;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  padding: 6px 4px;
+  min-height: 0;
+  font-weight: 500;
+}
+.m-ayuda-boton svg {
+  flex: none;
+  opacity: 0.8;
+}
+/* compu: el boton al lado del stop y lo que esta pasando */
+.tbtn-terminar.activo {
+  background: color-mix(in srgb, #64748b 40%, var(--panel-3));
+  border-color: #94a3b8;
+  color: #fff;
+  animation: latido 1.2s ease-in-out infinite;
+}
+.tbtn-terminar:disabled {
+  opacity: 0.4;
+}
+.salto-pendiente.terminando {
+  --color-seccion: #94a3b8;
+  animation: latido 1.2s ease-in-out infinite;
+}
+.salto-pendiente.terminando button {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  padding: 2px 8px;
+}
+.timeline-salto-limite.fin {
+  border-left-style: solid;
+  border-left-color: #cbd5e1;
+}
+
+/* ---------- ⚙ Ajustes (compu) ---------- */
+.ajustes-titulo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  margin: 18px 0 6px;
+}
+.ajustes-titulo:first-child {
+  margin-top: 0;
+}
+.ajustes-ayuda {
+  margin: 0 0 8px;
+}
+.ajustes-opciones {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.ajustes-opcion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  white-space: normal;
+}
+.ajustes-opcion small {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.35;
+}
+.ajustes-opcion.activo {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+@media (hover: hover) {
+  .ajustes-opcion.activo:hover:not(:disabled) {
+    background: var(--accent-soft);
+  }
+}
+.ajustes-opcion.activo small {
+  color: var(--text-2);
+}
+.ajustes-fundido button {
+  min-width: 56px;
+}
+@media (max-width: 720px) {
+  .ajustes-opciones {
+    grid-template-columns: 1fr;
+  }
+}
