@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff } from 'lucide-react'
 import type { AppController } from '../app/useAppController'
+import { EmisorTalkback } from '../audio/talkback'
+import { Toggle } from '../ui/Toggle'
 
 /** ¿El foco esta en algo donde se escribe? (ahi la T es una letra, no el talkback) */
 function escribiendo(): boolean {
@@ -106,30 +108,61 @@ export function AjustesTalkback({ controller }: { controller: AppController }) {
   useEffect(() => {
     // abrir la entrada (sin hablar): asi se ve el nivel y los nombres de las entradas
     void probar().then(() => pedirEntradas().then(setEntradas))
+    // se enchufa (o desenchufa) una interface con la ventana abierta: la lista se pone al dia
+    return EmisorTalkback.alCambiar(() => void pedirEntradas().then(setEntradas))
   }, [probar, pedirEntradas])
+  const tb = controller.talkback
   const celulares = controller.dispositivos.filter((d) => d.origen === 'celular' && d.conectado)
+  const desconectada = tb.entrada !== null && entradas.length > 0 && !entradas.some((e) => e.id === tb.entrada)
   return (
     <>
       <p className="ayuda" style={{ marginTop: 0 }}>
         Mantené apretado <b>Talkback</b> (arriba) o la tecla <b>T</b> y hablale a la banda: te escuchan en los oídos, y la música les baja un poco
         mientras hablás. No va a la consola ni a multimedia. Viaja por el WiFi del router, no por internet.
       </p>
+      <h3 className="ajustes-titulo">Micrófono</h3>
       <label className="talkback-campo">
-        Entrada
-        <select value={controller.talkback.entrada ?? ''} onChange={(e) => controller.setEntradaTalkback(e.target.value || null)} aria-label="Entrada del talkback">
-          <option value="">La de Windows (por defecto)</option>
+        Micrófono o interface
+        <select value={tb.entrada ?? ''} onChange={(e) => controller.setEntradaTalkback(e.target.value || null)} aria-label="Micrófono del talkback">
+          <option value="">El de Windows (por defecto)</option>
           {entradas.map((e) => (
             <option key={e.id} value={e.id}>
               {e.nombre}
             </option>
           ))}
+          {desconectada && <option value={tb.entrada!}>No está conectada (elegí otra)</option>}
         </select>
       </label>
+      {tb.canales > 1 && (
+        <div className="talkback-campo">
+          Entrada de la interface
+          <div className="segmentado talkback-canales" role="radiogroup" aria-label="Entrada de la interface">
+            {Array.from({ length: tb.canales }, (_, k) => (
+              <button key={k} role="radio" aria-checked={tb.canal === k} className={tb.canal === k ? 'activo' : ''} onClick={() => controller.setCanalTalkback(k)}>
+                {k + 1}
+              </button>
+            ))}
+            <button role="radio" aria-checked={tb.canal === null} className={tb.canal === null ? 'activo' : ''} onClick={() => controller.setCanalTalkback(null)}>
+              Todas
+            </button>
+          </div>
+          <small>Elegí la entrada donde está enchufado el micrófono (la 1, la 2…): va directa, sin “Mejorar la voz”. “Todas” las mezcla.</small>
+        </div>
+      )}
       <NivelEntrada leer={controller.nivelTalkback} />
-      {controller.talkback.error && <p className="error-texto">{controller.talkback.error}</p>}
+      {tb.error && <p className="error-texto">{tb.error}</p>}
+      <div className="talkback-procesar">
+        <Toggle activo={tb.procesar} onCambiar={controller.setProcesarTalkback} titulo="Menos ruido de fondo y volumen parejo">
+          Mejorar la voz
+        </Toggle>
+        <small>
+          Con el micrófono de la compu, dejalo prendido. Con una interface o la consola, apagalo (elegir una entrada lo apaga) y ajustá la ganancia
+          en la interface hasta que la barra se mueva bien al hablar.
+        </small>
+      </div>
       <p className="ayuda">
-        Sirve el micrófono de la compu, uno USB, o la consola por una placa de sonido. Desde Reaper: mandá ese canal a un cable virtual (por
-        ejemplo VB-Cable) y elegilo acá.
+        Sirve el micrófono de la compu, uno USB, una interface (eligiendo su entrada) o la consola por una placa de sonido. Desde Reaper: mandá ese
+        canal a un cable virtual (por ejemplo VB-Cable) y elegilo acá.
       </p>
       <h3 className="ajustes-titulo">Cuánto tarda en cada celular</h3>
       <ul className="lista talkback-lista">

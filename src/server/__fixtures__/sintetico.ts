@@ -34,6 +34,32 @@ export function wav16(muestras: Float32Array, sr: number, extra: Buffer[] = []):
   return Buffer.concat([h, data, extras])
 }
 
+/** WAV estereo de 16 bits (izquierda y derecha del mismo largo): p.ej. una interface con algo solo en la entrada 1. */
+export function wavEstereo(izq: Float32Array, der: Float32Array, sr: number): Buffer {
+  const n = Math.min(izq.length, der.length)
+  const data = Buffer.alloc(n * 4)
+  const a16 = (v: number): number => Math.max(-32768, Math.min(32767, Math.round(v * 32767)))
+  for (let i = 0; i < n; i++) {
+    data.writeInt16LE(a16(izq[i]), i * 4)
+    data.writeInt16LE(a16(der[i]), i * 4 + 2)
+  }
+  const h = Buffer.alloc(44)
+  h.write('RIFF', 0)
+  h.writeUInt32LE(36 + data.length, 4)
+  h.write('WAVE', 8)
+  h.write('fmt ', 12)
+  h.writeUInt32LE(16, 16)
+  h.writeUInt16LE(1, 20)
+  h.writeUInt16LE(2, 22)
+  h.writeUInt32LE(sr, 24)
+  h.writeUInt32LE(sr * 4, 28)
+  h.writeUInt16LE(4, 32)
+  h.writeUInt16LE(16, 34)
+  h.write('data', 36)
+  h.writeUInt32LE(data.length, 40)
+  return Buffer.concat([h, data])
+}
+
 /** Click sintetico: golpes cortos; el "1" de cada compas mas agudo y fuerte (si `acento`). */
 export function generarClick(bpm: number, compas: number, segundos: number, acento = true, inicio = 0.5): Float32Array {
   const x = new Float32Array(Math.round(segundos * SR))

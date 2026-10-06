@@ -5649,3 +5649,24 @@ input[type='date'] {
   border-color: var(--accent);
   color: var(--text);
 }
+
+/* talkback: la entrada de la interface y "Mejorar la voz" */
+.talkback-campo small,
+.talkback-procesar small {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.35;
+}
+.talkback-canales {
+  align-self: flex-start;
+}
+.talkback-canales button {
+  min-width: 42px;
+}
+.talkback-procesar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 12px;
+}

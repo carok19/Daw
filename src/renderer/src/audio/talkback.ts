@@ -237,13 +237,28 @@ export class EsperaTalkback {
  * y, mientras se habla, manda los pedazos con su hora. La entrada queda
  * abierta despues del primer uso (asi apretar y hablar es instantaneo).
  */
+/** De donde y como se toma la voz del talkback. */
+export interface OpcionesEntrada {
+  /** el dispositivo (deviceId): un microfono, una interface; null = el de Windows por defecto */
+  entrada: string | null
+  /** que entrada de la interface (0 = la 1, 1 = la 2…); null = todas juntas */
+  canal: number | null
+  /** "Mejorar la voz": menos ruido y volumen parejo (para el microfono de la compu); apagado = la senal tal cual (interface, consola) */
+  procesar: boolean
+}
+
+/** Los ids que Chrome agrega aparte en Windows ("Predeterminado", "Comunicaciones"): ya estan como "la de Windows". */
+const IDS_DE_WINDOWS = ['default', 'communications']
+
 export class EmisorTalkback {
   private ctx: AudioContext | null = null
   private stream: MediaStream | null = null
   private fuente: MediaStreamAudioSourceNode | null = null
+  private nodos: AudioNode[] = []
   private nodo: AudioWorkletNode | null = null
   private abriendo: Promise<void> | null = null
-  private entrada: string | null = null
+  private clave: string | null = null
+  private nCanales = 0
   private n = 0
   hablando = false
   /** pico de lo que entra (0 a 1), aunque no se este hablando: para el vumetro */
@@ -254,34 +269,63 @@ export class EmisorTalkback {
     private readonly horaServidor: () => number
   ) {}
 
-  /** Las entradas de audio de la compu (los nombres aparecen despues de dar permiso una vez). */
+  /** Las entradas de audio de la compu: microfonos e interfaces (los nombres aparecen despues de dar permiso una vez). */
   static async entradas(): Promise<{ id: string; nombre: string }[]> {
     if (!navigator.mediaDevices?.enumerateDevices) return []
     const lista = await navigator.mediaDevices.enumerateDevices()
-    return lista.filter((d) => d.kind === 'audioinput').map((d, i) => ({ id: d.deviceId, nombre: d.label || `Entrada ${i + 1}` }))
+    return lista
+      .filter((d) => d.kind === 'audioinput' && !IDS_DE_WINDOWS.includes(d.deviceId))
+      .map((d, i) => ({ id: d.deviceId, nombre: d.label || `Entrada ${i + 1}` }))
   }
 
-  /** Abre la entrada (pide permiso la primera vez). `entrada` = deviceId; null = la de Windows por defecto. */
-  abrir(entrada: string | null): Promise<void> {
-    if (this.abriendo && entrada === this.entrada) return this.abriendo
+  /** Avisa cuando se enchufa o desenchufa un microfono o una interface. Devuelve como dejar de escuchar. */
+  static alCambiar(cb: () => void): () => void {
+    const md = navigator.mediaDevices
+    if (!md?.addEventListener) return () => {}
+    md.addEventListener('devicechange', cb)
+    return () => md.removeEventListener('devicechange', cb)
+  }
+
+  /** Abre la entrada (pide permiso la primera vez). Si ya estaba abierta con otras opciones, la cambia (sin dejar de hablar). */
+  abrir(op: OpcionesEntrada): Promise<void> {
+    const clave = JSON.stringify(op)
+    if (this.abriendo && clave === this.clave) return this.abriendo
+    const hablaba = this.hablando
     this.cerrar()
-    this.entrada = entrada
+    this.clave = clave
     this.abriendo = (async () => {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          deviceId: entrada ? { exact: entrada } : undefined,
-          channelCount: 1,
+          deviceId: op.entrada ? { exact: op.entrada } : undefined,
+          // todas las entradas que tenga (una interface: 2, 4…), para poder elegir una
+          channelCount: { ideal: 8 },
           // la voz del que habla, sin "procesar" el retorno (no hay parlantes en el talkback)
           echoCancellation: false,
-          noiseSuppression: true,
-          autoGainControl: true
+          noiseSuppression: op.procesar,
+          autoGainControl: op.procesar
         }
       })
       const ctx = new AudioContext({ latencyHint: 'interactive' })
       await cargarProcesador(ctx, 'captura')
       const fuente = ctx.createMediaStreamSource(stream)
       const nodo = new AudioWorkletNode(ctx, 'captura-talkback', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit' })
-      fuente.connect(nodo)
+      // la entrada elegida de la interface, o el promedio de todas
+      const canales = Math.max(1, stream.getAudioTracks()[0]?.getSettings().channelCount ?? 1)
+      const nodos: AudioNode[] = []
+      if (canales > 1) {
+        const division = ctx.createChannelSplitter(canales)
+        const voz = ctx.createGain()
+        voz.channelCount = 1
+        voz.channelCountMode = 'explicit'
+        fuente.connect(division)
+        if (op.canal !== null && op.canal < canales) division.connect(voz, op.canal)
+        else {
+          voz.gain.value = 1 / canales
+          for (let k = 0; k < canales; k++) division.connect(voz, k)
+        }
+        voz.connect(nodo)
+        nodos.push(division, voz)
+      } else fuente.connect(nodo)
       nodo.port.onmessage = (e: MessageEvent<{ t: number; muestras: Float32Array; pico: number }>) => {
         this.onNivel?.(e.data.pico)
         if (!this.hablando) return
@@ -293,7 +337,10 @@ export class EmisorTalkback {
       this.ctx = ctx
       this.stream = stream
       this.fuente = fuente
+      this.nodos = nodos
       this.nodo = nodo
+      this.nCanales = canales
+      this.hablando = hablaba
     })()
     this.abriendo.catch(() => {
       this.abriendo = null
@@ -305,16 +352,25 @@ export class EmisorTalkback {
     return !!this.nodo
   }
 
+  /** Cuantas entradas tiene lo que esta abierto (una interface: 2 o mas; 0 = cerrado). */
+  canales(): number {
+    return this.nodo ? this.nCanales : 0
+  }
+
   cerrar(): void {
     this.hablando = false
     this.nodo?.disconnect()
+    for (const n of this.nodos) n.disconnect()
     this.fuente?.disconnect()
     for (const tr of this.stream?.getTracks() ?? []) tr.stop()
     void this.ctx?.close().catch(() => undefined)
     this.ctx = null
     this.stream = null
     this.fuente = null
+    this.nodos = []
     this.nodo = null
+    this.nCanales = 0
     this.abriendo = null
+    this.clave = null
   }
 }

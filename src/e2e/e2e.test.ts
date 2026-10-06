@@ -21,7 +21,7 @@ import { chromium, devices, type Browser, type BrowserContext, type Page } from 
 import { createServer, type AppServer } from '../server'
 import { rutaFfmpeg } from '../server/audio'
 import { buildEstadoCompleto } from '../server/estado'
-import { ANUNCIOS, generarClick, inicioCompas, SR, wav16, zipConGuia } from '../server/__fixtures__/sintetico'
+import { ANUNCIOS, generarClick, inicioCompas, SR, wav16, wavEstereo, zipConGuia } from '../server/__fixtures__/sintetico'
 import { crearRar5 } from '../server/__fixtures__/rar'
 import { verificarLicencia } from '../server/licencia'
 import { deBase64Url } from '../shared/licencia'
@@ -2778,12 +2778,13 @@ test('roles: cada celular elige lo suyo; la consola recibe la banda sola y en es
 test('talkback: la compu habla y la banda la escucha en los oídos (la consola no), con la música más baja; cada celular mide la demora', { timeout: 3 * 60 * 1000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-talkback-'))
   process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
-  // el "microfono" de la compu: un tono de 1 kHz a pedazos (200 ms si, 300 ms no), como una voz
+  // el "microfono" de la compu, como una interface de 2 entradas: en la 1 un tono de 1 kHz a pedazos
+  // (200 ms si, 300 ms no), como una voz; la 2 sin nada enchufado
   const srVoz = 48000
   const voz = new Float32Array(10 * srVoz)
   for (let i = 0; i < voz.length; i++) voz[i] = (i / srVoz) % 0.5 < 0.2 ? 0.5 * Math.sin((2 * Math.PI * 1000 * i) / srVoz) : 0
   const microfono = path.join(tmp, 'microfono.wav')
-  fs.writeFileSync(microfono, wav16(voz, srVoz))
+  fs.writeFileSync(microfono, wavEstereo(voz, new Float32Array(voz.length), srVoz))
   const server: AppServer = createServer(RENDERER, { compuToken: 'e2e', analisisAutomatico: false })
   const port = await server.start(0)
   const base = `http://localhost:${port}`
@@ -2853,7 +2854,8 @@ test('talkback: la compu habla y la banda la escucha en los oídos (la consola n
     await compu.keyboard.up('t')
     t.diagnostic(`hablando: músico ${JSON.stringify(hablando)} · consola ${JSON.stringify(enConsola)}`)
     // el tono suena 200 de cada 500 ms: su amplitud promedio es ~0,4 de la del tono
-    assert.ok(hablando.voz > 0.02, `el músico escucha la voz (${hablando.voz})`)
+    // (la voz entra solo por la entrada 1 de la "interface" y por defecto van todas juntas: llega a la mitad)
+    assert.ok(hablando.voz > 0.01, `el músico escucha la voz (${hablando.voz})`)
     assert.ok(hablando.bajo < antes.bajo * 0.65 && hablando.bajo > antes.bajo * 0.35, `la música baja 6 dB mientras se habla (${hablando.bajo} de ${antes.bajo})`)
     assert.ok(enConsola.voz < 0.002, `la consola no recibe el talkback (${enConsola.voz})`)
     await compu.locator('.talkback.hablando').waitFor({ state: 'detached' })
@@ -2882,6 +2884,52 @@ test('talkback: la compu habla y la banda la escucha en los oídos (la consola n
     await compu.getByRole('tab', { name: 'Talkback' }).click()
     await compu.getByText(/llega en \d+ ms por el WiFi · se escucha a los \d+ ms/).waitFor()
     await compu.getByText('Consola: no lo recibe').waitFor()
+    await compu.keyboard.press('Escape')
+  })
+
+  await t.test('con una interface se elige su entrada: la 2 (sin nada) no manda voz; la 1 sí, directa', async () => {
+    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await compu.getByRole('tab', { name: 'Talkback' }).click()
+    // los micrófonos e interfaces (sin repetir el "predeterminado" de Windows)
+    const opciones = await compu.getByRole('combobox', { name: 'Micrófono del talkback' }).locator('option').allTextContents()
+    assert.equal(opciones[0], 'El de Windows (por defecto)')
+    assert.ok(opciones.length >= 2 && !opciones.some((o) => /default/i.test(o)), opciones.join(' · '))
+    const entradas = compu.getByRole('radiogroup', { name: 'Entrada de la interface' })
+    await entradas.waitFor()
+    assert.deepEqual(await entradas.getByRole('radio').allTextContents(), ['1', '2', 'Todas'])
+    const mejorar = compu.getByRole('switch', { name: /Mejorar la voz/ })
+    assert.equal(await mejorar.getAttribute('aria-checked'), 'true')
+    await captura(compu, 'ajustes-talkback')
+    const hablarYMedir = async (): Promise<number> => {
+      await compu.keyboard.press('Escape')
+      await compu.locator('.modal').waitFor({ state: 'detached' })
+      await compu.locator('body').click({ position: { x: 5, y: 5 } })
+      await compu.keyboard.down('t')
+      await compu.locator('.talkback.hablando').waitFor()
+      await esperar(2000)
+      const m = await medir(musico)
+      await compu.keyboard.up('t')
+      await compu.locator('.talkback.hablando').waitFor({ state: 'detached' })
+      await esperar(1500)
+      return m.voz
+    }
+    // la 2: una entrada elegida va directa ("Mejorar la voz" se apaga solo) y ahí no hay nada
+    await entradas.getByRole('radio', { name: '2' }).click()
+    await compu.locator('.talkback-procesar [role=switch][aria-checked=false]').waitFor()
+    const enLa2 = await hablarYMedir()
+    // la 1: la voz llega
+    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await compu.getByRole('tab', { name: 'Talkback' }).click()
+    await compu.getByRole('radiogroup', { name: 'Entrada de la interface' }).getByRole('radio', { name: '1' }).click()
+    const enLa1 = await hablarYMedir()
+    t.diagnostic(`voz en el músico: entrada 2 ${enLa2.toFixed(4)} · entrada 1 ${enLa1.toFixed(4)}`)
+    assert.ok(enLa2 < 0.004, `por la entrada 2 no llega voz (${enLa2})`)
+    assert.ok(enLa1 > 0.02, `por la entrada 1 sí (${enLa1})`)
+    // prender "Mejorar la voz" vuelve a "Todas"
+    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await compu.getByRole('tab', { name: 'Talkback' }).click()
+    await compu.getByRole('switch', { name: /Mejorar la voz/ }).click()
+    await compu.waitForFunction(() => document.querySelector('[role=radiogroup][aria-label="Entrada de la interface"] [aria-checked=true]')?.textContent === 'Todas')
     await compu.keyboard.press('Escape')
     assert.deepEqual(errores, [])
   })

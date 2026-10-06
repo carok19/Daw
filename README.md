@@ -416,10 +416,16 @@ cambian a propósito.
     baja un poco mientras hablás. En el celular aparece **“Te habla la
     compu”**, y en *Mi mezcla* cada uno tiene su volumen de talkback. **Va
     por el WiFi del router, no por internet** (anda igual sin internet): la
-    voz sale de la compu y llega directo a los celulares de la misma red. La
-    entrada se elige en **⚙ Ajustes → Talkback**: el micrófono de la compu, uno USB,
-    la consola por una placa de sonido, o un canal de **Reaper** con un cable
-    virtual (VB-Cable). **¿Y la demora del WiFi?** Cada celular espera lo
+    voz sale de la compu y llega directo a los celulares de la misma red. El
+    micrófono se elige en **⚙ Ajustes → Talkback**: el de la compu, uno USB,
+    una **interface de audio**, la consola por una placa de sonido, o un canal
+    de **Reaper** con un cable virtual (VB-Cable). La lista se actualiza sola
+    al enchufar una interface. Si la interface tiene varias entradas, se
+    elige **en cuál está el micrófono** (1, 2…; “Todas” las mezcla): elegir
+    una manda esa entrada directa. **Mejorar la voz** (prendido por defecto)
+    saca ruido de fondo y empareja el volumen: con el micrófono de la compu
+    conviene; con una interface o la consola, mejor apagado y la ganancia en
+    la interface (el vúmetro muestra cuánto entra). **¿Y la demora del WiFi?** Cada celular espera lo
     justo para que la voz no se corte y lo mide: en ese mismo panel se ve,
     celular por celular, “llega en 35 ms por el WiFi · se escucha a los 120
     ms”. Con un router normal anda entre 0,1 y 0,25 s (como un handy): para

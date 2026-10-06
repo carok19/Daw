@@ -44,7 +44,7 @@ import { INTERVALO_MONITOREO_MS, MARGEN_RESYNC_DURO_MS, UMBRAL_DURO_MS, UMBRAL_S
 import { setPlayheadMs, getPlayheadMs, setGolpeCuenta, setGolpeColchon } from './playheadStore'
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
 import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
-import { EmisorTalkback, type PedazoTalkback } from '../audio/talkback'
+import { EmisorTalkback, type OpcionesEntrada, type PedazoTalkback } from '../audio/talkback'
 import { codigoDesdeDireccion, puenteAndroid } from '../conexion'
 
 /** Compas mas cercano (si esta a menos de medio compas): "ajustar al compas". */
@@ -199,11 +199,23 @@ export function useAppController() {
   const [talkbackRecibido, setTalkbackRecibido] = useState(false)
   /** la compu esta hablando (el aviso en pantalla no parpadea entre palabra y palabra) */
   const [talkbackHablando, setTalkbackHablando] = useState(false)
-  // compu: la entrada (microfono) y si se esta hablando
-  const [talkback, setTalkback] = useState<{ hablando: boolean; error: string | null; entrada: string | null }>(() => ({
+  // compu: de donde sale la voz (microfono o interface, que entrada, si se mejora) y si se esta hablando
+  const [talkback, setTalkback] = useState<{
+    hablando: boolean
+    error: string | null
+    entrada: string | null
+    /** que entrada de la interface (0 = la 1…); null = todas juntas */
+    canal: number | null
+    procesar: boolean
+    /** cuantas entradas tiene lo abierto (una interface: 2 o mas; 0 = todavia cerrado) */
+    canales: number
+  }>(() => ({
     hablando: false,
     error: null,
-    entrada: origen === 'compu' ? leerPref<string | null>('talkback-entrada', null) : null
+    entrada: origen === 'compu' ? leerPref<string | null>('talkback-entrada', null) : null,
+    canal: origen === 'compu' ? leerPref<number | null>('talkback-canal', null) : null,
+    procesar: leerPref<boolean>('talkback-procesar', true),
+    canales: 0
   }))
   const talkbackRef = useRef<EmisorTalkback | null>(null)
   const nivelTalkbackRef = useRef(0)
@@ -780,6 +792,24 @@ export function useAppController() {
       return p ? calcularSecciones(p.marcadores, p.duracionTotalMs) : []
     }
 
+    /** De donde y como se toma la voz del talkback (lo elegido en ⚙ Ajustes → Talkback). */
+    function opcionesTalkback(): OpcionesEntrada {
+      return {
+        entrada: leerPref<string | null>('talkback-entrada', null),
+        canal: leerPref<number | null>('talkback-canal', null),
+        procesar: leerPref<boolean>('talkback-procesar', true)
+      }
+    }
+    /** Si el microfono ya estaba abierto, lo vuelve a abrir con lo elegido (sin dejar de hablar). */
+    function reabrirTalkback(): void {
+      const emisor = talkbackRef.current
+      if (!emisor?.abierto()) return
+      emisor.abrir(opcionesTalkback()).then(
+        () => setTalkback((t) => ({ ...t, canales: emisor.canales() })),
+        () => setTalkback((t) => ({ ...t, canales: 0, error: 'No se pudo abrir esa entrada' }))
+      )
+    }
+
     function flushMixer(): void {
       mixerTimer.current = null
       for (const [pistaId, patch] of mixerPendiente.current) emit('mixer:update', { pistaId, patch })
@@ -895,7 +925,8 @@ export function useAppController() {
         }
         setTalkback((t) => ({ ...t, hablando: true, error: null }))
         try {
-          await emisor.abrir(leerPref<string | null>('talkback-entrada', null))
+          await emisor.abrir(opcionesTalkback())
+          setTalkback((t) => ({ ...t, canales: emisor!.canales() }))
         } catch (e) {
           const nombre = (e as { name?: string })?.name
           setTalkback((t) => ({
@@ -916,12 +947,31 @@ export function useAppController() {
       entradasTalkback(): Promise<{ id: string; nombre: string }[]> {
         return EmisorTalkback.entradas().catch(() => [])
       },
-      /** Compu: elegir la entrada del talkback (null = la de Windows); si ya estaba abierta, se cambia. */
+      /** Compu: elegir el microfono o la interface del talkback (null = el de Windows); si ya estaba abierta, se cambia. */
       setEntradaTalkback(id: string | null): void {
         guardarPref('talkback-entrada', id)
-        setTalkback((t) => ({ ...t, entrada: id, error: null }))
-        const emisor = talkbackRef.current
-        if (emisor?.abierto()) void emisor.abrir(id).catch(() => setTalkback((t) => ({ ...t, error: 'No se pudo abrir esa entrada' })))
+        // otro aparato: sus entradas son otras (se empieza por "todas")
+        guardarPref('talkback-canal', null)
+        setTalkback((t) => ({ ...t, entrada: id, canal: null, error: null }))
+        reabrirTalkback()
+      },
+      /**
+       * Compu: que entrada de la interface (0 = la 1…; null = todas juntas).
+       * Una entrada elegida va directa: "Mejorar la voz" se apaga (con el
+       * navegador mejorando la voz, las entradas ya llegan mezcladas).
+       */
+      setCanalTalkback(canal: number | null): void {
+        guardarPref('talkback-canal', canal)
+        if (canal !== null) guardarPref('talkback-procesar', false)
+        setTalkback((t) => ({ ...t, canal, procesar: canal !== null ? false : t.procesar, error: null }))
+        reabrirTalkback()
+      },
+      /** Compu: "Mejorar la voz" (menos ruido, volumen parejo); apagado = la senal tal cual (interface, consola). Prendido, todas las entradas juntas. */
+      setProcesarTalkback(procesar: boolean): void {
+        guardarPref('talkback-procesar', procesar)
+        if (procesar) guardarPref('talkback-canal', null)
+        setTalkback((t) => ({ ...t, procesar, canal: procesar ? null : t.canal, error: null }))
+        reabrirTalkback()
       },
       /** Compu: abrir la entrada sin hablar (para ver el nivel en el vumetro). */
       async probarEntradaTalkback(): Promise<boolean> {
@@ -936,7 +986,8 @@ export function useAppController() {
           talkbackRef.current = emisor
         }
         try {
-          await talkbackRef.current.abrir(leerPref<string | null>('talkback-entrada', null))
+          await talkbackRef.current.abrir(opcionesTalkback())
+          setTalkback((t) => ({ ...t, canales: talkbackRef.current?.canales() ?? 0 }))
           return true
         } catch {
           setTalkback((t) => ({ ...t, error: 'No se pudo abrir el micrófono' }))
