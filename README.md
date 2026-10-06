@@ -976,11 +976,12 @@ Talkback (*se escucha a los 92 ms: WiFi 36 ms + salida del celular 41 ms*;
 si la salida pasa de 120 ms avisa que pueden ser auriculares Bluetooth).
 Medido en la prueba e2e (compu y celulares en la misma máquina, cargada):
 la red ~36 ms (antes ~49) y, abierto un rato, se escucha a los **~92 ms
-hasta el oído, salida del celular incluida** (antes ~90 ms sin contarla, y
-algunos pedazos llegaban tarde); ningún pedazo tarde. La consola no recibe
-nada (−90 dB) y la música del músico sigue igual con el talkback abierto.
-En un WiFi real se suma lo que tarde el router (con la app y el router
-cerca, unos 10 a 40 ms más).
+hasta el oído, salida del celular incluida**, y ningún pedazo tarde
+(antes también ~90 ms, pero la espera no contaba la salida del celular y los
+pedazos que tardaban un poco más se salteaban). La consola no recibe nada
+(−90 dB) y la música del músico sigue igual con el talkback abierto. En un
+WiFi real se suma lo que tarde el router (estimado: 10 a 40 ms más con la
+app y el router cerca).
 
 ### Roles y consola
 
