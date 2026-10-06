@@ -5352,11 +5352,6 @@ input[type='date'] {
   -webkit-user-select: none;
   touch-action: none;
 }
-.talkback-ajustes {
-  padding: 6px 9px;
-  border-left: 1px solid var(--line-2) !important;
-  color: var(--text-3);
-}
 .talkback.hablando {
   border-color: var(--danger);
   background: var(--danger);
@@ -5460,12 +5455,12 @@ input[type='date'] {
   font-weight: 700;
   color: var(--text-2);
 }
-.consola-panel.compu {
+.consola-panel.esta-compu {
   margin-top: 12px;
   border-color: var(--line-2);
   background: var(--panel-2);
 }
-.consola-panel.compu .consola-panel-fila > svg {
+.consola-panel.esta-compu .consola-panel-fila > svg {
   color: var(--text-2);
 }
 
@@ -5589,4 +5584,68 @@ input[type='date'] {
   .ajustes-opciones {
     grid-template-columns: 1fr;
   }
+}
+
+/* ⚙ Ajustes en pestañas: a la izquierda (arriba, si la ventana es angosta) */
+.ajustes {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 20px;
+  min-height: 360px;
+}
+.ajustes-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-right: 1px solid var(--line);
+  padding-right: 14px;
+}
+.ajustes-nav button {
+  justify-content: flex-start;
+  gap: 9px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.ajustes-nav button.activo {
+  background: var(--accent-soft);
+  color: var(--text);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+@media (hover: hover) {
+  .ajustes-nav button.activo:hover:not(:disabled) {
+    background: var(--accent-soft);
+  }
+}
+.ajustes-cuerpo {
+  min-width: 0;
+}
+.ajustes-cuerpo > .consola-panel {
+  margin-top: 14px;
+}
+@media (max-width: 720px) {
+  .ajustes {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .ajustes-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    padding: 0 0 10px;
+  }
+}
+/* arriba, solo mientras suena tambien en la compu (se apaga en ⚙ Ajustes) */
+.chip-sonido-compu {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  gap: 6px;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
 }

@@ -1,10 +1,14 @@
 import { useState } from 'react'
-import { Download, LoaderCircle, Megaphone, Settings, Trash2, Waves } from 'lucide-react'
+import { Download, Laptop, LoaderCircle, Megaphone, Mic, Play, Settings, Trash2, Volume2, VolumeX, Waves } from 'lucide-react'
 import { DURACIONES_FUNDIDO, type InfoVoces, type ModoSalto } from '@shared/types'
 import type { AppController } from '../app/useAppController'
+import { guardarPref, leerPref } from '../app/preferencias'
 import { Modal } from '../ui/Modal'
+import { Toggle } from '../ui/Toggle'
 import { IconoFundido } from '../ui/Fundido'
 import { PadsDelColchon } from './PadsDelColchon'
+import { AjusteCompu } from './Consola'
+import { AjustesTalkback } from './Talkback'
 
 const IDIOMA_VOCES: Record<InfoVoces['idioma'], string> = { es: 'en español', en: 'en inglés', otro: '' }
 
@@ -73,18 +77,66 @@ const MODOS: { modo: ModoSalto; nombre: string; detalle: string }[] = [
   { modo: 'inmediato', nombre: 'Ya', detalle: 'Enseguida (con el margen para que llegue a todos los celulares a la vez).' }
 ]
 
+export type PestanaAjustes = 'vivo' | 'sonidos' | 'compu' | 'talkback'
+
+const PESTANAS: { id: PestanaAjustes; nombre: string; Icono: typeof Play }[] = [
+  { id: 'vivo', nombre: 'En vivo', Icono: Play },
+  { id: 'sonidos', nombre: 'Sonidos', Icono: Megaphone },
+  { id: 'compu', nombre: 'Esta compu', Icono: Laptop },
+  { id: 'talkback', nombre: 'Talkback', Icono: Mic }
+]
+
 /**
- * ⚙ Ajustes (lo que se elige una vez y no hace falta tener a la vista):
- * como salta al elegir una seccion, cuanto tarda en apagarse con Terminar,
- * la voz que avisa los saltos y el pad del colchon.
+ * ⚙ Ajustes: lo que se elige una vez y no hace falta tener a la vista (la
+ * barra de arriba queda para lo que se usa en vivo). En pestañas:
+ * - En vivo: como salta al elegir una seccion y cuanto tarda Terminar.
+ * - Sonidos: la voz que avisa los saltos y el pad del colchon.
+ * - Esta compu: si suena tambien en la compu, y su ajuste fino.
+ * - Talkback: el microfono y cuanto tarda en cada celular.
  */
-export function PanelAjustes({ controller, onCerrar }: { controller: AppController; onCerrar: () => void }) {
+export function PanelAjustes({ controller, inicial, onCerrar }: { controller: AppController; inicial?: PestanaAjustes; onCerrar: () => void }) {
+  const [pestana, setPestanaState] = useState<PestanaAjustes>(() => {
+    const guardada = leerPref<string>('ajustes-pestana', 'vivo')
+    return inicial ?? (PESTANAS.some((x) => x.id === guardada) ? (guardada as PestanaAjustes) : 'vivo')
+  })
+  const setPestana = (id: PestanaAjustes): void => {
+    setPestanaState(id)
+    guardarPref('ajustes-pestana', id)
+  }
+  return (
+    <Modal titulo="Ajustes" icono={<Settings size={20} color="var(--accent)" />} onCerrar={onCerrar} tamano="ancho">
+      <div className="ajustes">
+        <nav className="ajustes-nav" role="tablist" aria-label="Ajustes" aria-orientation="vertical">
+          {PESTANAS.map(({ id, nombre, Icono }) => (
+            <button key={id} role="tab" aria-selected={pestana === id} className={pestana === id ? 'activo' : ''} onClick={() => setPestana(id)}>
+              <Icono size={16} /> {nombre}
+            </button>
+          ))}
+        </nav>
+        <div className="ajustes-cuerpo" role="tabpanel" aria-label={PESTANAS.find((x) => x.id === pestana)!.nombre}>
+          {pestana === 'vivo' ? (
+            <EnVivo controller={controller} />
+          ) : pestana === 'sonidos' ? (
+            <Sonidos controller={controller} />
+          ) : pestana === 'compu' ? (
+            <EstaCompu controller={controller} />
+          ) : (
+            <AjustesTalkback controller={controller} />
+          )}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/** Como salta al elegir una seccion sonando, y cuanto tarda en apagarse con Terminar. */
+function EnVivo({ controller }: { controller: AppController }) {
   const e = controller.estado
   const modo = e?.modoSalto ?? 'seccion'
   const fundidoMs = e?.fundidoMs ?? 4000
   const hayTempo = !!e?.proyectoActivo?.tempo
   return (
-    <Modal titulo="Ajustes" icono={<Settings size={20} color="var(--accent)" />} onCerrar={onCerrar}>
+    <>
       <h3 className="ajustes-titulo">Saltos de sección</h3>
       <p className="ayuda ajustes-ayuda">Al elegir una sección (o ←/→) con la canción sonando, salta:</p>
       <div className="ajustes-opciones" role="radiogroup" aria-label="Cuándo salta al elegir una sección sonando">
@@ -109,16 +161,47 @@ export function PanelAjustes({ controller, onCerrar }: { controller: AppControll
           </button>
         ))}
       </div>
+    </>
+  )
+}
 
+/** Los sonidos de ayuda que pone el programa: la voz que avisa los saltos y el pad del colchon. */
+function Sonidos({ controller }: { controller: AppController }) {
+  const e = controller.estado
+  return (
+    <>
       <h3 className="ajustes-titulo">
         <Megaphone size={15} /> Voz que avisa el salto
       </h3>
+      <p className="ayuda ajustes-ayuda">En el último compás antes de saltar, “Coro… 3, 4” del lado de la guía.</p>
       <VozDelSalto voces={e?.voces ?? null} onImportar={controller.importarVoces} onActivar={controller.activarVoces} onBorrar={controller.borrarVoces} />
 
       <h3 className="ajustes-titulo">
         <Waves size={15} /> Pad del colchón
       </h3>
+      <p className="ayuda ajustes-ayuda">El colchón de ambiente en el tono de la canción: el de AirTracks o los tuyos.</p>
       <PadsDelColchon controller={controller} />
-    </Modal>
+    </>
+  )
+}
+
+/** Si la compu tambien suena (para ensayar o probar), y su ajuste fino contra los celulares. */
+function EstaCompu({ controller }: { controller: AppController }) {
+  const activo = controller.sonidoLocal
+  return (
+    <>
+      <h3 className="ajustes-titulo">
+        <Volume2 size={15} /> Sonido en esta compu
+      </h3>
+      <p className="ayuda ajustes-ayuda">
+        El audio sale de los celulares. Prendelo para escuchar también en esta compu (ensayos, pruebas). Mientras está prendido, arriba se ve{' '}
+        <b>Compu</b> con un parlante, para que no quede sonando sin querer.
+      </p>
+      <Toggle activo={activo} onCambiar={controller.setSonidoLocal} titulo={activo ? 'Apagar el sonido de esta compu' : 'Prender el sonido de esta compu'}>
+        {activo ? <Volume2 size={15} /> : <VolumeX size={15} />}
+        {activo ? 'Suena también en esta compu' : 'Sonido en esta compu'}
+      </Toggle>
+      {activo && <AjusteCompu controller={controller} />}
+    </>
   )
 }

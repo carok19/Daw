@@ -414,8 +414,10 @@ cambian a propósito.
     apretado **Talkback** (arriba) o la tecla **T** y hablá: lo escuchan
     todos en los auriculares (no la consola ni multimedia) y la música les
     baja un poco mientras hablás. En el celular aparece **“Te habla la
-    compu”**, y en *Mi mezcla* cada uno tiene su volumen de talkback. La
-    entrada se elige en el ⚙ del botón: el micrófono de la compu, uno USB,
+    compu”**, y en *Mi mezcla* cada uno tiene su volumen de talkback. **Va
+    por el WiFi del router, no por internet** (anda igual sin internet): la
+    voz sale de la compu y llega directo a los celulares de la misma red. La
+    entrada se elige en **⚙ Ajustes → Talkback**: el micrófono de la compu, uno USB,
     la consola por una placa de sonido, o un canal de **Reaper** con un cable
     virtual (VB-Cable). **¿Y la demora del WiFi?** Cada celular espera lo
     justo para que la voz no se corte y lo mide: en ese mismo panel se ve,
@@ -430,10 +432,10 @@ cambian a propósito.
     celular, tienen que sonar como uno solo. Si la consola suena antes o
     después que los oídos (algunas consolas o placas digitales demoran unos
     ms), el **Ajuste fino** de la consola se corrige desde la compu, sin
-    tocar el celular. Ahí mismo está el ajuste del **sonido de la compu**:
-    si se usa la compu para la consola y se siente corrida (Windows a veces
-    informa mal la demora de su placa de sonido), se corrige de oído con la
-    prueba. En la ventana de Celulares cada uno muestra su desfase en vivo.
+    tocar el celular. Ahí mismo (y en ⚙ Ajustes → Esta compu) está el
+    ajuste del **sonido de la compu**: si se usa la compu para la consola y
+    se siente corrida (Windows a veces informa mal la demora de su placa de
+    sonido), se corrige de oído con la prueba. En la ventana de Celulares cada uno muestra su desfase en vivo.
 16. **AirTracks Video: el video con la letra en el proyector.** Un
     programa aparte para la compu del data (la de Holyrics; corre desde
     **Windows 7**, en compus viejas). Ahí se cargan los videos con la letra
@@ -1155,7 +1157,16 @@ habitual de los programas que se venden sin conexión.
 ## Decisiones de diseño
 
 1. **El audio sale de los celulares.** La compu no suena por defecto
-   (interruptor *Sonido en la compu* para ensayar o probar).
+   (**⚙ Ajustes → Esta compu → Sonido en esta compu**, para ensayar o
+   probar; mientras está prendido, arriba se ve **Compu** con un parlante, y
+   tocándolo se apaga).
+1b. **La barra de arriba es para el vivo; lo que se elige una vez va en ⚙.**
+   Arriba: listas y canciones, celulares, talkback (mantener para hablar),
+   consola, el candado de los celulares, ⚙ y ayuda. En **⚙ Ajustes**, en
+   pestañas: **En vivo** (cómo salta, Terminar con fundido), **Sonidos**
+   (voz del salto, pad del colchón), **Esta compu** (sonido en la compu y
+   su ajuste fino) y **Talkback** (micrófono y demora en cada celular). En
+   el celular, el ⚙ de arriba (el director ahí elige cómo salta).
 2. **Una sola canción suena a la vez, y nada la corta por accidente.**
    Pasar a otra canción o quitar la que suena pide confirmación (corta el
    audio en todos). Importar o agregar canciones al setlist mientras algo

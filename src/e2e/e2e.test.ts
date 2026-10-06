@@ -2135,6 +2135,7 @@ test('colchón con audio real: la banda se va en el compás, el click sigue sin 
   await vistaCompu(compu, 'Secciones')
   assert.equal(await compu.locator('.secciones-herramientas .voz-salto').count(), 0, 'la barra de secciones queda limpia')
   await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+  await compu.getByRole('tab', { name: 'Sonidos' }).click()
   await compu.locator('.voz-salto', { hasText: 'voces del programa en español' }).waitFor()
   assert.equal(await compu.getByRole('button', { name: 'Quitar este pack de voces' }).count(), 0)
   // y el pad del colchon: el de la app, y se pueden importar los propios
@@ -2876,7 +2877,9 @@ test('talkback: la compu habla y la banda la escucha en los oídos (la consola n
     )
     assert.ok(tb && tb.redMs !== null && tb.redMs < 150, `llega rápido por la red de prueba (${JSON.stringify(tb)})`)
     assert.ok(tb!.objetivoMs >= 80 && tb!.objetivoMs <= 200, `se escucha a los ${tb!.objetivoMs} ms`)
-    await compu.locator('.talkback-ajustes').click()
+    // el microfono y las demoras: en ⚙ Ajustes → Talkback (un solo engranaje arriba)
+    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await compu.getByRole('tab', { name: 'Talkback' }).click()
     await compu.getByText(/llega en \d+ ms por el WiFi · se escucha a los \d+ ms/).waitFor()
     await compu.getByText('Consola: no lo recibe').waitFor()
     await compu.keyboard.press('Escape')
@@ -2991,6 +2994,7 @@ test('terminar con fundido: al terminar la sección la canción se apaga en todo
 
   await t.test('desde la compu: ⚙ Ajustes (salta "Ya") y la tecla F; a mitad, "Seguir" en el celular trae la música de vuelta', async () => {
     await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await compu.getByRole('tab', { name: 'En vivo' }).click()
     await compu.getByRole('radio', { name: /^Ya/ }).click()
     await compu.locator('.ajustes-opcion.activo', { hasText: /^Ya/ }).waitFor()
     await captura(compu, 'ajustes-compu')
@@ -3023,6 +3027,32 @@ test('terminar con fundido: al terminar la sección la canción se apaga en todo
     await esperar(3000)
     assert.equal(server.state.getActiveTab()!.playback.estado, 'playing', 'no paró')
     await compu.keyboard.press('Enter')
+  })
+
+  await t.test('"Sonido en esta compu" está en ⚙ (no en la barra): prendido se ve "Compu" arriba, y de ahí se apaga', async () => {
+    assert.equal(await compu.getByRole('switch', { name: /Sonido en la compu/ }).count(), 0, 'la barra de arriba no tiene el interruptor')
+    assert.equal(await compu.locator('.chip-sonido-compu').count(), 0, 'apagado no se ve nada')
+    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await compu.getByRole('tab', { name: 'Esta compu' }).click()
+    await compu.getByRole('switch', { name: /Sonido en esta compu/ }).click()
+    await compu.getByRole('switch', { name: /Suena también en esta compu/ }).waitFor()
+    await compu.getByText('Ajuste fino:').waitFor()
+    await captura(compu, 'ajustes-esta-compu')
+    await compu.keyboard.press('Escape')
+    await compu.locator('.modal').waitFor({ state: 'detached' })
+    // prendido: el aviso arriba, y la compu baja el audio
+    await compu.locator('.chip-sonido-compu').waitFor()
+    const hasta = Date.now() + 10000
+    while (!server.devices.listar().some((d) => d.origen === 'compu' && d.conectado && d.audio)) {
+      assert.ok(Date.now() < hasta, 'la compu no prendió su audio')
+      await esperar(100)
+    }
+    // tocandolo se abre ⚙ en "Esta compu" y se apaga
+    await compu.locator('.chip-sonido-compu').click()
+    assert.equal(await compu.getByRole('tab', { name: 'Esta compu' }).getAttribute('aria-selected'), 'true')
+    await compu.getByRole('switch', { name: /Suena también en esta compu/ }).click()
+    await compu.keyboard.press('Escape')
+    await compu.locator('.chip-sonido-compu').waitFor({ state: 'detached' })
     assert.deepEqual(errores, [])
   })
 })

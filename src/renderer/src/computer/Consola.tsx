@@ -237,16 +237,16 @@ export function ProbarSync({ controller }: { controller: AppController }) {
  * y la compu suena corrida contra los celulares. Se corrige de oido con
  * "Probar el sync".
  */
-function AjusteCompu({ controller }: { controller: AppController }) {
+export function AjusteCompu({ controller }: { controller: AppController }) {
   const ms = controller.ajusteManualMs
   const cambiar = (delta: number): void => controller.setAjusteManualMs(ms + delta)
   return (
-    <section className="consola-panel compu">
+    <section className="consola-panel esta-compu">
       <div className="consola-panel-fila">
         <Laptop size={22} />
         <div className="consola-panel-nombre">
           <b>El sonido de esta compu</b>
-          <span className="texto-gris">{controller.sonidoLocal ? 'Sonando en la compu' : 'Apagado (“Sonido en la compu”, arriba)'}</span>
+          <span className="texto-gris">{controller.sonidoLocal ? 'Sonando en la compu' : 'Apagado (se prende en ⚙ Ajustes → Esta compu)'}</span>
         </div>
       </div>
       <div className="consola-ajuste">

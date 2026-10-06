@@ -10,10 +10,10 @@ import { TopBar } from './TopBar'
 import { Transport } from './Transport'
 import { Mixer } from './Mixer'
 import { MarkersPanel } from './MarkersPanel'
-import { PanelAjustes } from './Ajustes'
+import { PanelAjustes, type PestanaAjustes } from './Ajustes'
 import { ConnectionPanel } from './ConnectionPanel'
 import { PanelConsola } from './Consola'
-import { BotonTalkback, PanelTalkback } from './Talkback'
+import { BotonTalkback } from './Talkback'
 import { LicenciaPanel } from './LicenciaPanel'
 import { ProjectsScreen } from './ProjectsScreen'
 import { ShortcutsModal } from './ShortcutsModal'
@@ -21,7 +21,7 @@ import { ListaEditor, ListasScreen } from './Listas'
 import { BannerColchon, PantallaColchon } from './Colchon'
 import { estadoTerminar } from '../ui/Fundido'
 
-type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' } | { tipo: 'consola' } | { tipo: 'talkback' } | { tipo: 'ajustes' }
+type Ventana = null | { tipo: 'canciones' } | { tipo: 'conexion' } | { tipo: 'atajos' } | { tipo: 'licencia' } | { tipo: 'consola' } | { tipo: 'ajustes'; pestana?: PestanaAjustes }
 /** escenario = la cancion (mixer, secciones); listas = las listas por dia; editar = armar una lista */
 type Vista = { tipo: 'escenario' } | { tipo: 'listas' } | { tipo: 'editar'; listaId: string }
 /** En el escenario: el recorrido de la cancion con sus secciones, o la mezcla (el mixer a pantalla completa). */
@@ -214,11 +214,11 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         dispositivos={controller.dispositivos}
         onDispositivos={() => setVentana({ tipo: 'conexion' })}
         onConsola={() => setVentana({ tipo: 'consola' })}
-        talkback={<BotonTalkback controller={controller} onAjustes={() => setVentana({ tipo: 'talkback' })} />}
+        talkback={<BotonTalkback controller={controller} />}
         locked={estado?.locked ?? false}
         onLocked={controller.setLocked}
         sonidoLocal={controller.sonidoLocal}
-        onSonidoLocal={controller.setSonidoLocal}
+        onSonidoLocal={() => setVentana({ tipo: 'ajustes', pestana: 'compu' })}
         onAyuda={() => setVentana({ tipo: 'atajos' })}
         onAjustes={() => setVentana({ tipo: 'ajustes' })}
         licencia={controller.licencia}
@@ -371,9 +371,8 @@ export function ComputerApp({ controller }: { controller: AppController }) {
       )}
       {ventana?.tipo === 'licencia' && <LicenciaPanel controller={controller} onCerrar={() => setVentana(null)} />}
       {ventana?.tipo === 'consola' && <PanelConsola controller={controller} onCerrar={() => setVentana(null)} />}
-      {ventana?.tipo === 'talkback' && <PanelTalkback controller={controller} onCerrar={() => setVentana(null)} />}
       {ventana?.tipo === 'atajos' && <ShortcutsModal onCerrar={() => setVentana(null)} />}
-      {ventana?.tipo === 'ajustes' && <PanelAjustes controller={controller} onCerrar={() => setVentana(null)} />}
+      {ventana?.tipo === 'ajustes' && <PanelAjustes controller={controller} inicial={ventana.pestana} onCerrar={() => setVentana(null)} />}
 
       <Avisos avisos={controller.avisos} onCerrar={controller.cerrarAviso} />
     </div>

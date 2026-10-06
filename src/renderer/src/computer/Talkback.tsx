@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mic, MicOff, Settings2 } from 'lucide-react'
+import { Mic, MicOff } from 'lucide-react'
 import type { AppController } from '../app/useAppController'
-import { Modal } from '../ui/Modal'
 
 /** ¿El foco esta en algo donde se escribe? (ahi la T es una letra, no el talkback) */
 function escribiendo(): boolean {
@@ -14,7 +13,7 @@ function escribiendo(): boolean {
  * banda. Lo escuchan los oidos de todos (no la consola ni multimedia) y la
  * musica les baja un poco mientras se habla.
  */
-export function BotonTalkback({ controller, onAjustes }: { controller: AppController; onAjustes: () => void }) {
+export function BotonTalkback({ controller }: { controller: AppController }) {
   const { hablando, error } = controller.talkback
   const hablar = controller.hablarTalkback
   const apretado = useRef(false)
@@ -61,15 +60,12 @@ export function BotonTalkback({ controller, onAjustes }: { controller: AppContro
         onPointerUp={terminar}
         onPointerCancel={terminar}
         onContextMenu={(e) => e.preventDefault()}
-        title={error ?? 'Talkback: mantené apretado (o la tecla T) para hablarle a la banda en los oídos'}
+        title={error ? `${error} (el micrófono se elige en ⚙ Ajustes → Talkback)` : 'Talkback: mantené apretado (o la tecla T) para hablarle a la banda en los oídos'}
         aria-label="Talkback: mantené apretado para hablarle a la banda"
         aria-pressed={hablando}
       >
         {error ? <MicOff size={15} /> : <Mic size={15} />}
         <span className="texto-largo">{hablando ? 'Hablando…' : 'Talkback'}</span>
-      </button>
-      <button className="talkback-ajustes" onClick={onAjustes} title="Talkback: micrófono y demora en cada celular" aria-label="Ajustes del talkback">
-        <Settings2 size={14} />
       </button>
     </span>
   )
@@ -98,8 +94,12 @@ function NivelEntrada({ leer }: { leer: () => number }) {
   )
 }
 
-/** El microfono del talkback y cuanto tarda en llegar a cada celular (medido por el propio celular). */
-export function PanelTalkback({ controller, onCerrar }: { controller: AppController; onCerrar: () => void }) {
+/**
+ * ⚙ Ajustes → Talkback: el microfono y cuanto tarda en llegar a cada celular
+ * (medido por el propio celular). Al abrirse prende la entrada (sin hablar)
+ * para ver el nivel.
+ */
+export function AjustesTalkback({ controller }: { controller: AppController }) {
   const [entradas, setEntradas] = useState<{ id: string; nombre: string }[]>([])
   const pedirEntradas = controller.entradasTalkback
   const probar = controller.probarEntradaTalkback
@@ -109,10 +109,10 @@ export function PanelTalkback({ controller, onCerrar }: { controller: AppControl
   }, [probar, pedirEntradas])
   const celulares = controller.dispositivos.filter((d) => d.origen === 'celular' && d.conectado)
   return (
-    <Modal titulo="Talkback" icono={<Mic size={20} color="var(--accent)" />} onCerrar={onCerrar}>
+    <>
       <p className="ayuda" style={{ marginTop: 0 }}>
         Mantené apretado <b>Talkback</b> (arriba) o la tecla <b>T</b> y hablale a la banda: te escuchan en los oídos, y la música les baja un poco
-        mientras hablás. No va a la consola ni a multimedia.
+        mientras hablás. No va a la consola ni a multimedia. Viaja por el WiFi del router, no por internet.
       </p>
       <label className="talkback-campo">
         Entrada
@@ -131,7 +131,7 @@ export function PanelTalkback({ controller, onCerrar }: { controller: AppControl
         Sirve el micrófono de la compu, uno USB, o la consola por una placa de sonido. Desde Reaper: mandá ese canal a un cable virtual (por
         ejemplo VB-Cable) y elegilo acá.
       </p>
-      <h3 className="consola-panel-titulo">Cuánto tarda en cada celular</h3>
+      <h3 className="ajustes-titulo">Cuánto tarda en cada celular</h3>
       <ul className="lista talkback-lista">
         {celulares.length === 0 && <li className="vacio">No hay celulares conectados.</li>}
         {celulares.map((d) => {
@@ -159,6 +159,6 @@ export function PanelTalkback({ controller, onCerrar }: { controller: AppControl
         Cada celular espera lo justo para que la voz no se corte: si el WiFi se pone lento espera un poco más, y cuando anda bien se acerca solo
         (entre 80 y 600 ms).
       </p>
-    </Modal>
+    </>
   )
 }

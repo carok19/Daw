@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { HelpCircle, KeyRound, ListMusic, Lock, LockOpen, Plus, Settings, ShieldAlert, Smartphone, Volume2, VolumeX, X, AudioLines } from 'lucide-react'
+import { HelpCircle, KeyRound, ListMusic, Lock, LockOpen, Plus, Settings, ShieldAlert, Smartphone, Volume2, X, AudioLines } from 'lucide-react'
 import type { DispositivoInfo, EstadoLicencia, ListaActiva, TabResumen } from '@shared/types'
 import { Toggle } from '../ui/Toggle'
 import { ChipConsola } from './Consola'
@@ -20,8 +20,10 @@ interface Props {
   talkback: React.ReactNode
   locked: boolean
   onLocked: (v: boolean) => void
+  /** suena tambien en esta compu (se prende en ⚙ Ajustes; prendido, se ve "Compu" arriba) */
   sonidoLocal: boolean
-  onSonidoLocal: (v: boolean) => void
+  /** abrir ⚙ Ajustes en "Esta compu" */
+  onSonidoLocal: () => void
   onAyuda: () => void
   /** ⚙ Ajustes: saltos, fundido, voz del salto, pads */
   onAjustes: () => void
@@ -193,15 +195,18 @@ export function TopBar(p: Props) {
           {p.locked ? <Lock size={15} /> : <LockOpen size={15} />}
           <span className="texto-largo">{p.locked ? 'Celulares bloqueados' : 'Celulares con control'}</span>
         </Toggle>
-        <Toggle
-          activo={p.sonidoLocal}
-          onCambiar={p.onSonidoLocal}
-          titulo={p.sonidoLocal ? 'Sonido en la compu: activado' : 'El audio sale de los celulares. Activá esto para escuchar también en esta compu (ensayo, pruebas).'}
-        >
-          {p.sonidoLocal ? <Volume2 size={15} /> : <VolumeX size={15} />}
-          <span className="texto-largo">Sonido en la compu</span>
-        </Toggle>
-        <button className="btn-fantasma btn-icono" onClick={p.onAjustes} title="Ajustes: cómo salta, Terminar con fundido, voz del salto y pad del colchón" aria-label="Ajustes">
+        {p.sonidoLocal && (
+          <button
+            className="chip-sonido-compu"
+            onClick={p.onSonidoLocal}
+            title="Suena también en esta compu (para ensayar o probar). Tocá para apagarlo o ajustarlo."
+            aria-label="Sonido en esta compu: prendido"
+          >
+            <Volume2 size={15} />
+            <span className="texto-largo">Compu</span>
+          </button>
+        )}
+        <button className="btn-fantasma btn-icono" onClick={p.onAjustes} title="Ajustes: cómo salta y Terminar, voz del salto y pad, sonido en esta compu, talkback" aria-label="Ajustes">
           <Settings size={19} />
         </button>
         <button className="btn-fantasma btn-icono" onClick={p.onAyuda} title="Atajos de teclado (?)" aria-label="Atajos de teclado">
