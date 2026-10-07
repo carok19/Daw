@@ -1029,12 +1029,14 @@ que se abre de una misma interface el procesamiento del primero que la
 abrió: si el talkback la usa con *Mejorar la voz*, la banda saldría
 procesada (en la prueba, a 0,02 en vez de 0,035); el panel lo avisa, lo
 apaga de un toque y, al cambiar el talkback, la banda se reabre. Medido en
-la prueba e2e: el músico la escucha (la consola no: 0), a los **~94 ms**
-(red ~35 ms + salida ~45 ms), y apagada se va el fader y no llega nada. (En
-la máquina donde se escribió esto, un proxy no deja que el navegador abra
-WebSockets a la IP de la red: ahí socket.io queda en *polling* y el audio
-en vivo llega por socket.io, así que la prueba solo verifica el WebSocket de
-audio donde la red lo deja, como en GitHub Actions.)
+la prueba e2e de GitHub Actions (celulares por la IP de la red, audio por el
+WebSocket): el músico la escucha (la consola no: 0), a los **~100 ms** (red
+~27 ms + salida ~40 ms; el talkback en la misma prueba, a los ~88 ms), sin
+pedazos tarde, y apagada se va el fader y no llega nada. (En la máquina
+donde se escribió esto, un proxy no deja que el navegador abra WebSockets a
+la IP de la red: ahí socket.io queda en *polling* y el audio en vivo llega
+por socket.io, así que la prueba solo verifica el WebSocket de audio donde
+la red lo deja.)
 
 ### Roles y consola
 

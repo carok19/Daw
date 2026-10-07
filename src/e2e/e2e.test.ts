@@ -3153,7 +3153,7 @@ test('terminar con fundido: al terminar la sección la canción se apaga en todo
 
   await t.test('desde la compu: ⚙ Ajustes (salta "Ya") y la tecla F; a mitad, "Seguir" en el celular trae la música de vuelta', async () => {
     await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
-    await compu.getByRole('tab', { name: 'En vivo' }).click()
+    await compu.getByRole('tab', { name: 'En vivo', exact: true }).click()
     await compu.getByRole('radio', { name: /^Ya/ }).click()
     await compu.locator('.ajustes-opcion.activo', { hasText: /^Ya/ }).waitFor()
     await captura(compu, 'ajustes-compu')
