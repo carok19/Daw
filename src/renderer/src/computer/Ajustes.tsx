@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AudioLines, CircleCheck, Laptop, LoaderCircle, Megaphone, Mic, Play, Settings, Trash2, Volume2, VolumeX, Waves } from 'lucide-react'
+import { AudioLines, CircleCheck, Laptop, LoaderCircle, Megaphone, Play, Settings, Trash2, Volume2, VolumeX, Waves } from 'lucide-react'
 import { DURACIONES_FUNDIDO, type InfoVoces, type ModoSalto } from '@shared/types'
 import type { AppController } from '../app/useAppController'
 import { guardarPref, leerPref } from '../app/preferencias'
@@ -8,8 +8,7 @@ import { Toggle } from '../ui/Toggle'
 import { IconoFundido } from '../ui/Fundido'
 import { PadsDelColchon } from './PadsDelColchon'
 import { AjusteCompu } from './Consola'
-import { AjustesTalkback } from './Talkback'
-import { AjustesBanda } from './BandaEnVivo'
+import { AjustesVivo } from './ConsolaEnVivo'
 
 const IDIOMA_VOCES: Record<InfoVoces['idioma'], string> = { es: 'en español', en: 'en inglés', otro: '' }
 
@@ -80,24 +79,23 @@ const MODOS: { modo: ModoSalto; nombre: string; detalle: string }[] = [
   { modo: 'inmediato', nombre: 'Ya', detalle: 'Enseguida (con el margen para que llegue a todos los celulares a la vez).' }
 ]
 
-export type PestanaAjustes = 'vivo' | 'sonidos' | 'compu' | 'talkback' | 'banda'
+export type PestanaAjustes = 'vivo' | 'sonidos' | 'compu' | 'consola'
 
 const PESTANAS: { id: PestanaAjustes; nombre: string; Icono: typeof Play }[] = [
-  { id: 'vivo', nombre: 'En vivo', Icono: Play },
+  { id: 'vivo', nombre: 'Saltos y final', Icono: Play },
   { id: 'sonidos', nombre: 'Sonidos', Icono: Megaphone },
   { id: 'compu', nombre: 'Esta compu', Icono: Laptop },
-  { id: 'talkback', nombre: 'Talkback', Icono: Mic },
-  { id: 'banda', nombre: 'Banda en vivo', Icono: AudioLines }
+  { id: 'consola', nombre: 'Consola en vivo', Icono: AudioLines }
 ]
 
 /**
  * ⚙ Ajustes: lo que se elige una vez y no hace falta tener a la vista (la
  * barra de arriba queda para lo que se usa en vivo). En pestañas:
- * - En vivo: como salta al elegir una seccion y cuanto tarda Terminar.
+ * - Saltos y final: como salta al elegir una seccion y cuanto tarda Terminar.
  * - Sonidos: la voz que avisa los saltos y el pad del colchon.
  * - Esta compu: si suena tambien en la compu, y su ajuste fino.
- * - Talkback: el microfono y cuanto tarda en cada celular.
- * - Banda en vivo: lo que sale de la consola a los oidos (de referencia).
+ * - Consola en vivo: de donde entra la consola (instrumentos, voces y
+ *   talkback) y cuanto tarda en cada celular.
  */
 export function PanelAjustes({ controller, inicial, onCerrar }: { controller: AppController; inicial?: PestanaAjustes; onCerrar: () => void }) {
   const [pestana, setPestanaState] = useState<PestanaAjustes>(() => {
@@ -125,10 +123,8 @@ export function PanelAjustes({ controller, inicial, onCerrar }: { controller: Ap
             <Sonidos controller={controller} />
           ) : pestana === 'compu' ? (
             <EstaCompu controller={controller} />
-          ) : pestana === 'talkback' ? (
-            <AjustesTalkback controller={controller} />
           ) : (
-            <AjustesBanda controller={controller} />
+            <AjustesVivo controller={controller} />
           )}
         </div>
       </div>

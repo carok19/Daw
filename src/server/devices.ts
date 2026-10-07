@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { ROLES, type DiagnosticoDispositivo, type DispositivoInfo, type EstadoBuffer, type MedicionTalkback, type OrigenCliente, type RolDispositivo, type SalidaSonido, type SyncReportPayload } from '../shared/types'
+import { ROLES, type DiagnosticoDispositivo, type DispositivoInfo, type EstadoBuffer, type MedicionVivo, type OrigenCliente, type RolDispositivo, type SalidaSonido, type SyncReportPayload } from '../shared/types'
 
 interface DispositivoInterno extends DispositivoInfo {
   sockets: Set<string>
@@ -35,12 +35,11 @@ export function limpiarDiagnostico(d: unknown): DiagnosticoDispositivo | null {
     salidaMs: Math.round(num(x.salidaMs, 0, 10000) ?? 0),
     resyncs: Math.round(num(x.resyncs) ?? 0),
     plataforma: typeof x.plataforma === 'string' ? x.plataforma.slice(0, 40) : '',
-    talkback: limpiarTalkback(x.talkback),
-    banda: limpiarTalkback(x.banda)
+    vivo: limpiarVivo(x.vivo)
   }
 }
 
-function limpiarTalkback(t: unknown): MedicionTalkback | null {
+function limpiarVivo(t: unknown): MedicionVivo | null {
   if (!t || typeof t !== 'object') return null
   const x = t as Record<string, unknown>
   const objetivo = num(x.objetivoMs, 0, 5000)

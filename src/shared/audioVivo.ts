@@ -1,6 +1,7 @@
 /**
- * Audio en vivo de la compu a los oidos de la banda (el talkback y la banda
- * en vivo) por un WebSocket propio, aparte de las ordenes: cada pedazo viaja
+ * "Consola en vivo": lo que sale de la consola (instrumentos, voces y el
+ * microfono del talkback, todo en una mezcla) de la compu a los oidos de la
+ * banda, por un WebSocket propio, aparte de las ordenes: cada pedazo viaja
  * en una sola trama (por socket.io irian dos: el aviso y los datos) y no
  * espera detras de otros mensajes.
  *
@@ -13,11 +14,11 @@
 export const RUTA_AUDIO_VIVO = '/audio-vivo'
 export const CABECERA_AUDIO_VIVO = 20
 
-/** que se escucha: la voz de la compu (talkback) o la banda en vivo (lo que sale de la consola) */
-export type CanalVivo = 'talkback' | 'banda'
-const CODIGOS: Record<CanalVivo, number> = { talkback: 1, banda: 2 }
+/** que se escucha (por ahora un solo canal: la consola; la trama ya dice cual, por si hay otros) */
+export type CanalVivo = 'consola'
+const CODIGOS: Record<CanalVivo, number> = { consola: 2 }
 /** el nombre de su fader en "Mi mezcla" (y la clave de su ajuste personal) */
-export const FADER_VIVO: Record<CanalVivo, string> = { talkback: 'Talkback', banda: 'Banda en vivo' }
+export const FADER_VIVO = 'Consola en vivo'
 
 /** Un pedazo de audio en vivo. */
 export interface PedazoVivo {
@@ -26,7 +27,7 @@ export interface PedazoVivo {
   n: number
   /** hora del servidor en que se capto la primera muestra */
   t: number
-  /** muestras por segundo (talkback: 16000; banda: la de la compu, 48000 o 44100) */
+  /** muestras por segundo (la de la compu: 48000 o 44100) */
   sr: number
   /** muestras Int16, una sola via */
   pcm: ArrayBuffer
@@ -49,7 +50,7 @@ export function leerTrama(datos: ArrayBuffer): PedazoVivo | null {
   if (datos.byteLength < CABECERA_AUDIO_VIVO + 2 || (datos.byteLength - CABECERA_AUDIO_VIVO) % 2 !== 0) return null
   const v = new DataView(datos)
   const codigo = v.getUint8(0)
-  const canal = codigo === CODIGOS.talkback ? 'talkback' : codigo === CODIGOS.banda ? 'banda' : null
+  const canal = codigo === CODIGOS.consola ? 'consola' : null
   const sr = v.getUint32(16, true)
   const t = v.getFloat64(8, true)
   if (!canal || sr < 8000 || sr > 96000 || !Number.isFinite(t)) return null

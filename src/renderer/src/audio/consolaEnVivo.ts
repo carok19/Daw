@@ -1,79 +1,26 @@
+import type { MedicionVivo } from '@shared/types'
+
 /**
- * Talkback: la compu le habla a los oidos de la banda (nunca a la consola ni
- * a multimedia), como un fader mas de la mezcla: se prende y queda abierto
- * (entrada constante) hasta que alguien lo apaga. La compu toma el microfono
- * (o una interface, la salida de Reaper con un cable virtual, la consola por
- * una placa de sonido), lo pasa a 16 kHz mono y lo manda en pedacitos de 10 ms
- * por el WiFi, cada uno con la hora (del servidor) en que se capto. Viaja
- * siempre, tambien el silencio: asi el WiFi del celular no se "duerme" (al
- * despertar, los primeros pedazos llegan tarde y la espera sube). Cada celular lo
- * reproduce `objetivoMs` despues de esa hora: asi el WiFi puede demorar un
- * pedazo y otro no, y igual se escucha parejo. El objetivo se ajusta solo: si
- * algo llega tarde sube, si todo llega holgado baja (de 30 a 600 ms).
+ * "Consola en vivo": lo que sale de la consola (instrumentos, voces y el
+ * microfono del talkback, todo en una mezcla) a los oidos de la banda, como
+ * un fader mas de "Mi mezcla". Se prende en la compu y queda prendido hasta
+ * que alguien lo apague. La compu toma la entrada elegida (una interface o
+ * la placa de sonido, y cual de sus entradas) y la manda tal cual en pedazos
+ * de 10 ms por el WiFi, cada uno con la hora (del servidor) en que se capto;
+ * tambien el silencio, asi el WiFi del celular no se "duerme". Cada celular
+ * lo reproduce `objetivoMs` despues de esa hora: asi el WiFi puede demorar
+ * un pedazo y otro no, y igual se escucha parejo. El objetivo se ajusta solo
+ * (de 30 a 600 ms).
  */
 
-/** Frecuencia del audio del talkback (voz: alcanza y sobra). */
-export const SR_TALKBACK = 16000
-/** Muestras por pedazo (10 ms: lo que se espera a juntar antes de mandar). */
-export const MUESTRAS_PEDAZO = 160
-
-/** Captura: junta lo que entra, lo filtra y lo baja a 16 kHz; manda pedazos de 10 ms con su hora (del AudioContext). */
+/**
+ * Captura (AudioWorklet): lo que sale de la consola tal cual, sin filtrar ni
+ * bajar la frecuencia (la de la compu, casi siempre 48 kHz, la misma que los
+ * celulares: ni la compu ni el celular la tienen que cambiar); manda pedazos
+ * de 10 ms con su hora (del AudioContext).
+ */
 const CODIGO_CAPTURA = `
-registerProcessor('captura-talkback', class extends AudioWorkletProcessor {
-  constructor() {
-    super()
-    this.paso = sampleRate / ${SR_TALKBACK}
-    this.fase = 0
-    this.pedazo = new Float32Array(${MUESTRAS_PEDAZO})
-    this.n = 0
-    this.t0 = 0
-    // filtro pasabajos de 2 polos (corta arriba de ~7 kHz antes de bajar a 16 kHz)
-    const fc = 7000 / sampleRate
-    const k = Math.tan(Math.PI * fc)
-    const q = Math.SQRT1_2
-    const norma = 1 / (1 + k / q + k * k)
-    this.b0 = k * k * norma
-    this.b1 = 2 * this.b0
-    this.b2 = this.b0
-    this.a1 = 2 * (k * k - 1) * norma
-    this.a2 = (1 - k / q + k * k) * norma
-    this.x1 = this.x2 = this.y1 = this.y2 = 0
-    this.pico = 0
-  }
-  process(inputs) {
-    const entrada = inputs[0] && inputs[0][0]
-    if (!entrada) return true
-    for (let i = 0; i < entrada.length; i++) {
-      const x = entrada[i]
-      const y = this.b0 * x + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2
-      this.x2 = this.x1; this.x1 = x; this.y2 = this.y1; this.y1 = y
-      this.fase += 1
-      if (this.fase >= this.paso) {
-        this.fase -= this.paso
-        if (this.n === 0) this.t0 = currentTime + i / sampleRate
-        this.pedazo[this.n++] = y
-        this.pico = Math.max(this.pico, Math.abs(y))
-        if (this.n === ${MUESTRAS_PEDAZO}) {
-          this.port.postMessage({ t: this.t0, muestras: this.pedazo, pico: this.pico }, [this.pedazo.buffer])
-          this.pedazo = new Float32Array(${MUESTRAS_PEDAZO})
-          this.n = 0
-          this.pico = 0
-        }
-      }
-    }
-    return true
-  }
-})
-`
-
-/**
- * Captura de la banda en vivo (lo que sale de la consola): tal cual, sin
- * filtrar ni bajar la frecuencia (la de la compu, casi siempre 48 kHz, la
- * misma que los celulares: ni la compu ni el celular la tienen que cambiar);
- * manda pedazos de 10 ms con su hora (del AudioContext).
- */
-const CODIGO_CAPTURA_BANDA = `
-registerProcessor('captura-banda', class extends AudioWorkletProcessor {
+registerProcessor('captura-vivo', class extends AudioWorkletProcessor {
   constructor() {
     super()
     this.largo = Math.round(sampleRate / 100)
@@ -103,32 +50,26 @@ registerProcessor('captura-banda', class extends AudioWorkletProcessor {
 })
 `
 
-const cargados = new WeakMap<BaseAudioContext, Set<string>>()
+const cargados = new WeakSet<BaseAudioContext>()
 
 /**
- * Carga (una vez por AudioContext) el procesador que toma la voz en la compu
- * (la compu abre su pagina en localhost: ahi el navegador si habilita los
- * AudioWorklet; los celulares, por http:// en la red local, no: ellos
- * reproducen sin worklet, ver StreamingEngine.recibirTalkback).
+ * Carga (una vez por AudioContext) el procesador que toma la consola en la
+ * compu (la compu abre su pagina en localhost: ahi el navegador si habilita
+ * los AudioWorklet; los celulares, por http:// en la red local, no: ellos
+ * reproducen sin worklet, ver StreamingEngine.recibirVivo).
  */
-export async function cargarProcesador(ctx: BaseAudioContext, cual: 'captura' | 'banda'): Promise<void> {
-  let hechos = cargados.get(ctx)
-  if (!hechos) {
-    hechos = new Set()
-    cargados.set(ctx, hechos)
-  }
-  if (hechos.has(cual)) return
-  const codigo = cual === 'banda' ? CODIGO_CAPTURA_BANDA : CODIGO_CAPTURA
-  const url = URL.createObjectURL(new Blob([codigo], { type: 'application/javascript' }))
+export async function cargarProcesador(ctx: BaseAudioContext): Promise<void> {
+  if (cargados.has(ctx)) return
+  const url = URL.createObjectURL(new Blob([CODIGO_CAPTURA], { type: 'application/javascript' }))
   try {
     await ctx.audioWorklet.addModule(url)
-    hechos.add(cual)
+    cargados.add(ctx)
   } finally {
     URL.revokeObjectURL(url)
   }
 }
 
-/** Float32 (-1..1) a Int16 (lo que viaja por el WiFi: el talkback, 320 bytes por pedazo, 256 kbps; la banda a 48 kHz, 960 bytes, 768 kbps). */
+/** Float32 (-1..1) a Int16 (lo que viaja por el WiFi: a 48 kHz, 960 bytes por pedazo, 768 kbps por celular). */
 export function aInt16(x: Float32Array): Int16Array {
   const r = new Int16Array(x.length)
   for (let i = 0; i < x.length; i++) r[i] = Math.max(-32768, Math.min(32767, Math.round(x[i] * 32767)))
@@ -141,23 +82,21 @@ export function deInt16(x: Int16Array): Float32Array {
   return r
 }
 
-/** Lo que manda la compu por cada pedazo (talkback o banda en vivo). */
-export interface PedazoTalkback {
+/** Lo que manda la compu por cada pedazo. */
+export interface PedazoCaptura {
   /** numero de pedazo (para ver si se pierde alguno) */
   n: number
   /** hora del servidor en que se capto la primera muestra */
   t: number
-  /** muestras por segundo (sin decir: 16000, el talkback) */
-  sr?: number
-  /** 10 ms de muestras Int16, una sola via (talkback: 160, a 16 kHz) */
+  /** muestras por segundo (las de la compu) */
+  sr: number
+  /** 10 ms de muestras Int16, una sola via */
   pcm: ArrayBuffer
 }
 
-import type { MedicionTalkback } from '@shared/types'
-
 /**
- * La espera del celular, que se ajusta sola para que la voz llegue lo antes
- * posible sin cortarse. Cada pedazo tiene que sonar `objetivoMs` despues de
+ * La espera del celular, que se ajusta sola para que la consola llegue lo
+ * antes posible sin cortarse. Cada pedazo tiene que sonar `objetivoMs` despues de
  * captado; para eso hace falta lo que tardo en llegar por el WiFi mas lo que
  * tarda el celular en sacar el audio (su salida). La espera va a lo que
  * necesitan casi todos los pedazos de los ultimos 2 s (el 98 %) mas 15 ms: si
@@ -165,7 +104,7 @@ import type { MedicionTalkback } from '@shared/types'
  * un tropezon suelto no (se pierden esos 10 ms); con todo a tiempo, cada
  * segundo se acerca la mitad de lo que sobra.
  */
-export class EsperaTalkback {
+export class EsperaVivo {
   objetivoMs = 120
   /** lo que necesito cada pedazo (red + salida) en los ultimos 2 s */
   private recientes: { t: number; ms: number }[] = []
@@ -197,7 +136,7 @@ export class EsperaTalkback {
     if (this.demoras.length > 500) this.demoras.shift()
     this.recientes.push({ t: ahora, ms: necesita })
     while (this.recientes.length && ahora - this.recientes[0].t > 2000) this.recientes.shift()
-    const tarde = necesita > this.objetivoMs - EsperaTalkback.HOLGURA_MS
+    const tarde = necesita > this.objetivoMs - EsperaVivo.HOLGURA_MS
     this.tardes.push(tarde)
     if (this.tardes.length > 500) this.tardes.shift()
     if (tarde) {
@@ -206,7 +145,7 @@ export class EsperaTalkback {
       while (this.tardesRecientes.length && ahora - this.tardesRecientes[0] > 1000) this.tardesRecientes.shift()
       // 3 en un segundo: el WiFi viene lento. Uno suelto no la sube (esperar de mas siempre por algo que pasa una vez no conviene)
       if (this.tardesRecientes.length >= 3) {
-        const meta = this.percentil(this.recientes.map((r) => r.ms), 0.98) + EsperaTalkback.MARGEN_MS
+        const meta = this.percentil(this.recientes.map((r) => r.ms), 0.98) + EsperaVivo.MARGEN_MS
         // de a lo sumo 60 ms por vez: si fue un tiron (el celular trabado un momento), no queda muy atrasado
         this.objetivoMs = this.acotar(Math.min(this.objetivoMs + 60, Math.max(this.objetivoMs + 10, meta)))
         this.tardesRecientes = []
@@ -215,7 +154,7 @@ export class EsperaTalkback {
     }
     // 1,5 s con todo a tiempo: cada segundo se acerca a lo justo (la mitad de lo que sobra)
     if (ahora - this.ultimoTarde > 1500 && ahora - this.ultimaBaja > 1000 && this.recientes.length >= 50) {
-      const meta = this.acotar(this.percentil(this.recientes.map((r) => r.ms), 0.98) + EsperaTalkback.MARGEN_MS)
+      const meta = this.acotar(this.percentil(this.recientes.map((r) => r.ms), 0.98) + EsperaVivo.MARGEN_MS)
       if (meta < this.objetivoMs) {
         this.objetivoMs = Math.max(meta, Math.round((this.objetivoMs + meta) / 2))
         this.ultimaBaja = ahora
@@ -224,7 +163,7 @@ export class EsperaTalkback {
   }
 
   private acotar(ms: number): number {
-    return Math.min(EsperaTalkback.MAX_MS, Math.max(EsperaTalkback.MIN_MS, Math.round(ms)))
+    return Math.min(EsperaVivo.MAX_MS, Math.max(EsperaVivo.MIN_MS, Math.round(ms)))
   }
 
   private percentil(valores: number[], p: number): number {
@@ -233,7 +172,7 @@ export class EsperaTalkback {
     return orden[Math.min(orden.length - 1, Math.floor(p * orden.length))]
   }
 
-  medicion(): MedicionTalkback {
+  medicion(): MedicionVivo {
     return {
       objetivoMs: Math.round(this.objetivoMs),
       redMs: this.demoras.length ? Math.round(this.percentil(this.demoras, 0.95)) : null,
@@ -243,27 +182,23 @@ export class EsperaTalkback {
   }
 }
 
-/**
- * Compu: toma la entrada elegida (microfono, o un cable virtual desde Reaper)
- * y, mientras el talkback esta abierto, manda los pedazos con su hora. La
- * entrada queda abierta despues del primer uso (asi abrirlo es instantaneo).
- * Para la banda en vivo (`modo` 'banda'): lo que sale de la consola, sin
- * procesar y a la frecuencia de la compu.
- */
-/** De donde y como se toma la voz del talkback. */
+/** De donde se toma la consola. */
 export interface OpcionesEntrada {
-  /** el dispositivo (deviceId): un microfono, una interface; null = el de Windows por defecto */
+  /** el dispositivo (deviceId): una interface, la placa de sonido; null = la de Windows por defecto */
   entrada: string | null
-  /** que entrada de la interface (0 = la 1, 1 = la 2…); null = todas juntas */
+  /** que entrada de la interface (0 = la 1, 1 = la 2…); null = todas juntas (estereo: izquierda y derecha) */
   canal: number | null
-  /** "Mejorar la voz": menos ruido y volumen parejo (para el microfono de la compu); apagado = la senal tal cual (interface, consola) */
-  procesar: boolean
 }
 
 /** Los ids que Chrome agrega aparte en Windows ("Predeterminado", "Comunicaciones"): ya estan como "la de Windows". */
 const IDS_DE_WINDOWS = ['default', 'communications']
 
-export class EmisorTalkback {
+/**
+ * Compu: toma la entrada elegida y, mientras la consola en vivo esta
+ * prendida, manda los pedazos con su hora. La entrada queda abierta despues
+ * del primer uso (asi prenderla es instantaneo).
+ */
+export class EmisorVivo {
   private ctx: AudioContext | null = null
   private stream: MediaStream | null = null
   private fuente: MediaStreamAudioSourceNode | null = null
@@ -279,9 +214,8 @@ export class EmisorTalkback {
   onNivel: ((pico: number) => void) | null = null
 
   constructor(
-    private readonly enviar: (p: PedazoTalkback) => void,
-    private readonly horaServidor: () => number,
-    private readonly modo: 'voz' | 'banda' = 'voz'
+    private readonly enviar: (p: PedazoCaptura) => void,
+    private readonly horaServidor: () => number
   ) {}
 
   /** Las entradas de audio de la compu: microfonos e interfaces (los nombres aparecen despues de dar permiso una vez). */
@@ -308,40 +242,38 @@ export class EmisorTalkback {
     const enviaba = this.enviando
     this.cerrar()
     this.clave = clave
-    // la banda va tal cual (mejorar la voz le arruina la musica y suma demora)
-    const procesar = this.modo === 'voz' && op.procesar
     this.abriendo = (async () => {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: op.entrada ? { exact: op.entrada } : undefined,
           // todas las entradas que tenga (una interface: 2, 4…), para poder elegir una
           channelCount: { ideal: 8 },
-          // sin "procesar" el retorno (no hay parlantes en el talkback)
+          // tal cual: "mejorar" la senal le arruina la musica y suma demora
           echoCancellation: false,
-          noiseSuppression: procesar,
-          autoGainControl: procesar
+          noiseSuppression: false,
+          autoGainControl: false
         }
       })
       const ctx = new AudioContext({ latencyHint: 'interactive' })
-      await cargarProcesador(ctx, this.modo === 'banda' ? 'banda' : 'captura')
+      await cargarProcesador(ctx)
       const fuente = ctx.createMediaStreamSource(stream)
-      const nodo = new AudioWorkletNode(ctx, this.modo === 'banda' ? 'captura-banda' : 'captura-talkback', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit' })
+      const nodo = new AudioWorkletNode(ctx, 'captura-vivo', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit' })
       // la entrada elegida de la interface, o el promedio de todas
       const canales = Math.max(1, stream.getAudioTracks()[0]?.getSettings().channelCount ?? 1)
       const nodos: AudioNode[] = []
       if (canales > 1) {
         const division = ctx.createChannelSplitter(canales)
-        const voz = ctx.createGain()
-        voz.channelCount = 1
-        voz.channelCountMode = 'explicit'
+        const mezcla = ctx.createGain()
+        mezcla.channelCount = 1
+        mezcla.channelCountMode = 'explicit'
         fuente.connect(division)
-        if (op.canal !== null && op.canal < canales) division.connect(voz, op.canal)
+        if (op.canal !== null && op.canal < canales) division.connect(mezcla, op.canal)
         else {
-          voz.gain.value = 1 / canales
-          for (let k = 0; k < canales; k++) division.connect(voz, k)
+          mezcla.gain.value = 1 / canales
+          for (let k = 0; k < canales; k++) division.connect(mezcla, k)
         }
-        voz.connect(nodo)
-        nodos.push(division, voz)
+        mezcla.connect(nodo)
+        nodos.push(division, mezcla)
       } else fuente.connect(nodo)
       nodo.port.onmessage = (e: MessageEvent<{ t: number; muestras: Float32Array; pico: number }>) => {
         this.onNivel?.(e.data.pico)
@@ -351,7 +283,7 @@ export class EmisorTalkback {
         // hora del servidor en que se capto la primera muestra del pedazo
         const t = this.horaServidor() - (ctx.currentTime - e.data.t) * 1000 - (ctx.baseLatency || 0) * 1000
         const pcm = aInt16(e.data.muestras).buffer as ArrayBuffer
-        this.enviar(this.modo === 'banda' ? { n, t, sr: ctx.sampleRate, pcm } : { n, t, pcm })
+        this.enviar({ n, t, sr: ctx.sampleRate, pcm })
       }
       if (ctx.state === 'suspended') await ctx.resume()
       this.ctx = ctx
@@ -372,18 +304,6 @@ export class EmisorTalkback {
     return !!this.nodo
   }
 
-  /**
-   * La vuelve a abrir con lo mismo. En una misma interface, Chrome aplica a
-   * todo lo que se abre de ella el procesamiento ("Mejorar la voz") del que
-   * la abrio primero: si el talkback cambia el suyo, la banda se reabre para
-   * quedar como corresponde.
-   */
-  reabrir(): Promise<void> {
-    const op = this.clave ? (JSON.parse(this.clave) as OpcionesEntrada) : null
-    if (!op || !this.abierto()) return Promise.resolve()
-    this.clave = null
-    return this.abrir(op)
-  }
 
   /** Cuantas entradas tiene lo que esta abierto (una interface: 2 o mas; 0 = cerrado). */
   canales(): number {

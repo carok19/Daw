@@ -5330,7 +5330,7 @@ input[type='date'] {
   font-size: 12.5px;
 }
 
-/* ---------- talkback (compu) ---------- */
+/* ---------- consola en vivo (compu): el interruptor de arriba y sus ajustes ---------- */
 .talkback {
   display: inline-flex;
   align-items: stretch;
@@ -5413,18 +5413,11 @@ input[type='date'] {
   clip-path: inset(0 calc((1 - var(--nivel)) * 100%) 0 0);
 }
 
-/* banda en vivo: el aviso de arriba (azul, para no confundirlo con el talkback) y la aclaracion de la demora */
-.talkback.banda-vivo.abierto {
-  border-color: var(--accent);
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
+/* consola en vivo: la aclaracion de la demora */
 .ayuda.banda-aviso {
   border-left: 3px solid var(--warn);
   padding-left: 10px;
 }
-
-/* ---------- talkback (celular) ---------- */
 
 /* el director elige como salta (al terminar la seccion, en el compas o ya) */
 .m-modo-salto {
@@ -5670,9 +5663,8 @@ input[type='date'] {
   color: var(--text);
 }
 
-/* talkback: la entrada de la interface y "Mejorar la voz" */
-.talkback-campo small,
-.talkback-procesar small {
+/* consola en vivo: la entrada de la interface */
+.talkback-campo small {
   font-size: 12px;
   color: var(--text-3);
   line-height: 1.35;
@@ -5682,13 +5674,6 @@ input[type='date'] {
 }
 .talkback-canales button {
   min-width: 42px;
-}
-.talkback-procesar {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 12px;
 }
 
 /* lo que viene incluido (voces, pad): listo, y lo propio como opcional, discreto */

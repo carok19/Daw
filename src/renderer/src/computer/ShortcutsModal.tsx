@@ -11,7 +11,7 @@ const ATAJOS: [string[], string][] = [
   [['L'], 'Repetir la sección actual (activar / desactivar)'],
   [['C'], 'Colchón: al terminar la sección (o en el próximo compás, según el modo de salto) se va la banda y siguen el click y un pad; con la canción parada, empiezan ya (otra vez C: terminar)'],
   [['F'], 'Terminar con fundido: al terminar la sección (o en el compás, o ya, según el modo de salto) la canción se apaga en todos y para (otra vez F: cancelar)'],
-  [['T'], 'Talkback: abrirlo (la banda te escucha en los oídos todo el tiempo) o cerrarlo'],
+  [['T'], 'Consola en vivo: prenderla (la banda escucha la consola —instrumentos, voces y talkback— en los oídos todo el tiempo) o apagarla'],
   [['Re Pág', 'Av Pág'], 'Canción anterior / siguiente del setlist'],
   [['?'], 'Mostrar esta ayuda'],
   [['Esc'], 'Cerrar ventanas · cancelar el salto elegido o el final (a mitad del fundido, la música vuelve)']

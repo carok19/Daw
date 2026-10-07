@@ -16,8 +16,8 @@ interface Props {
   onDispositivos: () => void
   /** elegir el celular de la consola (rol Sonido) */
   onConsola: () => void
-  /** el interruptor del talkback (y, mientras se manda, el aviso de la banda en vivo) */
-  talkback: React.ReactNode
+  /** el interruptor de la consola en vivo (instrumentos, voces y talkback a los oidos) */
+  consolaEnVivo: React.ReactNode
   locked: boolean
   onLocked: (v: boolean) => void
   /** suena tambien en esta compu (se prende en ⚙ Ajustes; prendido, se ve "Compu" arriba) */
@@ -180,7 +180,7 @@ export function TopBar(p: Props) {
           <span className="num">{salud.conectados}</span>
           <span className="texto-largo">{salud.conectados === 1 ? 'celular' : 'celulares'}</span>
         </button>
-        {p.talkback}
+        {p.consolaEnVivo}
         <ChipConsola dispositivos={p.dispositivos} onClick={p.onConsola} />
         <Toggle
           activo={p.locked}
@@ -206,7 +206,7 @@ export function TopBar(p: Props) {
             <span className="texto-largo">Compu</span>
           </button>
         )}
-        <button className="btn-fantasma btn-icono" onClick={p.onAjustes} title="Ajustes: cómo salta y Terminar, voz del salto y pad, sonido en esta compu, talkback, banda en vivo" aria-label="Ajustes">
+        <button className="btn-fantasma btn-icono" onClick={p.onAjustes} title="Ajustes: cómo salta y Terminar, voz del salto y pad, sonido en esta compu, consola en vivo" aria-label="Ajustes">
           <Settings size={19} />
         </button>
         <button className="btn-fantasma btn-icono" onClick={p.onAyuda} title="Atajos de teclado (?)" aria-label="Atajos de teclado">

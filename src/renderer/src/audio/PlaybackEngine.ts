@@ -4,7 +4,7 @@ export { clavePista } from '@shared/mezcla'
 export type { AjustePersonal, MezclaPersonal } from '@shared/mezcla'
 import type { MezclaPersonal } from '@shared/mezcla'
 import type { PedazoVivo } from '@shared/audioVivo'
-import type { EsperaTalkback } from './talkback'
+import type { EsperaVivo } from './consolaEnVivo'
 
 /**
  * "Terminar con fundido" en este dispositivo: la curva del servidor (ver
@@ -32,12 +32,10 @@ export interface PlaybackEngine {
   nivelSalida(): { izq: number; der: number }
   /** "Probar el sync": un click en cada golpe (hora del servidor), igual en todos */
   probarSync(golpes: { t: number; n: number }[], clockOffsetMs: number): void
-  /** un pedazo de audio en vivo: el talkback (la compu habla a los oidos) o la banda en vivo; cada uno, un fader mas de la mezcla */
+  /** un pedazo de la consola en vivo (instrumentos, voces y talkback): un fader mas de la mezcla */
   recibirVivo(p: PedazoVivo, clockOffsetMs: number): void
-  /** lo que mide del talkback (para la compu) */
-  readonly esperaTalkback: EsperaTalkback
-  /** lo que mide de la banda en vivo (para la compu) */
-  readonly esperaBanda: EsperaTalkback
+  /** lo que mide de la consola en vivo (para la compu) */
+  readonly esperaVivo: EsperaVivo
 
   activarProyecto(proyecto: Proyecto, posicionMs: number): void
   /** baja de a poco el arranque (desde `posicionMs`) de la proxima cancion del setlist (null = ninguna) */

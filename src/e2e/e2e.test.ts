@@ -2462,7 +2462,7 @@ test('colchón de la lista con audio real: Empezar suena en todos (click a la iz
 
 /**
  * Graba lo que sale del motor de un celular (con ?debug) durante `segundos`:
- * las muestras de cada lado. `final`: lo que va al parlante (con el talkback
+ * las muestras de cada lado. `final`: lo que va al parlante (con la consola en vivo
  * y la musica atenuada); si no, la mezcla antes del atenuador.
  */
 async function grabarSalida(pg: Page, segundos: number, final = false): Promise<{ sr: number; L: number[]; R: number[] }> {
@@ -2800,11 +2800,11 @@ test('roles: cada celular elige lo suyo; la consola recibe la banda sola y en es
   })
 })
 
-test('talkback: abierto, la banda escucha la compu todo el tiempo como un fader más (la consola no), por la red como un celular real; cada celular mide la demora', { timeout: 3 * 60 * 1000 }, async (t) => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-talkback-'))
+test('consola en vivo: lo que sale de la consola (instrumentos, voces y talkback) llega a los oídos como un fader más (la consola no), por la red como un celular real; cada celular mide la demora', { timeout: 3 * 60 * 1000 }, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multitrack-vivo-'))
   process.env.MULTITRACK_APP_DIR = path.join(tmp, 'app')
-  // el "microfono" de la compu, como una interface de 2 entradas: en la 1 un tono de 1 kHz a pedazos
-  // (200 ms si, 300 ms no), como una voz; la 2 sin nada enchufado
+  // la consola entra por una interface de 2 entradas: en la 1 un tono de 1 kHz a pedazos (200 ms si,
+  // 300 ms no), como una voz; la 2 sin nada enchufado
   const srVoz = 48000
   const voz = new Float32Array(10 * srVoz)
   for (let i = 0; i < voz.length; i++) voz[i] = (i / srVoz) % 0.5 < 0.2 ? 0.5 * Math.sin((2 * Math.PI * 1000 * i) / srVoz) : 0
@@ -2827,7 +2827,7 @@ test('talkback: abierto, la banda escucha la compu todo el tiempo como un fader 
   const z = new AdmZip()
   z.addFile('Bajo.wav', wav16(bajo, SR))
   z.addFile('Click.wav', wav16(generarClick(120, 4, SEG), SR))
-  const zip = path.join(tmp, 'Talkback.zip')
+  const zip = path.join(tmp, 'Vivo.zip')
   z.writeZip(zip)
 
   const ctxCompu = await browser.newContext({ viewport: { width: 1280, height: 800 } })
@@ -2865,10 +2865,10 @@ test('talkback: abierto, la banda escucha la compu todo el tiempo como un fader 
   const consola = await celular('sonido')
   if (baseCelular !== base) assert.equal(await musico.evaluate(() => isSecureContext), false, 'el celular entra como uno real (sin https)')
   t.diagnostic(`celulares por ${baseCelular}`)
-  // prender y apagar el talkback (el interruptor de arriba, o la T)
-  const talkback = async (abierto: boolean): Promise<void> => {
-    await compu.getByRole('switch', { name: 'Talkback' }).click()
-    await compu.locator(abierto ? '.talkback.abierto' : '.talkback:not(.abierto)').waitFor()
+  // prender y apagar la consola en vivo (el interruptor de arriba, o la T)
+  const consolaEnVivo = async (prendida: boolean): Promise<void> => {
+    await compu.getByRole('switch', { name: 'Consola en vivo' }).click()
+    await compu.locator(prendida ? '.talkback.abierto' : '.talkback:not(.abierto)').waitFor()
   }
   await compu.keyboard.press('Space')
   await esperar(5000)
@@ -2878,42 +2878,55 @@ test('talkback: abierto, la banda escucha la compu todo el tiempo como un fader 
   }
   // (el click de la cancion tambien tiene golpes en 1 kHz: de fondo queda un poquito)
   const antes = await medir(musico)
-  t.diagnostic(`antes de hablar: ${JSON.stringify(antes)}`)
-  assert.ok(antes.voz < 0.004, 'sin hablar no suena nada')
+  t.diagnostic(`antes: ${JSON.stringify(antes)}`)
+  assert.ok(antes.voz < 0.004, 'apagada no suena nada')
+  type Mt = {
+    __mt: {
+      receptorVivoRef: { current: { pedazos: number; abierto(): boolean } | null }
+      socketRef: { current: { socket: { io: { engine?: { transport?: { name: string } } } } } | null }
+    }
+  }
 
-  await t.test('abierto: el músico escucha la voz todo el tiempo (la música sigue igual: es un fader más); la consola no la recibe; cerrado, nada', async () => {
-    // en "Mi mezcla" del músico, el talkback es un fader más (y dice si está abierto)
+  await t.test('prendida: el músico la escucha todo el tiempo (la música sigue igual: es un fader más); la consola no la recibe; apagada, nada', async () => {
+    // en "Mi mezcla" del músico es un fader más (y dice si está prendida)
     await vistaCelular(musico, 'Mi mezcla')
-    await musico.locator('.m-canal', { hasText: 'Talkback' }).locator('.m-canal-aviso', { hasText: 'cerrado en la compu' }).waitFor()
-    await talkback(true)
-    await musico.locator('.m-canal', { hasText: 'Talkback' }).locator('.m-canal-aviso', { hasText: 'abierto' }).waitFor()
-    assert.equal(await musico.getByText('Te habla la compu').count(), 0, 'sin carteles')
+    const fader = musico.locator('.m-canal', { hasText: 'Consola en vivo' })
+    await fader.locator('.m-canal-aviso', { hasText: 'apagada en la compu' }).waitFor()
+    assert.equal(await musico.locator('.m-canal', { hasText: /^Talkback/ }).count(), 0, 'un solo fader: no hay otro de talkback')
+    await consolaEnVivo(true)
+    await fader.locator('.m-canal-aviso', { hasText: 'prendida' }).waitFor()
     await esperar(2000)
-    const abierto = await medir(musico)
+    const prendida = await medir(musico)
     const enConsola = await medir(consola)
-    // queda abierto sin tocar nada: un rato después sigue llegando
+    // queda prendida sin tocar nada: un rato después sigue llegando
     await esperar(4000)
     const sigue = await medir(musico)
-    await captura(compu, 'talkback-abierto')
-    await talkback(false)
-    t.diagnostic(`abierto: músico ${JSON.stringify(abierto)} · un rato después ${JSON.stringify(sigue)} · consola ${JSON.stringify(enConsola)}`)
+    await captura(compu, 'consola-en-vivo')
+    await consolaEnVivo(false)
+    t.diagnostic(`prendida: músico ${JSON.stringify(prendida)} · un rato después ${JSON.stringify(sigue)} · consola ${JSON.stringify(enConsola)}`)
     // el tono suena 200 de cada 500 ms: su amplitud promedio es ~0,4 de la del tono
-    // (la voz entra solo por la entrada 1 de la "interface" y por defecto van todas juntas: llega a la mitad)
-    assert.ok(abierto.voz > 0.01, `el músico escucha la voz (${abierto.voz})`)
-    assert.ok(sigue.voz > 0.01, `sigue abierto sin tocar nada (${sigue.voz})`)
+    // (entra solo por la entrada 1 de la "interface" y por defecto van todas juntas: llega a la mitad)
+    // (apagada, de fondo queda ~0,0015 del click: con 0,006 se distingue bien aunque el WiFi de la prueba corte algún pedazo)
+    assert.ok(prendida.voz > 0.006, `el músico la escucha (${prendida.voz})`)
+    assert.ok(sigue.voz > 0.006, `sigue prendida sin tocar nada (${sigue.voz})`)
     // (sin https la prueba graba con un ScriptProcessor, menos exacto: se mira que no baje los 6 dB de antes)
-    assert.ok(abierto.bajo > antes.bajo * 0.7, `la música no baja (${abierto.bajo} de ${antes.bajo})`)
-    assert.ok(enConsola.voz < 0.002, `la consola no recibe el talkback (${enConsola.voz})`)
+    assert.ok(prendida.bajo > antes.bajo * 0.7, `la música no baja (${prendida.bajo} de ${antes.bajo})`)
+    assert.ok(enConsola.voz < 0.002, `la consola no la recibe (${enConsola.voz})`)
     await esperar(2000)
-    const cerrado = await medir(musico)
-    assert.ok(cerrado.voz < abierto.voz / 5, `cerrado: sin voz (${JSON.stringify(cerrado)})`)
-    await musico.locator('.m-canal', { hasText: 'Talkback' }).locator('.m-canal-aviso', { hasText: 'cerrado en la compu' }).waitFor()
+    const apagada = await medir(musico)
+    assert.ok(apagada.voz < prendida.voz / 5, `apagada: no llega (${JSON.stringify(apagada)})`)
+    await fader.locator('.m-canal-aviso', { hasText: 'apagada en la compu' }).waitFor()
   })
 
-  await t.test('cada celular mide cuánto tarda (y la compu lo muestra)', async () => {
+  await t.test('cada celular mide cuánto tarda (y la compu lo muestra); llega por el WebSocket de audio', async () => {
     const etiqueta = await musico.evaluate(() => localStorage.getItem('multitrack:device-id')).then((id) => `celular:${JSON.parse(id!)}`)
-    // (grabar el audio en la prueba traba al celular medio segundo y la espera sube: abierto un rato
-    // sin grabar se ve como vuelve a lo que de verdad hace falta). Con la tecla T: abre y cierra
+    // (si la red no deja abrir WebSockets a la IP de la compu, p.ej. detras de un proxy, socket.io queda
+    // en "polling" y el audio llega por socket.io: anda igual, pero aca no se puede medir el WebSocket)
+    const hayWebSocket = await musico.evaluate(() => (globalThis as unknown as Mt).__mt.socketRef.current?.socket.io.engine?.transport?.name === 'websocket')
+    const pedazosPorWs = (): Promise<number> => musico.evaluate(() => (globalThis as unknown as Mt).__mt.receptorVivoRef.current?.pedazos ?? 0)
+    const antesWs = await pedazosPorWs()
+    // (grabar el audio en la prueba traba al celular medio segundo y la espera sube: prendida un rato
+    // sin grabar se ve como vuelve a lo que de verdad hace falta). Con la tecla T: prende y apaga
     await compu.locator('body').click({ position: { x: 5, y: 5 } })
     await compu.keyboard.press('t')
     await compu.locator('.talkback.abierto').waitFor()
@@ -2921,127 +2934,52 @@ test('talkback: abierto, la banda escucha la compu todo el tiempo como un fader 
     await compu.keyboard.press('t')
     await compu.locator('.talkback:not(.abierto)').waitFor()
     await esperar(2500)
-    const tb = server.devices.listar().find((d) => d.id === etiqueta)!.diag?.talkback
-    t.diagnostic(`talkback medido por el celular: ${JSON.stringify(tb)}`)
-    t.diagnostic(
-      `demoras: ${JSON.stringify(await musico.evaluate(() => (globalThis as unknown as { __mt: { engineRef: { current: { esperaTalkback: { demoras: number[] } } } } }).__mt.engineRef.current.esperaTalkback.demoras.map(Math.round)))}`
-    )
-    assert.ok(tb && tb.redMs !== null && tb.redMs < 150, `llega rápido por la red de prueba (${JSON.stringify(tb)})`)
-    assert.ok(tb!.objetivoMs >= 30 && tb!.objetivoMs <= 200, `se escucha a los ${tb!.objetivoMs} ms`)
-    // el microfono y las demoras: en ⚙ Ajustes → Talkback (un solo engranaje arriba)
+    const m = server.devices.listar().find((d) => d.id === etiqueta)!.diag?.vivo
+    t.diagnostic(`medido por el celular: ${JSON.stringify(m)}`)
+    assert.ok(m && m.redMs !== null && m.redMs < 150, `llega rápido por la red de prueba (${JSON.stringify(m)})`)
+    assert.ok(m!.objetivoMs >= 30 && m!.objetivoMs <= 200, `se escucha a los ${m!.objetivoMs} ms`)
+    if (hayWebSocket) {
+      const porWs = (await pedazosPorWs()) - antesWs
+      assert.ok(porWs > 500, `llegó por el WebSocket de audio (${porWs} pedazos)`)
+    } else t.diagnostic('esta red no deja abrir WebSockets a la IP de la compu: la consola en vivo llega por socket.io')
+    // la entrada y las demoras: en ⚙ Ajustes → Consola en vivo (un solo engranaje arriba)
     await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
-    await compu.getByRole('tab', { name: 'Talkback' }).click()
+    await compu.getByRole('tab', { name: 'Consola en vivo' }).click()
     await compu.getByText(/se escucha a los \d+ ms: WiFi \d+ ms \+ salida del celular \d+ ms/).waitFor()
-    await compu.getByText('Consola: no lo recibe').waitFor()
+    await compu.getByText('Consola: no la recibe').waitFor()
     await compu.keyboard.press('Escape')
   })
 
-  await t.test('con una interface se elige su entrada: la 2 (sin nada) no manda voz; la 1 sí, directa', async () => {
+  await t.test('con una interface se elige su entrada: la 2 (sin nada) no manda nada; la 1 sí', async () => {
     await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
-    await compu.getByRole('tab', { name: 'Talkback' }).click()
-    // los micrófonos e interfaces (sin repetir el "predeterminado" de Windows)
-    const opciones = await compu.getByRole('combobox', { name: 'Micrófono del talkback' }).locator('option').allTextContents()
-    assert.equal(opciones[0], 'El de Windows (por defecto)')
+    await compu.getByRole('tab', { name: 'Consola en vivo' }).click()
+    // las interfaces (sin repetir el "predeterminado" de Windows)
+    const opciones = await compu.getByRole('combobox', { name: 'Entrada de la consola en vivo' }).locator('option').allTextContents()
+    assert.equal(opciones[0], 'La de Windows (por defecto)')
     assert.ok(opciones.length >= 2 && !opciones.some((o) => /default/i.test(o)), opciones.join(' · '))
     const entradas = compu.getByRole('radiogroup', { name: 'Entrada de la interface' })
     await entradas.waitFor()
     assert.deepEqual(await entradas.getByRole('radio').allTextContents(), ['1', '2', 'Todas'])
-    const mejorar = compu.getByRole('switch', { name: /Mejorar la voz/ })
-    assert.equal(await mejorar.getAttribute('aria-checked'), 'true')
-    await captura(compu, 'ajustes-talkback')
-    const hablarYMedir = async (): Promise<number> => {
+    await captura(compu, 'ajustes-consola-en-vivo')
+    const prenderYMedir = async (): Promise<number> => {
       await compu.keyboard.press('Escape')
       await compu.locator('.modal').waitFor({ state: 'detached' })
-      await talkback(true)
+      await consolaEnVivo(true)
       await esperar(2000)
-      const m = await medir(musico)
-      await talkback(false)
+      const r = await medir(musico)
+      await consolaEnVivo(false)
       await esperar(1500)
-      return m.voz
+      return r.voz
     }
-    // la 2: una entrada elegida va directa ("Mejorar la voz" se apaga solo) y ahí no hay nada
     await entradas.getByRole('radio', { name: '2' }).click()
-    await compu.locator('.talkback-procesar [role=switch][aria-checked=false]').waitFor()
-    const enLa2 = await hablarYMedir()
-    // la 1: la voz llega
+    const enLa2 = await prenderYMedir()
     await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
-    await compu.getByRole('tab', { name: 'Talkback' }).click()
+    await compu.getByRole('tab', { name: 'Consola en vivo' }).click()
     await compu.getByRole('radiogroup', { name: 'Entrada de la interface' }).getByRole('radio', { name: '1' }).click()
-    const enLa1 = await hablarYMedir()
-    t.diagnostic(`voz en el músico: entrada 2 ${enLa2.toFixed(4)} · entrada 1 ${enLa1.toFixed(4)}`)
-    assert.ok(enLa2 < 0.004, `por la entrada 2 no llega voz (${enLa2})`)
-    assert.ok(enLa1 > 0.02, `por la entrada 1 sí (${enLa1})`)
-    // prender "Mejorar la voz" vuelve a "Todas"
-    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
-    await compu.getByRole('tab', { name: 'Talkback' }).click()
-    await compu.getByRole('switch', { name: /Mejorar la voz/ }).click()
-    await compu.waitForFunction(() => document.querySelector('[role=radiogroup][aria-label="Entrada de la interface"] [aria-checked=true]')?.textContent === 'Todas')
-    await compu.keyboard.press('Escape')
-    assert.deepEqual(errores, [])
-  })
-
-  await t.test('banda en vivo: lo que sale de la consola llega a los oídos como un fader más (solo mientras se manda), no a la consola; por el WebSocket de audio', async () => {
-    type Mt = {
-      __mt: {
-        receptorVivoRef: { current: { pedazos: number; abierto(): boolean } | null }
-        socketRef: { current: { socket: { io: { engine?: { transport?: { name: string } } } } } | null }
-      }
-    }
-    // (si la red no deja abrir WebSockets a la IP de la compu, p.ej. detras de un proxy, socket.io queda
-    // en "polling" y el audio en vivo llega por socket.io: anda igual, pero aca no se puede medir el WebSocket)
-    const hayWebSocket = await musico.evaluate(() => (globalThis as unknown as Mt).__mt.socketRef.current?.socket.io.engine?.transport?.name === 'websocket')
-    const pedazosPorWs = (): Promise<number> => musico.evaluate(() => (globalThis as unknown as Mt).__mt.receptorVivoRef.current?.pedazos ?? 0)
-    const antesBanda = await pedazosPorWs()
-    if (hayWebSocket) {
-      // el talkback de recién ya vino por el WebSocket de audio (una trama por pedazo), no por socket.io
-      assert.ok(await musico.evaluate(() => (globalThis as unknown as Mt).__mt.receptorVivoRef.current?.abierto() === true), 'el celular tiene abierto el audio en vivo')
-      assert.ok(antesBanda > 100, `el talkback llegó por el WebSocket de audio (${antesBanda} pedazos)`)
-    } else t.diagnostic('esta red no deja abrir WebSockets a la IP de la compu: el audio en vivo llega por socket.io')
-    // sin mandarla, el músico no tiene el fader
-    await vistaCelular(musico, 'Mi mezcla')
-    assert.equal(await musico.locator('.m-canal', { hasText: 'Banda en vivo' }).count(), 0, 'sin banda, sin fader')
-    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
-    await compu.getByRole('tab', { name: 'Banda en vivo' }).click()
-    // el talkback quedó con "Mejorar la voz" en la misma interface: la compu se lo aplicaría también a la
-    // banda (más baja y sin sonido de fondo). Avisa, y se apaga de un toque
-    await compu.getByRole('alert').getByRole('button', { name: /Apagar .Mejorar la voz./ }).click()
-    await compu.getByRole('alert').waitFor({ state: 'detached' })
-    // la consola entra por la 1 de la "interface"
-    await compu.getByRole('radiogroup', { name: 'Entrada de la consola' }).getByRole('radio', { name: '1' }).click()
-    await compu.getByRole('switch', { name: /Mandar la banda a los celulares/ }).click()
-    await compu.locator('.banda-vivo.abierto').waitFor()
-    await musico.locator('.m-canal', { hasText: 'Banda en vivo' }).locator('.m-canal-aviso', { hasText: 'de referencia' }).waitFor()
-    await captura(compu, 'ajustes-banda')
-    await compu.keyboard.press('Escape')
-    await esperar(3000)
-    const conBanda = await medir(musico)
-    const enConsola = await medir(consola)
-    // abierta un rato sin grabar: la espera se acerca a lo que hace falta
-    await esperar(7000)
-    const etiqueta = await musico.evaluate(() => localStorage.getItem('multitrack:device-id')).then((id) => `celular:${JSON.parse(id!)}`)
-    const m = server.devices.listar().find((d) => d.id === etiqueta)!.diag?.banda
-    t.diagnostic(`banda: músico ${JSON.stringify(conBanda)} · consola ${JSON.stringify(enConsola)} · medido por el celular ${JSON.stringify(m)}`)
-    assert.ok(conBanda.voz > 0.02, `el músico escucha la banda (${conBanda.voz})`)
-    assert.ok(enConsola.voz < 0.002, `la consola no la recibe (${enConsola.voz})`)
-    assert.ok(m && m.redMs !== null && m.redMs < 150, `llega rápido por la red de prueba (${JSON.stringify(m)})`)
-    assert.ok(m!.objetivoMs >= 30 && m!.objetivoMs <= 200, `se escucha a los ${m!.objetivoMs} ms`)
-    if (hayWebSocket) {
-      const despues = await pedazosPorWs()
-      assert.ok(despues - antesBanda > 500, `la banda vino por el WebSocket de audio (${despues - antesBanda} pedazos)`)
-    }
-    // la compu muestra cuánto tarda en cada celular
-    await compu.locator('.banda-vivo').click()
-    await compu.getByRole('tab', { name: 'Banda en vivo', selected: true }).waitFor()
-    await compu.getByText(/se escucha a los \d+ ms: WiFi \d+ ms \+ salida del celular \d+ ms/).waitFor()
-    await compu.getByText('Consola: no la recibe').waitFor()
-    // apagada: el fader se va y no suena
-    await compu.getByRole('switch', { name: /Mandar la banda a los celulares/ }).click()
-    await compu.locator('.banda-vivo').waitFor({ state: 'detached' })
-    await compu.keyboard.press('Escape')
-    await musico.locator('.m-canal', { hasText: 'Banda en vivo' }).waitFor({ state: 'detached' })
-    await esperar(1500)
-    const apagada = await medir(musico)
-    assert.ok(apagada.voz < conBanda.voz / 5, `apagada: no llega (${JSON.stringify(apagada)})`)
+    const enLa1 = await prenderYMedir()
+    t.diagnostic(`en el músico: entrada 2 ${enLa2.toFixed(4)} · entrada 1 ${enLa1.toFixed(4)}`)
+    assert.ok(enLa2 < 0.004, `por la entrada 2 no llega nada (${enLa2})`)
+    assert.ok(enLa1 > 0.02, `por la entrada 1 sí, entera (${enLa1})`)
     assert.deepEqual(errores, [])
   })
 })
@@ -3153,7 +3091,7 @@ test('terminar con fundido: al terminar la sección la canción se apaga en todo
 
   await t.test('desde la compu: ⚙ Ajustes (salta "Ya") y la tecla F; a mitad, "Seguir" en el celular trae la música de vuelta', async () => {
     await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
-    await compu.getByRole('tab', { name: 'En vivo', exact: true }).click()
+    await compu.getByRole('tab', { name: 'Saltos y final' }).click()
     await compu.getByRole('radio', { name: /^Ya/ }).click()
     await compu.locator('.ajustes-opcion.activo', { hasText: /^Ya/ }).waitFor()
     await captura(compu, 'ajustes-compu')

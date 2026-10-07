@@ -1,7 +1,7 @@
 import { leerTrama, RUTA_AUDIO_VIVO, type PedazoVivo } from '@shared/audioVivo'
 
 /**
- * Celular: el WebSocket del audio en vivo (talkback y banda en vivo; ver
+ * Celular: el WebSocket de la consola en vivo (instrumentos, voces y talkback; ver
  * shared/audioVivo.ts). Se abre con la llave que da la compu por socket.io;
  * si se corta, se vuelve a abrir solo mientras la llave siga valiendo (con
  * otra conexion se pide otra llave).

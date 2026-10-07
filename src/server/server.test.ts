@@ -2305,37 +2305,29 @@ test('terminar con fundido: al terminar la sección se apaga en todos y para; se
   await otraVez.cerrar()
 })
 
-test('talkback: abierto queda abierto (el celular que entra después lo sabe); va a los oídos, no a la consola; sin la compu se cierra', async (t) => {
+test('consola en vivo: prendida queda prendida (el celular que entra después lo sabe); sin la compu se apaga', async (t) => {
   const env = await entorno(t)
   const compu = await env.conectar(compuAuth)
-  const musico = await env.conectar({ origen: 'celular', deviceId: 'cel-tb-1', nombre: 'Bajo', rol: 'musico' })
-  const consola = await env.conectar({ origen: 'celular', deviceId: 'cel-tb-2', nombre: 'Consola', rol: 'sonido' })
-  // un celular no lo abre
-  musico.emit('talkback:activo', { activo: true })
+  const musico = await env.conectar({ origen: 'celular', deviceId: 'cel-vv-1', nombre: 'Bajo', rol: 'musico' })
+  // un celular no la prende
+  musico.emit('vivo:activo', { activo: true })
   await esperar(150)
-  const [estado] = await Promise.all([esperarEvento<{ activo: boolean }>(musico, 'talkback:estado'), compu.emit('talkback:activo', { activo: true })])
+  const [estado] = await Promise.all([esperarEvento<{ activo: boolean }>(musico, 'vivo:estado'), compu.emit('vivo:activo', { activo: true })])
   assert.equal(estado.activo, true)
-  // el que entra con el talkback abierto se entera al conectarse (se escucha desde antes de conectar)
-  const tarde = ioClient(`http://localhost:${env.port}`, { auth: { origen: 'celular', deviceId: 'cel-tb-3', nombre: 'Voz', rol: 'voz' }, reconnection: false })
+  // el que entra con la consola prendida se entera al conectarse (se escucha desde antes de conectar)
+  const tarde = ioClient(`http://localhost:${env.port}`, { auth: { origen: 'celular', deviceId: 'cel-vv-2', nombre: 'Voz', rol: 'voz' }, reconnection: false })
   t.after(() => {
     tarde.close()
   })
-  const alEntrar = await esperarEvento<{ activo: boolean }>(tarde, 'talkback:estado')
+  const alEntrar = await esperarEvento<{ activo: boolean }>(tarde, 'vivo:estado')
   assert.equal(alEntrar.activo, true)
-  // la voz llega a los oidos, no a la consola
-  const llegaron: string[] = []
-  musico.on('talkback:audio', () => llegaron.push('musico'))
-  consola.on('talkback:audio', () => llegaron.push('consola'))
-  compu.emit('talkback:audio', { n: 1, t: Date.now(), pcm: Buffer.alloc(640) })
-  await esperar(300)
-  assert.deepEqual(llegaron, ['musico'])
-  // si la compu se va, se cierra
-  const [cerrado] = await Promise.all([esperarEvento<{ activo: boolean }>(musico, 'talkback:estado', (e) => !e.activo), compu.close()])
-  assert.equal(cerrado.activo, false)
+  // si la compu se va, se apaga
+  const [apagada] = await Promise.all([esperarEvento<{ activo: boolean }>(musico, 'vivo:estado', (e) => !e.activo), compu.close()])
+  assert.equal(apagada.activo, false)
   await env.cerrar()
 })
 
-test('audio en vivo: cada celular lo recibe por su WebSocket (una trama por pedazo); la consola no; la banda solo prendida; sin llave no entra', async (t) => {
+test('consola en vivo: cada celular la recibe por su WebSocket (una trama por pedazo); la consola no; solo prendida; sin llave no entra', async (t) => {
   const env = await entorno(t)
   const compu = await env.conectar(compuAuth)
   /** un celular y la llave de su audio en vivo (la pide al conectarse; pedirla otra vez da la misma) */
@@ -2368,42 +2360,35 @@ test('audio en vivo: cada celular lo recibe por su WebSocket (una trama por peda
   // sin una llave de verdad no entra
   await assert.rejects(abrirAudio('cualquiera'))
   // con el WebSocket abierto, nada viaja dos veces (ni por socket.io)
-  const porSocketIo: string[] = []
-  musico.s.on('talkback:audio', () => porSocketIo.push('talkback'))
-  musico.s.on('banda:audio', () => porSocketIo.push('banda'))
-  compu.emit('talkback:audio', { n: 7, t: 1234.5, pcm: Buffer.alloc(320) })
-  // la banda apagada no viaja
-  compu.emit('banda:audio', { n: 1, t: 1000, sr: 48000, pcm: Buffer.alloc(960) })
+  const porSocketIo: number[] = []
+  musico.s.on('vivo:audio', (p: { n: number }) => porSocketIo.push(p.n))
+  // apagada no viaja
+  compu.emit('vivo:audio', { n: 1, t: 1000, sr: 48000, pcm: Buffer.alloc(960) })
+  await esperar(200)
+  assert.equal(audioMusico.pedazos.length, 0)
+  // prendida: va a los oidos, no a la consola; un pedazo raro o mandado por un celular, no
+  await Promise.all([esperarEvento<{ activo: boolean }>(musico.s, 'vivo:estado', (e) => e.activo), compu.emit('vivo:activo', { activo: true })])
+  musico.s.emit('vivo:activo', { activo: false })
+  compu.emit('vivo:audio', { n: 2, t: 2000.5, sr: 48000, pcm: Buffer.alloc(960) })
+  compu.emit('vivo:audio', { n: 3, t: 2010, sr: 3, pcm: Buffer.alloc(960) })
+  compu.emit('vivo:audio', { n: 4, t: 2020, sr: 48000, pcm: Buffer.alloc(961) })
+  compu.emit('vivo:audio', { n: 5, t: 2030, pcm: Buffer.alloc(960) })
+  musico.s.emit('vivo:audio', { n: 6, t: 2040, sr: 48000, pcm: Buffer.alloc(960) })
   await esperar(300)
   assert.deepEqual(
     audioMusico.pedazos.map((p) => [p.canal, p.n, p.t, p.sr, p.pcm.byteLength]),
-    [['talkback', 7, 1234.5, 16000, 320]]
-  )
-  // prendida: va a los oidos, no a la consola; un pedazo raro o mandado por un celular, no
-  await Promise.all([esperarEvento<{ activo: boolean }>(musico.s, 'banda:estado', (e) => e.activo), compu.emit('banda:activo', { activo: true })])
-  musico.s.emit('banda:activo', { activo: false })
-  compu.emit('banda:audio', { n: 2, t: 2000, sr: 48000, pcm: Buffer.alloc(960) })
-  compu.emit('banda:audio', { n: 3, t: 2010, sr: 3, pcm: Buffer.alloc(960) })
-  compu.emit('banda:audio', { n: 4, t: 2020, sr: 48000, pcm: Buffer.alloc(961) })
-  musico.s.emit('banda:audio', { n: 5, t: 2030, sr: 48000, pcm: Buffer.alloc(960) })
-  await esperar(300)
-  assert.deepEqual(
-    audioMusico.pedazos.slice(1).map((p) => [p.canal, p.n, p.sr, p.pcm.byteLength]),
-    [['banda', 2, 48000, 960]]
+    [['consola', 2, 2000.5, 48000, 960]]
   )
   assert.equal(audioConsola.pedazos.length, 0)
   assert.deepEqual(porSocketIo, [])
-  // un celular sin el WebSocket de audio (todavia) lo recibe por socket.io
+  // un celular sin el WebSocket de audio (todavia) la recibe por socket.io
   const voz = await celular('cel-av-3', 'Voz', 'voz')
-  const [porIo] = await Promise.all([esperarEvento<{ n: number; sr: number }>(voz.s, 'banda:audio'), compu.emit('banda:audio', { n: 6, t: 3000, sr: 44100, pcm: Buffer.alloc(882) })])
+  const [porIo] = await Promise.all([esperarEvento<{ n: number; sr: number }>(voz.s, 'vivo:audio'), compu.emit('vivo:audio', { n: 7, t: 3000, sr: 44100, pcm: Buffer.alloc(882) })])
   assert.equal(porIo.sr, 44100)
   // el celular que se va: su llave ya no sirve
   musico.s.close()
   await esperar(200)
   await assert.rejects(abrirAudio(musico.llave))
-  // sin la compu, la banda se apaga
-  const [apagada] = await Promise.all([esperarEvento<{ activo: boolean }>(voz.s, 'banda:estado', (e) => !e.activo), compu.close()])
-  assert.equal(apagada.activo, false)
   await env.cerrar()
 })
 

@@ -7,12 +7,12 @@ import { RUTA_AUDIO_VIVO } from '../shared/audioVivo'
 /**
  * Si un celular tiene esto sin mandar todavia, viene atrasado (el WiFi se
  * trabo): el pedazo se descarta en vez de acumularse (lo que llegue tarde ya
- * no suena). ~160 ms de banda en vivo.
+ * no suena). ~160 ms de audio.
  */
 const ATRASO_MAX_BYTES = 16 * 1024
 
 /**
- * El WebSocket del audio en vivo (talkback y banda en vivo; ver
+ * El WebSocket de la consola en vivo (instrumentos, voces y talkback; ver
  * shared/audioVivo.ts). Cada celular conectado por socket.io pide una llave
  * y con ella abre ws://compu/audio-vivo?llave=…: asi solo entra quien
  * ya paso el codigo de la banda, y el servidor sabe que celular es (su rol:

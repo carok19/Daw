@@ -518,7 +518,7 @@ export type OrigenCliente = 'compu' | 'celular' | 'video'
  * - director: maneja la cancion (play, secciones, repetir, colchon)
  * - musico: su mezcla y por donde va la cancion (sin controles)
  * - voz: la seccion bien grande, lo que sigue y el tono; mezcla simple
- * - sonido: va a la consola: la banda sola, sin click ni guia (y sin voces de aviso ni talkback)
+ * - sonido: va a la consola: la banda sola, sin click ni guia (y sin voces de aviso ni la consola en vivo)
  * - multimedia: lo que sigue y cuanto falta, para las pantallas (sin audio salvo que lo pida)
  */
 export type RolDispositivo = 'director' | 'musico' | 'voz' | 'sonido' | 'multimedia'
@@ -773,8 +773,8 @@ export interface DiagnosticoServidor {
   arranque?: { margenMs: number; peorEntregaMs: number | null }
 }
 
-/** Lo que mide cada celular del talkback (la compu hablando a los oidos) o de la banda en vivo. */
-export interface MedicionTalkback {
+/** Lo que mide cada celular de la consola en vivo (instrumentos, voces y talkback). */
+export interface MedicionVivo {
   /** cuanto despues de hablar se escucha (la espera que se ajusta sola) */
   objetivoMs: number
   /** cuanto tarda en llegar por el WiFi (el 95 % de los pedazos llega en menos); null = todavia no llego nada */
@@ -788,10 +788,8 @@ export interface MedicionTalkback {
 export interface DiagnosticoDispositivo extends DiagnosticoAudio {
   /** resincronizaciones duras (desfase grande o vuelta despues de un corte) */
   resyncs: number
-  /** talkback recibido (null = nunca le hablaron) */
-  talkback?: MedicionTalkback | null
-  /** banda en vivo recibida (null = todavia no le llego) */
-  banda?: MedicionTalkback | null
+  /** consola en vivo recibida (null = todavia no le llego) */
+  vivo?: MedicionVivo | null
   /** "Android · Chrome", "iPhone · Safari", "App Android"... */
   plataforma: string
 }

@@ -410,57 +410,33 @@ cambian a propósito.
       acompaña bajando y se va cuando entra la canción. Así se pasa de un
       momento de oración a la próxima canción sin silencio.
 
-14. **Talkback: la compu en los oídos de la banda, como un fader más.** En
-    la compu, **Talkback** (arriba) o la tecla **T** lo **abren**: la
-    entrada queda abierta todo el tiempo y la banda la escucha en los
-    auriculares (no la consola ni multimedia) hasta que alguien lo cierra
-    (otro toque o T); si se cierra el programa con el talkback abierto, al
-    volver a abrirlo sigue abierto. La música no baja: en *Mi mezcla* de
-    cada celular el **Talkback** es un fader más (dice si está abierto o
-    cerrado en la compu) y cada uno le da su volumen o lo mutea. Sin
-    carteles en la pantalla. Abierto, el botón se pone rojo con una barrita
-    que muestra que entra voz. **Va por el WiFi del router, no por
-    internet** (anda igual sin internet): la voz sale de la compu y llega
-    directo a los celulares de la misma red. El
-    micrófono se elige en **⚙ Ajustes → Talkback**: el de la compu, uno USB,
-    una **interface de audio**, la consola por una placa de sonido, o un canal
-    de **Reaper** con un cable virtual (VB-Cable). La lista se actualiza sola
-    al enchufar una interface. Si la interface tiene varias entradas, se
-    elige **en cuál está el micrófono** (1, 2…; “Todas” las mezcla): elegir
-    una manda esa entrada directa. **Mejorar la voz** (prendido por defecto)
-    saca ruido de fondo y empareja el volumen: con el micrófono de la compu
-    conviene; con una interface o la consola, mejor apagado y la ganancia en
-    la interface (el vúmetro muestra cuánto entra). **¿Y la demora?** Cada
-    celular espera lo justo para que la voz no se corte (lo que tarda el WiFi
-    más lo que tarda ese celular en sacar el audio) y lo muestra en ese mismo
-    panel, celular por celular: “se escucha a los 92 ms: WiFi 36 ms + salida
-    del celular 41 ms”. Va en pedacitos de 10 ms y viaja todo el tiempo (así
-    el WiFi del celular no se duerme). Para que tarde lo menos posible:
-    **auriculares con cable** (los Bluetooth suman 150 a 250 ms, y el panel
-    avisa), la **app de Android** (pide el WiFi de baja demora mientras está
-    abierta) y el **router cerca**. Con un router normal y auriculares con
-    cable queda entre 0,1 y 0,2 s según el celular: para indicaciones
-    (“vamos al coro”, “una vez más”) no molesta. Hablar desde un celular no se puede todavía: los
-    navegadores no dejan usar el micrófono en una página sin https.
-
-    **Banda en vivo (de referencia).** En ⚙ Ajustes → **Banda en vivo** se
-    elige la entrada donde llega una mezcla de la consola (el máster o un
-    auxiliar con los instrumentos y las voces, por una interface o la
-    placa de sonido) y se prende **Mandar la banda a los celulares**: en
-    *Mi mezcla* de cada músico aparece el fader **Banda en vivo** (solo
-    mientras se manda) y cada uno le da su volumen o lo mutea. Va tal cual,
-    sin procesar, con la calidad de la compu (48 kHz, la misma de los
-    celulares: nadie la convierte). Arriba aparece **Banda en vivo** en
-    azul con lo que entra (tocarlo abre el panel, que muestra cuánto tarda
-    en cada celular). No va a la consola ni a multimedia, y queda prendida
-    hasta que alguien la apague (también al reabrir el programa). **Llega
-    un poco después que el sonido real** (unos 0,06 a 0,1 s con un buen
-    WiFi y auriculares con cable): sirve para escuchar al resto de la
-    banda, no para escucharse uno mismo mientras toca o canta (para eso,
-    un amplificador de auriculares por cable o un in-ear inalámbrico desde
-    la consola). Si el talkback usa la misma interface con *Mejorar la
-    voz*, la compu se lo aplicaría también a la banda: el panel lo avisa y
-    lo apaga de un toque.
+14. **Consola en vivo: instrumentos, voces y talkback en los oídos, como
+    un fader más.** Un solo canal: de la consola sale una mezcla para los
+    músicos (el máster o un auxiliar, con el micrófono del talkback
+    adentro) y entra a la compu por una interface o la placa de sonido. En
+    **⚙ Ajustes → Consola en vivo** se elige esa entrada (la interface y en
+    cuál de sus entradas llega: 1, 2… o “Todas”, que junta izquierda y
+    derecha), con un vúmetro. **Consola en vivo** (arriba) o la tecla **T**
+    la prenden: va todo el tiempo a los auriculares de la banda (no a la
+    consola ni a multimedia) hasta que alguien la apague, también al
+    reabrir el programa. La música no baja: en *Mi mezcla* de cada celular
+    **Consola en vivo** es un fader más (dice si está prendida o apagada en
+    la compu) y cada uno le da su volumen o la mutea. Va tal cual, sin
+    procesar, con la calidad de la compu (48 kHz, la misma de los
+    celulares). **Va por el WiFi del router, no por internet.** Desde
+    Reaper: esa mezcla a un cable virtual (VB-Cable) y elegirlo ahí. Lo que
+    estaba elegido para el talkback o la banda en vivo de antes pasa solo.
+    **¿Y la demora?** Cada celular espera lo justo para que no se corte (lo
+    que tarda el WiFi más lo que tarda ese celular en sacar el audio) y lo
+    muestra en ese panel, celular por celular: “se escucha a los 92 ms:
+    WiFi 36 ms + salida del celular 41 ms”. Para que tarde lo menos
+    posible: **auriculares con cable** (los Bluetooth suman 150 a 250 ms, y
+    el panel avisa), la **app de Android** (pide el WiFi de baja demora
+    mientras está abierta) y el **router cerca**, mejor de 5 GHz. Con un
+    buen WiFi queda entre 0,06 y 0,1 s: para indicaciones y para escuchar
+    al resto alcanza; para escucharse uno mismo mientras toca o canta se
+    nota (para eso, un amplificador de auriculares por cable o un in-ear
+    inalámbrico desde la consola).
 15. **Sincronización a prueba:** en el panel de la **Consola**, **Probar el
     sync** hace sonar un click en todos los dispositivos a la vez durante 8 s
     (con la música parada): con dos celulares juntos, o la consola y un
@@ -956,23 +932,25 @@ estado. **Nada de su audio viaja por la red mientras suena:**
   próxima (con cuenta, el pad la acompaña). El servidor lo borra cuando el
   pad terminó de irse.
 
-### Talkback
+### Consola en vivo
 
-La compu toma la entrada elegida (`audio/talkback.ts`, `EmisorTalkback`:
-micrófono, interface (la entrada elegida), placa de sonido o un cable
-virtual desde Reaper), la filtra y la baja a 16 kHz mono en un AudioWorklet
-(la compu abre su página en `localhost`, donde el navegador lo permite) y,
-con **Talkback** abierto, manda pedacitos de 10 ms (320 bytes, 256 kbps:
-la mitad de espera para juntar cada uno que con 20 ms) con la hora del
-servidor en que se captaron (`talkback:audio`). Manda **siempre, también
+La compu toma la entrada elegida (`audio/consolaEnVivo.ts`, `EmisorVivo`:
+interface (la entrada elegida, o el promedio de todas), placa de sonido o un
+cable virtual desde Reaper) tal cual, sin procesar (sin cancelación de eco,
+supresión de ruido ni control de volumen: le arruinan la música y suman
+demora), en un AudioWorklet (la compu abre su página en `localhost`, donde
+el navegador lo permite), a la frecuencia de su AudioContext (casi siempre
+48 kHz, la de los celulares: nadie la convierte). Prendida, manda pedacitos
+de 10 ms con esa frecuencia y la hora del servidor en que se captaron
+(`vivo:audio`, 960 bytes, 768 kbps por celular). Manda **siempre, también
 el silencio**: con ahorro de energía, el WiFi del celular se duerme entre
-paquete y paquete, y al despertar los primeros llegan tarde (la espera
-tendría que ser más larga). La **app de Android** además pide el WiFi de
-baja demora mientras está abierta (`WifiLock` `WIFI_MODE_FULL_LOW_LATENCY`,
-o de alto rendimiento antes de Android 10; permiso `WAKE_LOCK`). El
-servidor guarda si está abierto (`talkback:activo` → `talkback:estado`, se lo
-dice a cada celular que entra) y reenvía los pedazos solo a los celulares que
-no son consola ni multimedia, **por un WebSocket propio del audio en vivo**
+paquete y paquete, y al despertar los primeros llegan tarde. La **app de
+Android** además pide el WiFi de baja demora mientras está abierta
+(`WifiLock` `WIFI_MODE_FULL_LOW_LATENCY`, o de alto rendimiento antes de
+Android 10; permiso `WAKE_LOCK`). El servidor guarda si está prendida
+(`vivo:activo` → `vivo:estado`, se lo dice a cada celular que entra; se
+apaga si se va la compu) y solo entonces reenvía los pedazos, a los
+celulares que no son consola ni multimedia, **por un WebSocket propio**
 (`server/audioVivo.ts`, `ws://compu/audio-vivo?llave=…`; formato en
 `shared/audioVivo.ts`): una sola trama por pedazo (por socket.io irían dos:
 el aviso y los datos), sin esperar detrás de otros mensajes y, si un celular
@@ -980,63 +958,36 @@ viene atrasado (más de 16 KB sin mandar), el pedazo se descarta en vez de
 acumularse. Cada celular pide su llave por socket.io al conectarse
 (`audio-vivo:llave`, solo celulares: así solo entra quien pasó el código de
 la banda) y abre el WebSocket con ella; mientras no lo tenga abierto, el
-audio le llega por socket.io (`volatile`). **Cada celular los programa como cualquier
-audio** (`recibirVivo`: un `AudioBufferSource` por pedazo, pasado a su
-frecuencia, a la `hora de captura + espera` con el mismo reloj que la
-música; los seguidos se pegan uno detrás del otro). Sin AudioWorklet a
-propósito: los celulares entran por `http://` en la red local, y ahí el
-navegador no lo habilita (era la causa de que el talkback no sonara en
-celulares reales; la prueba e2e ahora conecta los celulares por la IP de la
-red, como uno de verdad). La **espera se ajusta sola** (`EsperaTalkback`):
-cada pedazo necesita lo que tardó por el WiFi **más lo que tarda ese celular
-en sacar el audio** (su salida, la misma que se descuenta para la música:
-así la espera es la demora real hasta el oído). Va a lo que necesitan casi
-todos los pedazos de los últimos 2 s (el 98 %) más 15 ms; tres pedazos tarde
-en un segundo (el WiFi se puso lento) la suben enseguida, de a 60 ms como
-mucho (un tirón del celular no la deja en medio segundo); un tropezón suelto
-no (se pierden esos 10 ms); con todo a tiempo, cada segundo se acerca la
-mitad de lo que sobra (de 30 a 600 ms). La música no baja (es un fader
-más). Cada celular informa a la compu a cuántos ms se escucha, cuánto tarda
-la red (el 95 % de los pedazos) y su salida; se ve en ⚙ Ajustes →
-Talkback (*se escucha a los 92 ms: WiFi 36 ms + salida del celular 41 ms*;
-si la salida pasa de 120 ms avisa que pueden ser auriculares Bluetooth).
-Medido en la prueba e2e (compu y celulares en la misma máquina, cargada):
-la red ~36 ms (antes ~49) y, abierto un rato, se escucha a los **~92 ms
-hasta el oído, salida del celular incluida**, y ningún pedazo tarde
-(antes también ~90 ms, pero la espera no contaba la salida del celular y los
-pedazos que tardaban un poco más se salteaban). La consola no recibe nada
-(−90 dB) y la música del músico sigue igual con el talkback abierto. En un
-WiFi real se suma lo que tarde el router (estimado: 10 a 40 ms más con la
-app y el router cerca).
+audio le llega por socket.io (`volatile`). **Cada celular los programa como
+cualquier audio** (`recibirVivo`: un `AudioBufferSource` por pedazo a la
+`hora de captura + espera`, con el mismo reloj que la música; los seguidos
+se pegan uno detrás del otro, y después de un hueco el primero entra con un
+fundido de 2 ms). Si la frecuencia no es la del celular, se interpola. Sin
+AudioWorklet a propósito: los celulares entran por `http://` en la red
+local, y ahí el navegador no lo habilita (la prueba e2e conecta los
+celulares por la IP de la red, como uno de verdad).
 
-### Banda en vivo
-
-Igual que el talkback, por el mismo camino, con su propio canal (`banda`):
-la compu toma la entrada elegida con otro `EmisorTalkback` en modo
-`'banda'` (sin *Mejorar la voz*, sin filtro y sin bajar la frecuencia: la
-del AudioContext de la compu, casi siempre 48 kHz) y manda pedazos de 10 ms
-con su frecuencia (`banda:audio`, 960 bytes, 768 kbps por celular). El
-servidor solo los reenvía con la banda prendida (`banda:activo` →
-`banda:estado`; se apaga si se va la compu), a los mismos celulares que el
-talkback y por el mismo WebSocket de audio (la trama dice el canal y la
-frecuencia). Cada celular tiene, por canal, su volumen (el fader *Banda en
-vivo* de *Mi mezcla*, que aparece solo con la banda prendida), su
-`EsperaTalkback` y su último pedazo; si la frecuencia es la del celular
-pasa tal cual, si no se interpola; después de un hueco el primer pedazo
-entra con un fundido de 2 ms (sin "click"). Lo medido llega a la compu en
-`diag.banda` y se ve en ⚙ Ajustes → Banda en vivo. Chrome aplica a todo lo
-que se abre de una misma interface el procesamiento del primero que la
-abrió: si el talkback la usa con *Mejorar la voz*, la banda saldría
-procesada (en la prueba, a 0,02 en vez de 0,035); el panel lo avisa, lo
-apaga de un toque y, al cambiar el talkback, la banda se reabre. Medido en
-la prueba e2e de GitHub Actions (celulares por la IP de la red, audio por el
-WebSocket): el músico la escucha (la consola no: 0), a los **~100 ms** (red
-~27 ms + salida ~40 ms; el talkback en la misma prueba, a los ~88 ms), sin
-pedazos tarde, y apagada se va el fader y no llega nada. (En la máquina
-donde se escribió esto, un proxy no deja que el navegador abra WebSockets a
-la IP de la red: ahí socket.io queda en *polling* y el audio en vivo llega
-por socket.io, así que la prueba solo verifica el WebSocket de audio donde
-la red lo deja.)
+La **espera se ajusta sola** (`EsperaVivo`): cada pedazo necesita lo que
+tardó por el WiFi **más lo que tarda ese celular en sacar el audio** (su
+salida, la misma que se descuenta para la música: así la espera es la
+demora real hasta el oído). Va a lo que necesitan casi todos los pedazos de
+los últimos 2 s (el 98 %) más 15 ms; tres pedazos tarde en un segundo (el
+WiFi se puso lento) la suben enseguida, de a 60 ms como mucho; un tropezón
+suelto no (se pierden esos 10 ms); con todo a tiempo, cada segundo se
+acerca la mitad de lo que sobra (de 30 a 600 ms). Cada celular informa a la
+compu a cuántos ms se escucha, cuánto tarda la red (el 95 % de los pedazos)
+y su salida (`diag.vivo`); se ve en ⚙ Ajustes → Consola en vivo (si la
+salida pasa de 120 ms avisa que pueden ser auriculares Bluetooth). Antes el
+talkback (un micrófono en la compu) y la banda en vivo iban por separado;
+como el micrófono del talkback entra a la consola, quedó un solo canal, y
+lo que estaba elegido pasa solo (`migrarPrefsVivo`). Medido en la prueba
+e2e de GitHub Actions (celulares por la IP de la red, audio por el
+WebSocket): red ~27 ms + salida ~40 ms, se escucha a los **~90 a 100 ms**,
+sin pedazos tarde; la consola no recibe nada y la música del músico sigue
+igual. En un WiFi real se suma lo que tarde el router. (En la máquina donde
+se escribió esto, un proxy no deja que el navegador abra WebSockets a la IP
+de la red: ahí el audio llega por socket.io, así que la prueba solo
+verifica el WebSocket donde la red lo deja.)
 
 ### Roles y consola
 
@@ -1255,11 +1206,12 @@ habitual de los programas que se venden sin conexión.
    probar; mientras está prendido, arriba se ve **Compu** con un parlante, y
    tocándolo se apaga).
 1b. **La barra de arriba es para el vivo; lo que se elige una vez va en ⚙.**
-   Arriba: listas y canciones, celulares, talkback (abrir y cerrar),
-   consola, el candado de los celulares, ⚙ y ayuda. En **⚙ Ajustes**, en
-   pestañas: **En vivo** (cómo salta, Terminar con fundido), **Sonidos**
-   (voz del salto, pad del colchón), **Esta compu** (sonido en la compu y
-   su ajuste fino) y **Talkback** (micrófono y demora en cada celular). En
+   Arriba: listas y canciones, celulares, consola en vivo (prender y
+   apagar), consola, el candado de los celulares, ⚙ y ayuda. En **⚙
+   Ajustes**, en pestañas: **Saltos y final** (cómo salta, Terminar con
+   fundido), **Sonidos** (voz del salto, pad del colchón), **Esta compu**
+   (sonido en la compu y su ajuste fino) y **Consola en vivo** (de dónde
+   entra y demora en cada celular). En
    el celular, el ⚙ de arriba (el director ahí elige cómo salta).
 2. **Una sola canción suena a la vez, y nada la corta por accidente.**
    Pasar a otra canción o quitar la que suena pide confirmación (corta el
@@ -1330,10 +1282,10 @@ habitual de los programas que se venden sin conexión.
   latencia de cada modelo y el Bluetooth solo se pueden medir con hardware.
   Prueba sugerida: 2–3 celulares juntos con **Probar el sync** (panel de la
   Consola); si se oye "eco", usar el ajuste fino en el que suena atrasado.
-- **Talkback:** probado de punta a punta con un micrófono simulado; la
-  demora real depende del router (el panel del talkback la mide en cada
-  celular). Hablar desde un celular necesitaría https (o que la app Android
-  capture el micrófono): por ahora habla solo la compu.
+- **Consola en vivo:** probada de punta a punta con una interface simulada;
+  la demora real depende del router y de cada celular (el panel la mide en
+  cada uno). Hablar desde un celular necesitaría https (o que la app Android
+  capture el micrófono): por ahora el talkback entra por la consola.
 - **Reconocimiento de la voz guía:** la cadena completa (frases, ajuste al
   compás, nombres de sección) está probada con voz sintética en español y un
   reconocedor simulado; el modelo Whisper real no se pudo probar en el
