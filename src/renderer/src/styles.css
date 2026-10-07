@@ -5413,6 +5413,17 @@ input[type='date'] {
   clip-path: inset(0 calc((1 - var(--nivel)) * 100%) 0 0);
 }
 
+/* banda en vivo: el aviso de arriba (azul, para no confundirlo con el talkback) y la aclaracion de la demora */
+.talkback.banda-vivo.abierto {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ayuda.banda-aviso {
+  border-left: 3px solid var(--warn);
+  padding-left: 10px;
+}
+
 /* ---------- talkback (celular) ---------- */
 
 /* el director elige como salta (al terminar la seccion, en el compas o ya) */

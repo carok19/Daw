@@ -16,7 +16,7 @@ interface Props {
   onDispositivos: () => void
   /** elegir el celular de la consola (rol Sonido) */
   onConsola: () => void
-  /** el boton del talkback (mantener apretado para hablar) */
+  /** el interruptor del talkback (y, mientras se manda, el aviso de la banda en vivo) */
   talkback: React.ReactNode
   locked: boolean
   onLocked: (v: boolean) => void
@@ -206,7 +206,7 @@ export function TopBar(p: Props) {
             <span className="texto-largo">Compu</span>
           </button>
         )}
-        <button className="btn-fantasma btn-icono" onClick={p.onAjustes} title="Ajustes: cómo salta y Terminar, voz del salto y pad, sonido en esta compu, talkback" aria-label="Ajustes">
+        <button className="btn-fantasma btn-icono" onClick={p.onAjustes} title="Ajustes: cómo salta y Terminar, voz del salto y pad, sonido en esta compu, talkback, banda en vivo" aria-label="Ajustes">
           <Settings size={19} />
         </button>
         <button className="btn-fantasma btn-icono" onClick={p.onAyuda} title="Atajos de teclado (?)" aria-label="Atajos de teclado">

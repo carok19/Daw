@@ -7,6 +7,8 @@ import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import AdmZip from 'adm-zip'
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client'
+import { WebSocket } from 'ws'
+import { leerTrama, RUTA_AUDIO_VIVO, type PedazoVivo } from '../shared/audioVivo'
 import { createServer, type AppServer } from './index'
 import { rutaFfmpeg, leerInfoWav } from './audio'
 import { nombrePistaDesdeArchivo } from './zip'
@@ -2330,6 +2332,78 @@ test('talkback: abierto queda abierto (el celular que entra después lo sabe); v
   // si la compu se va, se cierra
   const [cerrado] = await Promise.all([esperarEvento<{ activo: boolean }>(musico, 'talkback:estado', (e) => !e.activo), compu.close()])
   assert.equal(cerrado.activo, false)
+  await env.cerrar()
+})
+
+test('audio en vivo: cada celular lo recibe por su WebSocket (una trama por pedazo); la consola no; la banda solo prendida; sin llave no entra', async (t) => {
+  const env = await entorno(t)
+  const compu = await env.conectar(compuAuth)
+  /** un celular y la llave de su audio en vivo (la pide al conectarse; pedirla otra vez da la misma) */
+  async function celular(deviceId: string, nombre: string, rol: string): Promise<{ s: ClientSocket; llave: string }> {
+    const s = await env.conectar({ origen: 'celular', deviceId, nombre, rol })
+    const { llave } = await emitAck<{ llave: string }>(s, 'audio-vivo:llave', {})
+    assert.equal((await emitAck<{ llave: string }>(s, 'audio-vivo:llave', {})).llave, llave)
+    return { s, llave }
+  }
+  function abrirAudio(llave: string): Promise<{ ws: WebSocket; pedazos: PedazoVivo[] }> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://localhost:${env.port}${RUTA_AUDIO_VIVO}?llave=${llave}`)
+      t.after(() => ws.terminate())
+      const pedazos: PedazoVivo[] = []
+      ws.binaryType = 'arraybuffer'
+      ws.on('message', (d: ArrayBuffer) => {
+        const p = leerTrama(d)
+        if (p) pedazos.push(p)
+      })
+      ws.on('open', () => resolve({ ws, pedazos }))
+      ws.on('error', reject)
+    })
+  }
+  const musico = await celular('cel-av-1', 'Bajo', 'musico')
+  const consola = await celular('cel-av-2', 'Consola', 'sonido')
+  // la compu no recibe audio en vivo: no tiene llave
+  assert.equal((await emitAck<{ llave: string | null }>(compu, 'audio-vivo:llave', {})).llave, null)
+  const audioMusico = await abrirAudio(musico.llave)
+  const audioConsola = await abrirAudio(consola.llave)
+  // sin una llave de verdad no entra
+  await assert.rejects(abrirAudio('cualquiera'))
+  // con el WebSocket abierto, nada viaja dos veces (ni por socket.io)
+  const porSocketIo: string[] = []
+  musico.s.on('talkback:audio', () => porSocketIo.push('talkback'))
+  musico.s.on('banda:audio', () => porSocketIo.push('banda'))
+  compu.emit('talkback:audio', { n: 7, t: 1234.5, pcm: Buffer.alloc(320) })
+  // la banda apagada no viaja
+  compu.emit('banda:audio', { n: 1, t: 1000, sr: 48000, pcm: Buffer.alloc(960) })
+  await esperar(300)
+  assert.deepEqual(
+    audioMusico.pedazos.map((p) => [p.canal, p.n, p.t, p.sr, p.pcm.byteLength]),
+    [['talkback', 7, 1234.5, 16000, 320]]
+  )
+  // prendida: va a los oidos, no a la consola; un pedazo raro o mandado por un celular, no
+  await Promise.all([esperarEvento<{ activo: boolean }>(musico.s, 'banda:estado', (e) => e.activo), compu.emit('banda:activo', { activo: true })])
+  musico.s.emit('banda:activo', { activo: false })
+  compu.emit('banda:audio', { n: 2, t: 2000, sr: 48000, pcm: Buffer.alloc(960) })
+  compu.emit('banda:audio', { n: 3, t: 2010, sr: 3, pcm: Buffer.alloc(960) })
+  compu.emit('banda:audio', { n: 4, t: 2020, sr: 48000, pcm: Buffer.alloc(961) })
+  musico.s.emit('banda:audio', { n: 5, t: 2030, sr: 48000, pcm: Buffer.alloc(960) })
+  await esperar(300)
+  assert.deepEqual(
+    audioMusico.pedazos.slice(1).map((p) => [p.canal, p.n, p.sr, p.pcm.byteLength]),
+    [['banda', 2, 48000, 960]]
+  )
+  assert.equal(audioConsola.pedazos.length, 0)
+  assert.deepEqual(porSocketIo, [])
+  // un celular sin el WebSocket de audio (todavia) lo recibe por socket.io
+  const voz = await celular('cel-av-3', 'Voz', 'voz')
+  const [porIo] = await Promise.all([esperarEvento<{ n: number; sr: number }>(voz.s, 'banda:audio'), compu.emit('banda:audio', { n: 6, t: 3000, sr: 44100, pcm: Buffer.alloc(882) })])
+  assert.equal(porIo.sr, 44100)
+  // el celular que se va: su llave ya no sirve
+  musico.s.close()
+  await esperar(200)
+  await assert.rejects(abrirAudio(musico.llave))
+  // sin la compu, la banda se apaga
+  const [apagada] = await Promise.all([esperarEvento<{ activo: boolean }>(voz.s, 'banda:estado', (e) => !e.activo), compu.close()])
+  assert.equal(apagada.activo, false)
   await env.cerrar()
 })
 

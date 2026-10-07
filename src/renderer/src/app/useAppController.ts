@@ -45,6 +45,8 @@ import { setPlayheadMs, getPlayheadMs, setGolpeCuenta, setGolpeColchon } from '.
 import { deviceIdPersistente, guardarPref, leerPref } from './preferencias'
 import { ReconocimientoGuia } from '../analisis/reconocimientoGuia'
 import { EmisorTalkback, type OpcionesEntrada, type PedazoTalkback } from '../audio/talkback'
+import { ReceptorVivo } from '../sync/AudioVivo'
+import type { CanalVivo } from '@shared/audioVivo'
 import { codigoDesdeDireccion, puenteAndroid } from '../conexion'
 
 /** Compas mas cercano (si esta a menos de medio compas): "ajustar al compas". */
@@ -196,6 +198,10 @@ export function useAppController() {
   const ajusteFinoRef = useRef<((ms: number) => void) | null>(null)
   // talkback (ver audio/talkback.ts): abierto en la compu (lo saben todos; en el celular es un fader mas de "Mi mezcla")
   const [talkbackActivo, setTalkbackActivoState] = useState(false)
+  // banda en vivo (lo que sale de la consola, de referencia): prendida en la compu (en el celular aparece su fader)
+  const [bandaActivo, setBandaActivoState] = useState(false)
+  // celular: el WebSocket del audio en vivo (talkback y banda)
+  const receptorVivoRef = useRef<ReceptorVivo | null>(null)
   // compu: si lo prendio (queda asi hasta que lo apague), de donde sale la voz (microfono o interface, que entrada, si se mejora)
   const [talkback, setTalkback] = useState<{
     /** prendido en esta compu (se recuerda: al volver a abrir el programa sigue prendido) */
@@ -217,6 +223,25 @@ export function useAppController() {
   }))
   const talkbackRef = useRef<EmisorTalkback | null>(null)
   const nivelTalkbackRef = useRef(0)
+  // compu: la banda en vivo (lo que sale de la consola, de referencia en los oidos): si la manda y de que entrada
+  const [banda, setBanda] = useState<{
+    /** mandandola (se recuerda: al volver a abrir el programa sigue prendida) */
+    activo: boolean
+    error: string | null
+    entrada: string | null
+    /** que entrada de la interface (0 = la 1…); null = todas juntas (estereo: izquierda y derecha) */
+    canal: number | null
+    /** cuantas entradas tiene lo abierto (0 = todavia cerrado) */
+    canales: number
+  }>(() => ({
+    activo: false,
+    error: null,
+    entrada: origen === 'compu' ? leerPref<string | null>('banda-entrada', null) : null,
+    canal: origen === 'compu' ? leerPref<number | null>('banda-canal', null) : null,
+    canales: 0
+  }))
+  const bandaRef = useRef<EmisorTalkback | null>(null)
+  const nivelBandaRef = useRef(0)
 
   /** la compu pide el codigo de la banda (n: cuantas veces, para reaccionar a cada rechazo) */
   const [pedidoCodigo, setPedidoCodigo] = useState<{ motivo: MotivoCodigo; n: number } | null>(null)
@@ -292,7 +317,7 @@ export function useAppController() {
   // diagnostico: con ?debug en la URL se exponen el motor y el estado en window.__mt (pruebas de campo)
   useEffect(() => {
     if (new URLSearchParams(window.location.search).has('debug')) {
-      ;(window as unknown as { __mt: unknown }).__mt = { engineRef, socketRef, estadoRef }
+      ;(window as unknown as { __mt: unknown }).__mt = { engineRef, socketRef, estadoRef, receptorVivoRef }
     }
   }, [])
 
@@ -441,6 +466,24 @@ export function useAppController() {
   // ---- conexion ----
   useEffect(() => {
     const socket = socketRef.current!
+    // celular: el audio en vivo (talkback y banda) llega por su propio WebSocket, una trama por pedazo (ver shared/audioVivo.ts)
+    const receptor = origen === 'celular' ? new ReceptorVivo((p) => engineRef.current?.recibirVivo(p, socket.clockOffsetMs)) : null
+    receptorVivoRef.current = receptor
+    /** pide la llave de esta conexion y abre el WebSocket de audio con ella */
+    const abrirAudioVivo = (): void => {
+      if (!receptor) return
+      void socket.emitAck<{ llave: string | null }>('audio-vivo:llave', {}, 5000).then(
+        (r) => {
+          if (typeof r?.llave === 'string' && socket.socket.connected) receptor.abrir(r.llave)
+        },
+        () => undefined
+      )
+    }
+    if (socket.socket.connected) abrirAudioVivo()
+    /** lo mismo, si llega por socket.io (todavia sin el WebSocket de audio) */
+    const porSocketIo = (canal: CanalVivo, p: PedazoTalkback | undefined, srPorDefecto: number): void => {
+      if (p) engineRef.current?.recibirVivo({ canal, n: p.n, t: p.t, sr: typeof p.sr === 'number' ? p.sr : srPorDefecto, pcm: p.pcm }, socket.clockOffsetMs)
+    }
 
     // avisos que llegan en tanda (secciones detectadas en varias canciones): uno solo con el resumen
     const grupos = new Map<string, { textos: string[]; timer?: ReturnType<typeof setTimeout>; desde: number }>()
@@ -552,9 +595,11 @@ export function useAppController() {
       socket.on<{ ms: number }>('ajuste:fino', (p) => {
         if (typeof p?.ms === 'number') ajusteFinoRef.current?.(p.ms)
       }),
-      // talkback: la compu le habla a la banda (10 ms por mensaje)
-      socket.on<PedazoTalkback>('talkback:audio', (p) => engineRef.current?.recibirTalkback(p, socket.clockOffsetMs)),
+      // talkback y banda en vivo (10 ms por pedazo): por el WebSocket de audio o, mientras no este abierto, por aca
+      socket.on<PedazoTalkback>('talkback:audio', (p) => porSocketIo('talkback', p, 16000)),
+      socket.on<PedazoTalkback>('banda:audio', (p) => porSocketIo('banda', p, 48000)),
       socket.on<{ activo: boolean }>('talkback:estado', (p) => setTalkbackActivoState(p?.activo === true)),
+      socket.on<{ activo: boolean }>('banda:estado', (p) => setBandaActivoState(p?.activo === true)),
       // "Terminar con fundido": empieza a apagarse (o se cancelo a mitad y vuelve)
       socket.on<AvisoFundido>('transport:fundido', (p) => {
         const actual = estadoRef.current
@@ -597,6 +642,9 @@ export function useAppController() {
       socket.on<EstadoLicencia>('licencia:estado', (l) => setLicencia(l)),
       socket.onConexionCambia(async (c) => {
         setConectado(c)
+        // sin conexion, la llave ya no vale: al volver se pide otra
+        if (c) abrirAudioVivo()
+        else receptor?.cerrar()
         try {
           puenteAndroid()?.conexion?.(c)
         } catch {
@@ -621,6 +669,8 @@ export function useAppController() {
     return () => {
       offs.forEach((off) => off())
       for (const g of grupos.values()) clearTimeout(g.timer)
+      receptor?.cerrar()
+      if (receptorVivoRef.current === receptor) receptorVivoRef.current = null
     }
   }, [avisar, sincronizarMotor])
 
@@ -691,7 +741,8 @@ export function useAppController() {
           ...engine.resumenDiagnostico(),
           resyncs: resyncsRef.current,
           plataforma: plataforma(origen),
-          talkback: engine.esperaTalkback.medicion().redMs !== null ? engine.esperaTalkback.medicion() : null
+          talkback: engine.esperaTalkback.medicion().redMs !== null ? engine.esperaTalkback.medicion() : null,
+          banda: engine.esperaBanda.medicion().redMs !== null ? engine.esperaBanda.medicion() : null
         }
       })
       ultimoReporte = JSON.stringify({ d: drift === null ? null : Math.round(drift), buffer, error })
@@ -805,12 +856,47 @@ export function useAppController() {
         procesar: leerPref<boolean>('talkback-procesar', true)
       }
     }
-    /** Si el microfono ya estaba abierto, lo vuelve a abrir con lo elegido (sin dejar de hablar). */
+    /** El que toma la banda en vivo en la compu (uno solo, se crea la primera vez). */
+    function emisorBanda(): EmisorTalkback {
+      if (!bandaRef.current) {
+        const emisor = new EmisorTalkback(
+          (p) => socket.socket.volatile.emit('banda:audio', p),
+          () => socket.serverNow(),
+          'banda'
+        )
+        emisor.onNivel = (v) => {
+          nivelBandaRef.current = v
+        }
+        bandaRef.current = emisor
+      }
+      return bandaRef.current
+    }
+    /** De donde se toma la banda (lo elegido en ⚙ Ajustes → Banda en vivo): siempre tal cual. */
+    function opcionesBanda(): OpcionesEntrada {
+      return { entrada: leerPref<string | null>('banda-entrada', null), canal: leerPref<number | null>('banda-canal', null), procesar: false }
+    }
+    /** Si la entrada de la banda ya estaba abierta, la vuelve a abrir con lo elegido. */
+    function reabrirBanda(): void {
+      const emisor = bandaRef.current
+      if (!emisor?.abierto()) return
+      emisor.abrir(opcionesBanda()).then(
+        () => setBanda((b) => ({ ...b, canales: emisor.canales() })),
+        () => setBanda((b) => ({ ...b, canales: 0, error: 'No se pudo abrir esa entrada' }))
+      )
+    }
+    /**
+     * Si el microfono ya estaba abierto, lo vuelve a abrir con lo elegido (sin
+     * dejar de hablar). Si la banda sale de la misma interface, se reabre
+     * despues (asi le llega el "Mejorar la voz" que corresponde: ninguno).
+     */
     function reabrirTalkback(): void {
       const emisor = talkbackRef.current
       if (!emisor?.abierto()) return
       emisor.abrir(opcionesTalkback()).then(
-        () => setTalkback((t) => ({ ...t, canales: emisor.canales() })),
+        () => {
+          setTalkback((t) => ({ ...t, canales: emisor.canales() }))
+          if ((opcionesBanda().entrada ?? '') === (opcionesTalkback().entrada ?? '')) void bandaRef.current?.reabrir().catch(() => undefined)
+        },
         () => setTalkback((t) => ({ ...t, canales: 0, error: 'No se pudo abrir esa entrada' }))
       )
     }
@@ -981,6 +1067,67 @@ export function useAppController() {
           return true
         } catch {
           setTalkback((t) => ({ ...t, error: 'No se pudo abrir el micrófono' }))
+          return false
+        }
+      },
+
+      /**
+       * Compu: mandar (o dejar de mandar) la banda en vivo a los oidos de la
+       * banda, de referencia (no a la consola ni a multimedia): en cada
+       * celular aparece su fader. Queda asi hasta que alguien lo apague.
+       */
+      async setBandaActivo(activo: boolean): Promise<void> {
+        guardarPref('banda-activo', activo)
+        const emisor = emisorBanda()
+        if (!activo) {
+          emisor.enviando = false
+          emit('banda:activo', { activo: false })
+          setBanda((b) => ({ ...b, activo: false, error: null }))
+          return
+        }
+        setBanda((b) => ({ ...b, activo: true, error: null }))
+        try {
+          await emisor.abrir(opcionesBanda())
+          setBanda((b) => ({ ...b, canales: emisor.canales() }))
+        } catch (e) {
+          const nombre = (e as { name?: string })?.name
+          setBanda((b) => ({
+            ...b,
+            error: nombre === 'NotAllowedError' ? 'Windows no dejó usar esa entrada' : nombre === 'NotFoundError' || nombre === 'OverconstrainedError' ? 'No se encontró esa entrada' : 'No se pudo abrir la entrada'
+          }))
+          emit('banda:activo', { activo: false })
+          return
+        }
+        if (!leerPref<boolean>('banda-activo', false)) return // la apagaron mientras se abria
+        emit('banda:activo', { activo: true })
+        emisor.enviando = true
+      },
+      /** Compu: lo que entra de la banda (0 a 1), para el vumetro. */
+      nivelBanda(): number {
+        return nivelBandaRef.current
+      },
+      /** Compu: elegir de donde sale la banda (la interface o placa donde entra la consola; null = la de Windows). */
+      setEntradaBanda(id: string | null): void {
+        guardarPref('banda-entrada', id)
+        guardarPref('banda-canal', null)
+        setBanda((b) => ({ ...b, entrada: id, canal: null, error: null }))
+        reabrirBanda()
+      },
+      /** Compu: que entrada de la interface (0 = la 1…; null = todas juntas). */
+      setCanalBanda(canal: number | null): void {
+        guardarPref('banda-canal', canal)
+        setBanda((b) => ({ ...b, canal, error: null }))
+        reabrirBanda()
+      },
+      /** Compu: abrir la entrada de la banda sin mandarla (para ver el nivel). */
+      async probarEntradaBanda(): Promise<boolean> {
+        const emisor = emisorBanda()
+        try {
+          await emisor.abrir(opcionesBanda())
+          setBanda((b) => ({ ...b, canales: bandaRef.current?.canales() ?? 0 }))
+          return true
+        } catch {
+          setBanda((b) => ({ ...b, error: 'No se pudo abrir la entrada' }))
           return false
         }
       },
@@ -1405,13 +1552,15 @@ export function useAppController() {
 
   ajusteFinoRef.current = acciones.setAjusteManualMs
 
-  // talkback: si quedo prendido, al abrir el programa vuelve prendido; y si se corta la conexion, al volver se le recuerda al servidor
+  // talkback y banda en vivo: si quedaron prendidos, al abrir el programa vuelven prendidos; y si se corta la conexion, al volver se le recuerda al servidor
   useEffect(() => {
     const socket = socketRef.current
     if (origen !== 'compu' || !socket) return
     if (leerPref<boolean>('talkback-activo', false)) void acciones.setTalkbackActivo(true)
+    if (leerPref<boolean>('banda-activo', false)) void acciones.setBandaActivo(true)
     return socket.onConexionCambia((conectado) => {
       if (conectado && talkbackRef.current?.enviando) socket.emit('talkback:activo', { activo: true })
+      if (conectado && bandaRef.current?.enviando) socket.emit('banda:activo', { activo: true })
     })
   }, [acciones, origen])
 
@@ -1460,6 +1609,8 @@ export function useAppController() {
     escucharMultimedia,
     talkback,
     talkbackActivo,
+    banda,
+    bandaActivo,
     /** este celular maneja la cancion: director (o todavia sin rol, como antes) y sin el control bloqueado */
     puedeControlar: origen === 'compu' || (!(estado?.locked ?? false) && (rol === null || rol === 'director')),
     ...acciones

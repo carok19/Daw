@@ -14,6 +14,7 @@ import { PanelAjustes, type PestanaAjustes } from './Ajustes'
 import { ConnectionPanel } from './ConnectionPanel'
 import { PanelConsola } from './Consola'
 import { BotonTalkback } from './Talkback'
+import { IndicadorBanda } from './BandaEnVivo'
 import { LicenciaPanel } from './LicenciaPanel'
 import { ProjectsScreen } from './ProjectsScreen'
 import { ShortcutsModal } from './ShortcutsModal'
@@ -214,7 +215,12 @@ export function ComputerApp({ controller }: { controller: AppController }) {
         dispositivos={controller.dispositivos}
         onDispositivos={() => setVentana({ tipo: 'conexion' })}
         onConsola={() => setVentana({ tipo: 'consola' })}
-        talkback={<BotonTalkback controller={controller} />}
+        talkback={
+          <>
+            <BotonTalkback controller={controller} />
+            <IndicadorBanda controller={controller} onAbrir={() => setVentana({ tipo: 'ajustes', pestana: 'banda' })} />
+          </>
+        }
         locked={estado?.locked ?? false}
         onLocked={controller.setLocked}
         sonidoLocal={controller.sonidoLocal}

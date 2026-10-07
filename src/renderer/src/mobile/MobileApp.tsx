@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  AudioLines,
   AlertTriangle,
   ArrowRight,
   ChevronDown,
@@ -54,6 +55,7 @@ import { enPantallaDeInicio, esAndroid, esIOS, puenteAndroid } from '../conexion
 import { PulsoColchon, textoColchon, textoCompasColchon } from '../ui/Colchon'
 import { estadoTerminar, IconoFundido, textoCuandoTermina } from '../ui/Fundido'
 import { SALIDA_PAD_VUELTA_MS } from '@shared/colchon'
+import { FADER_VIVO } from '@shared/audioVivo'
 
 type HojaAbierta = null | 'ajustes' | 'secciones' | 'canciones' | 'invitar'
 /** La cancion (por donde va y sus secciones) o "Mi mezcla" a pantalla completa. */
@@ -199,6 +201,7 @@ export function MobileApp({ controller }: { controller: AppController }) {
           </div>
           <CanalGeneral controller={controller} />
           <CanalTalkback controller={controller} />
+          <CanalBanda controller={controller} />
         </>
       )}
 
@@ -363,7 +366,7 @@ function CanalColchon({
  */
 function CanalTalkback({ controller }: { controller: AppController }) {
   const mezcla = controller.mezclaPersonal
-  const clave = clavePista('Talkback')
+  const clave = clavePista(FADER_VIVO.talkback)
   const cambiar = (patch: Partial<AjustePersonal>): void => {
     const nuevo = { ...(mezcla[clave] ?? { ganancia: 1, mute: false }), ...patch }
     const copia = { ...mezcla }
@@ -373,7 +376,7 @@ function CanalTalkback({ controller }: { controller: AppController }) {
   }
   return (
     <CanalColchon
-      nombre="Talkback"
+      nombre={FADER_VIVO.talkback}
       etiquetaAviso={controller.talkbackActivo ? 'abierto' : 'cerrado en la compu'}
       color="var(--danger)"
       Icono={Mic}
@@ -381,6 +384,25 @@ function CanalTalkback({ controller }: { controller: AppController }) {
       onCambio={cambiar}
     />
   )
+}
+
+/**
+ * Banda en vivo: lo que sale de la consola, de referencia (llega un poco
+ * despues que el sonido real). Un fader mas de "Mi mezcla", solo mientras la
+ * compu la manda.
+ */
+function CanalBanda({ controller }: { controller: AppController }) {
+  if (!controller.bandaActivo) return null
+  const mezcla = controller.mezclaPersonal
+  const clave = clavePista(FADER_VIVO.banda)
+  const cambiar = (patch: Partial<AjustePersonal>): void => {
+    const nuevo = { ...(mezcla[clave] ?? { ganancia: 1, mute: false }), ...patch }
+    const copia = { ...mezcla }
+    if (Math.abs(nuevo.ganancia - 1) < 0.001 && !nuevo.mute) delete copia[clave]
+    else copia[clave] = nuevo
+    controller.setMezclaPersonal(copia)
+  }
+  return <CanalColchon nombre={FADER_VIVO.banda} etiquetaAviso="de referencia" color="var(--accent)" Icono={AudioLines} ajuste={mezcla[clave]} onCambio={cambiar} />
 }
 
 function Mezcla({ controller, proyecto }: { controller: AppController; proyecto: Proyecto }) {
@@ -420,6 +442,7 @@ function Mezcla({ controller, proyecto }: { controller: AppController; proyecto:
       <CanalGeneral controller={controller} />
       <MezclaRapida proyecto={proyecto} mezcla={mezcla} onCambio={set} />
       <CanalTalkback controller={controller} />
+      <CanalBanda controller={controller} />
       {(proyecto.colchon || estado?.colchon) && (
         <>
           {proyecto.colchon && <CanalColchon nombre="Click" color="var(--text-2)" ajuste={mezcla[clavePista('Click')]} onCambio={(patch) => set('Click', patch)} />}

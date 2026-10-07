@@ -4,7 +4,8 @@ import { posicionActualMs } from '@shared/playback'
 import { aplicarGrupos, clavePista, codificarMezcla, mezclaDeSonido, mezclaEfectiva } from '@shared/mezcla'
 import { LARGO_SONIDO_CUENTA_SEC } from '@shared/cuenta'
 import { ENTRADA_PAD_SOLO_MS, NOTAS_PAD, PAN_CLICK_COLCHON, PAN_PAD, golpesDeColchon } from '@shared/colchon'
-import { deInt16, EsperaTalkback, SR_TALKBACK, type PedazoTalkback } from './talkback'
+import { deInt16, EsperaTalkback } from './talkback'
+import { FADER_VIVO, type CanalVivo, type PedazoVivo } from '@shared/audioVivo'
 import type { CurvaFundido, MezclaPersonal, PlaybackEngine } from './PlaybackEngine'
 import {
   BUFFER_CRITICAL_SEC,
@@ -107,13 +108,16 @@ interface Precarga {
 const INTERVALO_TICK_MS = 250
 
 /**
- * Un pedazo de talkback (16 kHz) a la frecuencia del celular (48 o 44,1 kHz),
- * interpolando. Va una muestra de 16 kHz atrasado (62 µs) para unirse con la
- * ultima del pedazo anterior (`anterior`): los pedazos pegados no "clickean".
+ * Un pedazo de audio en vivo (talkback: 16 kHz; banda: la de la compu) a la
+ * frecuencia del celular (48 o 44,1 kHz), interpolando. Va una muestra
+ * atrasado para unirse con la ultima del pedazo anterior (`anterior`): los
+ * pedazos pegados no "clickean". Si las dos frecuencias son iguales (la banda,
+ * casi siempre), pasa tal cual.
  */
-function aFrecuenciaDelCelular(pcm: Float32Array, anterior: number, sr: number): Float32Array {
-  const n = Math.round((pcm.length * sr) / SR_TALKBACK)
-  const paso = SR_TALKBACK / sr
+function aFrecuenciaDelCelular(pcm: Float32Array, anterior: number, srOrigen: number, sr: number): Float32Array {
+  if (srOrigen === sr) return pcm
+  const n = Math.round((pcm.length * sr) / srOrigen)
+  const paso = srOrigen / sr
   const out = new Float32Array(n)
   for (let k = 0; k < n; k++) {
     const x = k * paso - 1
@@ -212,12 +216,15 @@ export class StreamingEngine implements PlaybackEngine {
   private salidaSonido: SalidaSonido | null = null
   /** "Probar el sync": los clicks de la prueba (al medio, volumen fijo) */
   private pruebaGain: GainNode | null = null
-  /** talkback: volumen del celular x el de "Mi mezcla" para el talkback (un fader mas) */
-  private talkbackGain: GainNode
-  /** el ultimo pedazo de talkback programado: el siguiente se pega justo a continuacion (sin huecos) */
-  private talkbackUltimo: { n: number; fin: number; ultimaMuestra: number } | null = null
+  /**
+   * El audio en vivo: el talkback y la banda en vivo. Cada uno con su volumen
+   * (el del celular x el de su fader en "Mi mezcla"), su espera y el ultimo
+   * pedazo programado (el siguiente se pega justo a continuacion, sin huecos).
+   */
+  private vivo: Record<CanalVivo, { gain: GainNode; espera: EsperaTalkback; ultimo: { n: number; fin: number; ultimaMuestra: number } | null }>
   private volumenGeneral = 1
   readonly esperaTalkback = new EsperaTalkback()
+  readonly esperaBanda = new EsperaTalkback()
   /** lo ultimo antes del parlante (el limitador): de ahi mide el vumetro */
   private salidaFinal!: AudioNode
   private medidor: { izq: AnalyserNode; der: AnalyserNode; buf: Float32Array<ArrayBuffer> } | null = null
@@ -306,10 +313,14 @@ export class StreamingEngine implements PlaybackEngine {
     limitador.ratio.value = 20
     limitador.attack.value = 0.003
     limitador.release.value = 0.15
-    // la musica y el talkback se juntan en el limitador (el talkback es un fader mas: no baja la musica)
+    // la musica, el talkback y la banda en vivo se juntan en el limitador (cada uno es un fader mas: no bajan la musica)
     this.masterGain.connect(limitador)
-    this.talkbackGain = this.ctx.createGain()
-    this.talkbackGain.connect(limitador)
+    this.vivo = {
+      talkback: { gain: this.ctx.createGain(), espera: this.esperaTalkback, ultimo: null },
+      banda: { gain: this.ctx.createGain(), espera: this.esperaBanda, ultimo: null }
+    }
+    this.vivo.talkback.gain.connect(limitador)
+    this.vivo.banda.gain.connect(limitador)
     limitador.connect(this.ctx.destination)
     this.salidaFinal = limitador
     this.cuentaGain = this.ctx.createGain()
@@ -340,50 +351,60 @@ export class StreamingEngine implements PlaybackEngine {
     const g = v <= 100 ? (v / 100) ** 2 : 10 ** ((((v - 100) / 100) * 6) / 20)
     this.masterGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.02)
     this.volumenGeneral = g
-    this.volumenTalkback()
+    this.volumenVivo()
   }
 
-  // ---- talkback: la compu habla a los oidos de la banda (ver audio/talkback.ts) ----
+  // ---- audio en vivo: el talkback y la banda en vivo (ver audio/talkback.ts y shared/audioVivo.ts) ----
 
-  /** Volumen del talkback: el del celular por el "Talkback" de "Mi mezcla" (la consola no lo escucha nunca). */
-  private volumenTalkback(): void {
-    const g = this.salidaSonido ? 0 : this.volumenGeneral * this.factorPersonal('Talkback')
-    this.talkbackGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.02)
+  /** Volumen del talkback y de la banda: el del celular por su fader de "Mi mezcla" (la consola no los escucha nunca). */
+  private volumenVivo(): void {
+    for (const canal of ['talkback', 'banda'] as const) {
+      const g = this.salidaSonido ? 0 : this.volumenGeneral * this.factorPersonal(FADER_VIVO[canal])
+      this.vivo[canal].gain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.02)
+    }
   }
 
   /**
-   * Un pedazo de talkback (10 ms): suena `objetivo` ms despues de cuando se
-   * capto, con la misma hora del servidor que la musica. Se programa como
-   * cualquier audio (un AudioBufferSource a su hora), sin AudioWorklet: el
-   * navegador no lo habilita en http:// por la red local, que es como entran
-   * los celulares. Los pedazos seguidos se pegan uno detras del otro.
+   * Un pedazo de audio en vivo (10 ms de talkback o de la banda): suena
+   * `objetivo` ms despues de cuando se capto, con la misma hora del servidor
+   * que la musica. Se programa como cualquier audio (un AudioBufferSource a
+   * su hora), sin AudioWorklet: el navegador no lo habilita en http:// por la
+   * red local, que es como entran los celulares. Los pedazos seguidos se
+   * pegan uno detras del otro; despues de un hueco, el primero entra con un
+   * fundido de 2 ms (sin "click").
    */
-  recibirTalkback(p: PedazoTalkback, clockOffsetMs: number): void {
-    if (this.salidaSonido || !(p?.pcm instanceof ArrayBuffer) || typeof p.t !== 'number') return
+  recibirVivo(p: PedazoVivo, clockOffsetMs: number): void {
+    const canal = p?.canal === 'talkback' || p?.canal === 'banda' ? this.vivo[p.canal] : null
+    if (!canal || this.salidaSonido || !(p.pcm instanceof ArrayBuffer) || typeof p.t !== 'number' || !(p.sr >= 8000)) return
     // lo que hace falta esperar: lo que tardo por el WiFi y lo que tarda este celular en sacar el audio
-    this.esperaTalkback.registrar(Date.now() + clockOffsetMs - p.t, (this.ctx.currentTime - this.ctxEscuchadoAhora()) * 1000)
+    canal.espera.registrar(Date.now() + clockOffsetMs - p.t, (this.ctx.currentTime - this.ctxEscuchadoAhora()) * 1000)
     const pcm = deInt16(new Int16Array(p.pcm))
     if (pcm.length === 0) return
     const sr = this.ctx.sampleRate
-    let t = this.ctxDeServidor(p.t + this.esperaTalkback.objetivoMs, clockOffsetMs)
-    const previo = this.talkbackUltimo
+    let t = this.ctxDeServidor(p.t + canal.espera.objetivoMs, clockOffsetMs)
+    const previo = canal.ultimo
     // el que sigue, cerca de donde termino el anterior: pegado (ni un hueco ni encimado)
     const seguido = !!previo && p.n === previo.n + 1 && Math.abs(t - previo.fin) < 0.03
     if (seguido) t = previo!.fin
     if (t < this.ctx.currentTime + 0.003) {
       // ya paso su momento (llego tarde): se saltea; la espera se agranda sola (ver EsperaTalkback)
-      this.talkbackUltimo = null
+      canal.ultimo = null
       return
     }
-    const muestras = aFrecuenciaDelCelular(pcm, seguido ? previo!.ultimaMuestra : pcm[0], sr)
+    const muestras = aFrecuenciaDelCelular(pcm, seguido ? previo!.ultimaMuestra : pcm[0], p.sr, sr)
     const buffer = this.ctx.createBuffer(1, muestras.length, sr)
-    buffer.getChannelData(0).set(muestras)
+    const datos = buffer.getChannelData(0)
+    datos.set(muestras)
+    if (!seguido) {
+      const entrada = Math.min(datos.length, Math.round(sr * 0.002))
+      for (let i = 0; i < entrada; i++) datos[i] *= i / entrada
+    }
     const fuente = this.ctx.createBufferSource()
     fuente.buffer = buffer
-    fuente.connect(this.talkbackGain)
+    fuente.connect(canal.gain)
     fuente.onended = () => fuente.disconnect()
     fuente.start(t)
-    this.talkbackUltimo = { n: p.n, fin: t + muestras.length / sr, ultimaMuestra: pcm[pcm.length - 1] }
+    canal.ultimo = { n: p.n, fin: t + muestras.length / sr, ultimaMuestra: pcm[pcm.length - 1] }
   }
 
   setAjusteManualMs(ms: number): void {
@@ -393,7 +414,7 @@ export class StreamingEngine implements PlaybackEngine {
   setMezclaPersonal(mezcla: MezclaPersonal): void {
     this.mezclaPersonal = mezcla
     this.volumenesColchon()
-    this.volumenTalkback()
+    this.volumenVivo()
     if (this.ultimoProyecto) this.aplicarMezcla(this.ultimoProyecto)
     if (this.modo === 'mezcla' && this.precarga) this.reiniciarPrecarga()
   }
@@ -408,7 +429,7 @@ export class StreamingEngine implements PlaybackEngine {
     if ((antes?.click ?? null) === (salida?.click ?? null) && (antes?.guia ?? null) === (salida?.guia ?? null)) return
     this.salidaSonido = salida ? { click: !!salida.click, guia: !!salida.guia } : null
     this.padPanner.pan.setTargetAtTime(salida ? 0 : PAN_PAD, this.ctx.currentTime, 0.02)
-    this.volumenTalkback()
+    this.volumenVivo()
     this.volumenesColchon()
     if (this.ultimoProyecto) this.aplicarMezcla(this.ultimoProyecto)
     // los pedazos con la voz del salto ahora van sin ella (o al reves)

@@ -773,7 +773,7 @@ export interface DiagnosticoServidor {
   arranque?: { margenMs: number; peorEntregaMs: number | null }
 }
 
-/** Lo que mide cada celular del talkback (la compu hablando a los oidos). */
+/** Lo que mide cada celular del talkback (la compu hablando a los oidos) o de la banda en vivo. */
 export interface MedicionTalkback {
   /** cuanto despues de hablar se escucha (la espera que se ajusta sola) */
   objetivoMs: number
@@ -790,6 +790,8 @@ export interface DiagnosticoDispositivo extends DiagnosticoAudio {
   resyncs: number
   /** talkback recibido (null = nunca le hablaron) */
   talkback?: MedicionTalkback | null
+  /** banda en vivo recibida (null = todavia no le llego) */
+  banda?: MedicionTalkback | null
   /** "Android · Chrome", "iPhone · Safari", "App Android"... */
   plataforma: string
 }

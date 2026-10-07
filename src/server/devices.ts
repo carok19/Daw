@@ -35,7 +35,8 @@ export function limpiarDiagnostico(d: unknown): DiagnosticoDispositivo | null {
     salidaMs: Math.round(num(x.salidaMs, 0, 10000) ?? 0),
     resyncs: Math.round(num(x.resyncs) ?? 0),
     plataforma: typeof x.plataforma === 'string' ? x.plataforma.slice(0, 40) : '',
-    talkback: limpiarTalkback(x.talkback)
+    talkback: limpiarTalkback(x.talkback),
+    banda: limpiarTalkback(x.banda)
   }
 }
 

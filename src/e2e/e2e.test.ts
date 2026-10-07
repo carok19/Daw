@@ -2979,6 +2979,71 @@ test('talkback: abierto, la banda escucha la compu todo el tiempo como un fader 
     await compu.keyboard.press('Escape')
     assert.deepEqual(errores, [])
   })
+
+  await t.test('banda en vivo: lo que sale de la consola llega a los oídos como un fader más (solo mientras se manda), no a la consola; por el WebSocket de audio', async () => {
+    type Mt = {
+      __mt: {
+        receptorVivoRef: { current: { pedazos: number; abierto(): boolean } | null }
+        socketRef: { current: { socket: { io: { engine?: { transport?: { name: string } } } } } | null }
+      }
+    }
+    // (si la red no deja abrir WebSockets a la IP de la compu, p.ej. detras de un proxy, socket.io queda
+    // en "polling" y el audio en vivo llega por socket.io: anda igual, pero aca no se puede medir el WebSocket)
+    const hayWebSocket = await musico.evaluate(() => (globalThis as unknown as Mt).__mt.socketRef.current?.socket.io.engine?.transport?.name === 'websocket')
+    const pedazosPorWs = (): Promise<number> => musico.evaluate(() => (globalThis as unknown as Mt).__mt.receptorVivoRef.current?.pedazos ?? 0)
+    const antesBanda = await pedazosPorWs()
+    if (hayWebSocket) {
+      // el talkback de recién ya vino por el WebSocket de audio (una trama por pedazo), no por socket.io
+      assert.ok(await musico.evaluate(() => (globalThis as unknown as Mt).__mt.receptorVivoRef.current?.abierto() === true), 'el celular tiene abierto el audio en vivo')
+      assert.ok(antesBanda > 100, `el talkback llegó por el WebSocket de audio (${antesBanda} pedazos)`)
+    } else t.diagnostic('esta red no deja abrir WebSockets a la IP de la compu: el audio en vivo llega por socket.io')
+    // sin mandarla, el músico no tiene el fader
+    await vistaCelular(musico, 'Mi mezcla')
+    assert.equal(await musico.locator('.m-canal', { hasText: 'Banda en vivo' }).count(), 0, 'sin banda, sin fader')
+    await compu.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    await compu.getByRole('tab', { name: 'Banda en vivo' }).click()
+    // el talkback quedó con "Mejorar la voz" en la misma interface: la compu se lo aplicaría también a la
+    // banda (más baja y sin sonido de fondo). Avisa, y se apaga de un toque
+    await compu.getByRole('alert').getByRole('button', { name: /Apagar .Mejorar la voz./ }).click()
+    await compu.getByRole('alert').waitFor({ state: 'detached' })
+    // la consola entra por la 1 de la "interface"
+    await compu.getByRole('radiogroup', { name: 'Entrada de la consola' }).getByRole('radio', { name: '1' }).click()
+    await compu.getByRole('switch', { name: /Mandar la banda a los celulares/ }).click()
+    await compu.locator('.banda-vivo.abierto').waitFor()
+    await musico.locator('.m-canal', { hasText: 'Banda en vivo' }).locator('.m-canal-aviso', { hasText: 'de referencia' }).waitFor()
+    await captura(compu, 'ajustes-banda')
+    await compu.keyboard.press('Escape')
+    await esperar(3000)
+    const conBanda = await medir(musico)
+    const enConsola = await medir(consola)
+    // abierta un rato sin grabar: la espera se acerca a lo que hace falta
+    await esperar(7000)
+    const etiqueta = await musico.evaluate(() => localStorage.getItem('multitrack:device-id')).then((id) => `celular:${JSON.parse(id!)}`)
+    const m = server.devices.listar().find((d) => d.id === etiqueta)!.diag?.banda
+    t.diagnostic(`banda: músico ${JSON.stringify(conBanda)} · consola ${JSON.stringify(enConsola)} · medido por el celular ${JSON.stringify(m)}`)
+    assert.ok(conBanda.voz > 0.02, `el músico escucha la banda (${conBanda.voz})`)
+    assert.ok(enConsola.voz < 0.002, `la consola no la recibe (${enConsola.voz})`)
+    assert.ok(m && m.redMs !== null && m.redMs < 150, `llega rápido por la red de prueba (${JSON.stringify(m)})`)
+    assert.ok(m!.objetivoMs >= 30 && m!.objetivoMs <= 200, `se escucha a los ${m!.objetivoMs} ms`)
+    if (hayWebSocket) {
+      const despues = await pedazosPorWs()
+      assert.ok(despues - antesBanda > 500, `la banda vino por el WebSocket de audio (${despues - antesBanda} pedazos)`)
+    }
+    // la compu muestra cuánto tarda en cada celular
+    await compu.locator('.banda-vivo').click()
+    await compu.getByRole('tab', { name: 'Banda en vivo', selected: true }).waitFor()
+    await compu.getByText(/se escucha a los \d+ ms: WiFi \d+ ms \+ salida del celular \d+ ms/).waitFor()
+    await compu.getByText('Consola: no la recibe').waitFor()
+    // apagada: el fader se va y no suena
+    await compu.getByRole('switch', { name: /Mandar la banda a los celulares/ }).click()
+    await compu.locator('.banda-vivo').waitFor({ state: 'detached' })
+    await compu.keyboard.press('Escape')
+    await musico.locator('.m-canal', { hasText: 'Banda en vivo' }).waitFor({ state: 'detached' })
+    await esperar(1500)
+    const apagada = await medir(musico)
+    assert.ok(apagada.voz < conBanda.voz / 5, `apagada: no llega (${JSON.stringify(apagada)})`)
+    assert.deepEqual(errores, [])
+  })
 })
 
 test('terminar con fundido: al terminar la sección la canción se apaga en todos y para; a mitad del fundido, "Seguir" la trae de vuelta (audio real)', { timeout: 3 * 60 * 1000 }, async (t) => {

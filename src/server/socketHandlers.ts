@@ -1,4 +1,5 @@
 import os from 'node:os'
+import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Server, Socket } from 'socket.io'
@@ -36,6 +37,8 @@ import type {
   SesionAnterior
 } from '../shared/types'
 import { DURACIONES_FUNDIDO } from '../shared/types'
+import { armarTrama, type CanalVivo } from '../shared/audioVivo'
+import { AudioVivo } from './audioVivo'
 import type { AppState, Tab } from './state'
 import { buildEstadoCompleto } from './estado'
 import { crearProyectoDesdeZip, ImportError, ZipSinPistasError } from './zip'
@@ -634,6 +637,37 @@ export function registerSocketHandlers(
 
   // talkback abierto (lo prende y lo apaga la compu; queda asi hasta que alguien lo cambie)
   let talkbackActivo = false
+  // banda en vivo: lo que sale de la consola, de referencia en los oidos (tambien lo prende y lo apaga la compu)
+  let bandaActivo = false
+  // el audio en vivo (talkback y banda) va por un WebSocket propio, una trama por pedazo (ver audioVivo.ts)
+  const audioVivo = io.httpServer instanceof http.Server ? new AudioVivo(io.httpServer) : null
+
+  /**
+   * Reparte un pedazo de audio en vivo a los oidos de la banda (nunca a la
+   * consola ni a multimedia): por el WebSocket de audio de cada celular o, si
+   * todavia no lo abrio, por socket.io. Si un celular viene atrasado, el
+   * pedazo se descarta (mejor que llegue tarde todo lo que sigue).
+   */
+  function repartirVivo(canal: CanalVivo, n: number, t: number, sr: number, pcm: Buffer): void {
+    let trama: Uint8Array | null = null
+    for (const s of io.sockets.sockets.values()) {
+      if ((s.data as SocketData).origen !== 'celular') continue
+      const rol = devices.rolDeSocket(s.id)
+      if (rol === 'sonido' || rol === 'multimedia') continue
+      trama ??= armarTrama(canal, n, t, sr, pcm)
+      if (!audioVivo?.enviar(s.id, trama)) s.volatile.emit(`${canal}:audio`, { n, t, sr, pcm })
+    }
+  }
+
+  /** Un pedazo de audio en vivo que manda la compu, revisado (null = no sirve). */
+  function pedazoValido(payload: { n?: unknown; t?: unknown; sr?: unknown; pcm?: unknown } | undefined, srPorDefecto: number): { n: number; t: number; sr: number; pcm: Buffer } | null {
+    if (typeof payload?.t !== 'number' || !Number.isFinite(payload.t) || !Buffer.isBuffer(payload.pcm)) return null
+    const pcm = payload.pcm
+    if (pcm.length === 0 || pcm.length > 4096 || pcm.length % 2 !== 0) return null
+    const sr = payload.sr === undefined ? srPorDefecto : payload.sr
+    if (typeof sr !== 'number' || !Number.isInteger(sr) || sr < 8000 || sr > 96000) return null
+    return { n: typeof payload.n === 'number' && Number.isFinite(payload.n) ? payload.n : 0, t: payload.t, sr, pcm }
+  }
   // (con la compu cerrada no hay talkback: los celulares muestran su fader apagado)
   function hayCompu(): boolean {
     for (const s of io.sockets.sockets.values()) if ((s.data as SocketData).origen === 'compu') return true
@@ -653,14 +687,20 @@ export function registerSocketHandlers(
       socket.emit('analisis:pedidos', analizador.pedidos())
     }
     socket.emit('talkback:estado', { activo: talkbackActivo })
+    socket.emit('banda:estado', { activo: bandaActivo })
 
     socket.on('disconnect', () => {
       entrega.olvidar(socket.id)
+      audioVivo?.olvidar(socket.id)
       devices.desconectar(socket.id)
       emitirDispositivos()
       if (origen === 'compu' && talkbackActivo && !hayCompu()) {
         talkbackActivo = false
         io.emit('talkback:estado', { activo: false })
+      }
+      if (origen === 'compu' && bandaActivo && !hayCompu()) {
+        bandaActivo = false
+        io.emit('banda:estado', { activo: false })
       }
       if (origen === 'video' && state.pantallaVideo) {
         state.pantallaVideo = { ...state.pantallaVideo, conectada: false }
@@ -817,16 +857,9 @@ export function registerSocketHandlers(
 
     // ---- talkback: la compu habla a los oidos de la banda (nunca a la consola ni a multimedia), como un fader mas ----
 
-    socket.on('talkback:audio', (payload: { n?: unknown; t?: unknown; pcm?: unknown }) => {
-      if (!soloCompu(socket) || typeof payload?.t !== 'number' || !Buffer.isBuffer(payload.pcm) || payload.pcm.length > 4096) return
-      const pedazo = { n: typeof payload.n === 'number' ? payload.n : 0, t: payload.t, pcm: payload.pcm }
-      for (const s of io.sockets.sockets.values()) {
-        if ((s.data as SocketData).origen !== 'celular') continue
-        const rol = devices.rolDeSocket(s.id)
-        if (rol === 'sonido' || rol === 'multimedia') continue
-        // si ese celular viene atrasado, el pedazo se descarta (mejor que llegue tarde todo lo que sigue)
-        s.volatile.emit('talkback:audio', pedazo)
-      }
+    socket.on('talkback:audio', (payload: { n?: unknown; t?: unknown; sr?: unknown; pcm?: unknown }) => {
+      const p = soloCompu(socket) ? pedazoValido(payload, 16000) : null
+      if (p) repartirVivo('talkback', p.n, p.t, p.sr, p.pcm)
     })
 
     // prendido o apagado (no "mantener apretado"): queda asi hasta que alguien lo cambie
@@ -834,6 +867,24 @@ export function registerSocketHandlers(
       if (!soloCompu(socket)) return
       talkbackActivo = payload?.activo === true
       io.emit('talkback:estado', { activo: talkbackActivo })
+    })
+
+    // ---- banda en vivo: lo que sale de la consola, de referencia en los oidos (tampoco a la consola ni a multimedia) ----
+
+    socket.on('banda:audio', (payload: { n?: unknown; t?: unknown; sr?: unknown; pcm?: unknown }) => {
+      const p = soloCompu(socket) && bandaActivo ? pedazoValido(payload, 48000) : null
+      if (p) repartirVivo('banda', p.n, p.t, p.sr, p.pcm)
+    })
+
+    // la llave con la que el celular abre su WebSocket de audio en vivo (la pide al conectarse)
+    socket.on('audio-vivo:llave', (_payload: unknown, ack?: Ack<{ llave: string | null }>) => {
+      ack?.({ llave: origen === 'celular' && audioVivo ? audioVivo.llaveDe(socket.id) : null })
+    })
+
+    socket.on('banda:activo', (payload: { activo?: unknown }) => {
+      if (!soloCompu(socket)) return
+      bandaActivo = payload?.activo === true
+      io.emit('banda:estado', { activo: bandaActivo })
     })
 
     // ajuste fino de un celular desde la compu (p.ej. el de la consola), sin tocar el celular
@@ -1545,6 +1596,7 @@ export function registerSocketHandlers(
     pads,
     cerrar: () => {
       clearInterval(pings)
+      audioVivo?.cerrar()
       if (precalentarPads) clearTimeout(precalentarPads)
       precalentarPads = null
     }

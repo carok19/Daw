@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff } from 'lucide-react'
+import type { MedicionTalkback } from '@shared/types'
 import type { AppController } from '../app/useAppController'
 import { EmisorTalkback } from '../audio/talkback'
 import { Toggle } from '../ui/Toggle'
@@ -57,6 +58,12 @@ export function BotonTalkback({ controller }: { controller: AppController }) {
   )
 }
 
+/** Cuanto tarda en escucharse en un celular (talkback o banda en vivo), lo que suma cada parte. */
+export function textoDemora(m: MedicionTalkback): string {
+  const salida = m.salidaMs !== undefined ? ` + salida del celular ${m.salidaMs} ms${m.salidaMs >= 120 ? ' (¿auriculares Bluetooth? con cable es mucho menos)' : ''}` : ''
+  return `se escucha a los ${m.objetivoMs} ms: WiFi ${m.redMs} ms${salida}${m.tardes ? ` · ${m.tardes} pedazos tarde` : ''}`
+}
+
 /** Barrita dentro del boton: lo que entra por el microfono (se ve que esta mandando voz). */
 function MedidorTalkback({ leer }: { leer: () => number }) {
   const barra = useRef<HTMLSpanElement>(null)
@@ -75,8 +82,8 @@ function MedidorTalkback({ leer }: { leer: () => number }) {
   return <span className="talkback-medidor" ref={barra} aria-hidden />
 }
 
-/** Vumetro del microfono del talkback (lo que entra, aunque no se este hablando). */
-function NivelEntrada({ leer }: { leer: () => number }) {
+/** Vumetro de una entrada (lo que entra, aunque no se este mandando). */
+export function NivelEntrada({ leer, nombre = 'Nivel del micrófono' }: { leer: () => number; nombre?: string }) {
   const barra = useRef<HTMLDivElement>(null)
   useEffect(() => {
     let raf = 0
@@ -92,7 +99,7 @@ function NivelEntrada({ leer }: { leer: () => number }) {
     return () => cancelAnimationFrame(raf)
   }, [leer])
   return (
-    <div className="talkback-nivel" ref={barra} aria-label="Nivel del micrófono">
+    <div className="talkback-nivel" ref={barra} aria-label={nombre}>
       <i />
     </div>
   )
@@ -183,7 +190,7 @@ export function AjustesTalkback({ controller }: { controller: AppController }) {
                       ? 'Consola: no lo recibe'
                       : 'Multimedia: no lo recibe'
                     : tb
-                      ? `se escucha a los ${tb.objetivoMs} ms: WiFi ${tb.redMs} ms${tb.salidaMs !== undefined ? ` + salida del celular ${tb.salidaMs} ms${tb.salidaMs >= 120 ? ' (¿auriculares Bluetooth? con cable es mucho menos)' : ''}` : ''}${tb.tardes ? ` · ${tb.tardes} pedazos tarde` : ''}`
+                      ? textoDemora(tb)
                       : 'todavía no recibió voz'}
                 </span>
               </div>
