@@ -2605,7 +2605,7 @@ test('roles: cada celular elige lo suyo; la consola recibe la banda sola y en es
     return pg
   }
   const director = await celularNuevo(/Dirijo/)
-  const consola = await celularNuevo(/Consola/)
+  const consola = await celularNuevo(/^Consola/)
   const musico = await celularNuevo(/Toco/)
   const multimedia = await celularNuevo(/Pantallas/)
   const fila = (pg: Page): Promise<DispositivoInfo | undefined> =>
